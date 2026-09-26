@@ -59,8 +59,8 @@ vec3 odSkyBase(vec3 d, float glowScale) {
   float az = odSunSide(d);
 
   // Anti-solar side: dusty blue-grey dome, pink "belt" above a blue-grey earth-shadow band.
-  vec3 away = mix(vec3(0.380, 0.460, 0.660), vec3(0.270, 0.350, 0.560), smoothstep(0.25, 0.95, e));
-  away = mix(vec3(0.660, 0.490, 0.530), away, smoothstep(0.07, 0.30, e));
+  vec3 away = mix(vec3(0.410, 0.475, 0.650), vec3(0.290, 0.360, 0.550), smoothstep(0.3, 0.95, e));
+  away = mix(vec3(0.680, 0.500, 0.520), away, smoothstep(0.06, 0.34, e));
   away = mix(vec3(0.400, 0.420, 0.540), away, smoothstep(0.0, 0.06, e));
 
   // Solar side, a broad graded band: red-orange at the horizon -> deep orange (~6 deg)
@@ -97,6 +97,8 @@ vec3 odApplyFog(vec3 col, vec3 offs, float density) {
   // blazing glow, so a short slab of it would light up backlit sand as bright as the
   // sky; there the haze is thinned to keep near backlit ground dark as in photos.
   fOd *= mix(1.0, 0.3, smoothstep(0.3, 0.95, dot(fDir, OD_SUN)));
+  // down-sun the near air is barely visible: facades 50-150 m away stay crisp and warm
+  fOd *= mix(1.0, 0.3, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - smoothstep(120.0, 220.0, fDist)));
   return mix(col, odHaze(fDir), 1.0 - exp(-fOd));
 }
 `;
@@ -230,7 +232,7 @@ vec3 odSky(vec3 d, float mode) {
     // lower hemisphere: warm bounce from sunlit pavement, sand and walls
     float g = smoothstep(0.0, -0.2, d.y);
     // (toward the sun you see lit faces; away from it, mostly cast shadows)
-    vec3 ground = mix(vec3(0.075, 0.08, 0.095), vec3(0.15, 0.115, 0.095), odSunSide(d));
+    vec3 ground = mix(vec3(0.052, 0.06, 0.078), vec3(0.15, 0.115, 0.095), pow(odSunSide(d), 1.5));
     col = mix(col, ground, g);
   }
   return col;

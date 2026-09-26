@@ -63,6 +63,7 @@ window.addEventListener('resize', () => {
 // Harness hooks
 let fps = 0;
 window.__groundHeight = groundHeight;
+window.__scene = scene;
 window.__setCam = (x, y, z, heading, pitch) => {
   controls.set(x, y, z, heading, pitch);
 };

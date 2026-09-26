@@ -167,7 +167,9 @@ function buildGround(group) {
             float odGraze = 1.0 - abs(odVd.y);
             float odInto = smoothstep(-0.2, 0.9, odG) * smoothstep(0.05, 0.75, odGraze) * (1.0 - odWet);
             float odAway = smoothstep(0.2, -1.0, odG) * odGraze;
-            reflectedLight.directDiffuse *= mix(1.0, 0.06, odInto) * (1.0 + 0.6 * odAway);
+            // (rough sand under a grazing sun is strongly retro-reflective: seen down-sun the
+            // lit grain faces fill the view and the beach glows warm, not sky-grey)
+            reflectedLight.directDiffuse *= mix(1.0, 0.06, odInto) * (1.0 + 2.0 * odAway);
             reflectedLight.indirectDiffuse *= mix(1.0, 0.55, odInto);
             reflectedLight.directSpecular *= (1.0 - 0.95 * odInto) * (1.0 - smoothstep(0.0, 0.2, odWet));   // the wet film's sun glint is drawn below
             // backlit dry sand is lit by the sky: neutral-cool grey, warmer toward the damp shore
@@ -218,7 +220,7 @@ function buildGround(group) {
           #endif
           #include <opaque_fragment>`);
     };
-    sand.customProgramCacheKey = () => 'sand-wet-v10';
+    sand.customProgramCacheKey = () => 'sand-wet-v11';
     group.add(mesh(g, sand));
   }
 }
@@ -274,7 +276,9 @@ function blobs(group, kind, items) {
   return im;
 }
 
-// Taller background buildings behind the deco row (seen from the beach).
+// Taller background buildings behind the deco row (seen from the beach): condo towers
+// of three kinds (balcony slabs with glass railings, punched window grids, glass curtain
+// walls), a lower row along the next street, rooftop mechanical boxes.
 function buildBackground(group) {
   const rnd = mulberry32(1234);
   const unit = new THREE.BoxGeometry(1, 1, 1);
@@ -284,52 +288,129 @@ function buildBackground(group) {
   for (let i = 0; i < 90; i++) {
     const x1 = -62 - rnd() * 140;
     const w = 14 + rnd() * 30;
-    bg.push({ x0: x1 - (12 + rnd() * 25), x1, z0: -1000 + rnd() * 2000, w, h: 14 + rnd() * rnd() * 55 });
+    const h = 14 + rnd() * rnd() * 55;
+    const t = { x0: x1 - (12 + rnd() * 25), x1, z0: -1000 + rnd() * 2000, w, h, rot: (rnd() - 0.5) * 0.9 };
+    t.kind = h > 24 ? (rnd() < 0.75 ? 0 : 2) : 1;
+    bg.push(t);
+    // stepped crowns: a narrower upper tier or two; rounded ends on some slabs
+    if (h > 30 && rnd() < 0.55) {
+      bg.push({ parent: t, lx: 0.12, lz: 0.15, sx: 0.76, sz: 0.7, h: 3 + rnd() * 6, kind: t.kind, tier: true });
+      if (rnd() < 0.5) bg.push({ parent: t, lx: 0.25, lz: 0.3, sx: 0.5, sz: 0.4, h: 3 + rnd() * 3, kind: t.kind, tier: true, above: 1 });
+    }
+    if (h > 26 && rnd() < 0.35) t.round = true;
+    for (let k = 0; k < (h > 20 ? 1 + Math.floor(rnd() * 2) : 0); k++) {
+      bg.push({ parent: t, lx: 0.2 + rnd() * 0.5, lz: 0.2 + rnd() * 0.5, sx: 0.15 + rnd() * 0.2, sz: 0.15 + rnd() * 0.25, h: 2 + rnd() * 3.5, kind: 3 });
+    }
   }
   // the next street back: a continuous row of 2-6 storey buildings behind the hotels
   for (let z = -1000; z < 1000;) {
     const w = 12 + rnd() * 22;
     const x1 = -58 - rnd() * 4;
-    bg.push({ x0: x1 - (14 + rnd() * 16), x1, z0: z, w, h: 7 + rnd() * rnd() * 16, row: true });
+    bg.push({ x0: x1 - (14 + rnd() * 16), x1, z0: z, w, h: 7 + rnd() * rnd() * 16, rot: 0, kind: 1 });
     z += w + 1 + rnd() * 5;
   }
   const bgMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
-  // condo towers: continuous balcony slabs over dark glazing, floor by floor
   bgMat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vOdP;')
+      .replace('#include <common>', '#include <common>\nattribute vec4 aBg;\nvarying vec4 vBg;\nvarying vec3 vOdP;')
       .replace('#include <project_vertex>', `#include <project_vertex>
+        vBg = aBg;
         vec4 odP = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
           odP = instanceMatrix * odP;
         #endif
         vOdP = (modelMatrix * odP).xyz;`);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vOdP;')
+      .replace('#include <common>', '#include <common>\nvarying vec4 vBg;\nvarying vec3 vOdP;')
       .replace('#include <color_fragment>', `#include <color_fragment>
+        float odGlass = 0.0;
         {
           vec3 odN = normalize(cross(dFdx(vOdP), dFdy(vOdP)));
           float odV = 1.0 - abs(odN.y);
-          float f = fract(vOdP.y / 3.1);
-          float glaze = smoothstep(0.30, 0.34, f) * (1.0 - smoothstep(0.86, 0.9, f)) * step(4.0, vOdP.y);
+          float kind = vBg.x, fh = vBg.y, bay = vBg.z, sd = vBg.w;
           float along = abs(odN.x) > abs(odN.z) ? vOdP.z : vOdP.x;
-          float mull = step(0.1, fract(along / 1.6));
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.13, 0.15, 0.17) * (0.8 + 0.2 * mull), glaze * odV * 0.85);
-        }`);
+          float f = fract(vOdP.y / fh), fl = floor(vOdP.y / fh);
+          float bx = fract(along / bay + sd * 7.0), bi = floor(along / bay + sd * 7.0);
+          float hb = fract(sin(dot(vec2(bi, fl), vec2(12.9898, 78.233)) + sd * 91.0) * 43758.5);
+          vec3 glass = vec3(0.24, 0.27, 0.32) * (0.85 + 0.3 * hb);
+          vec3 col = diffuseColor.rgb;
+          float ground = step(4.0, vOdP.y);
+          if (kind < 0.5) {
+            // balconies: bright slab edge, glass railing, recessed dark glazing, a deep
+            // shadowed recess every few bays
+            float slab = 1.0 - smoothstep(0.07, 0.1, f);
+            float rail = smoothstep(0.1, 0.12, f) * (1.0 - smoothstep(0.4, 0.42, f));
+            float recess = step(0.93, fract(along / (bay * 4.0) + sd));
+            col = mix(glass * 0.8, col, slab);
+            col = mix(col, mix(glass * 1.6, vec3(0.45, 0.5, 0.55), 0.35), rail * (1.0 - slab));
+            col = mix(col, glass * 0.45, recess * (1.0 - slab));
+            odGlass = (1.0 - slab) * (1.0 - recess);
+          } else if (kind < 1.5) {
+            // punched windows, a few curtained
+            float wx = step(0.18, bx) * (1.0 - step(0.82, bx));
+            float wy = smoothstep(0.3, 0.32, f) * (1.0 - smoothstep(0.84, 0.86, f));
+            float win = wx * wy * ground;
+            col = mix(col, glass * (hb > 0.85 ? 2.8 : 1.0), win);
+            odGlass = win;
+          } else {
+            // curtain wall: reflective glass, thin mullions, slightly lighter spandrels
+            float mull = 1.0 - step(0.05, bx) * (1.0 - step(0.95, bx));
+            float span = 1.0 - smoothstep(0.1, 0.13, f);
+            col = mix(vec3(0.36, 0.42, 0.50) * (0.9 + 0.2 * hb), col * 0.85, max(mull, span * 0.8));
+            odGlass = (1.0 - mull) * (1.0 - span);
+          }
+          diffuseColor.rgb = mix(diffuseColor.rgb, col, odV * step(kind, 2.5));
+          odGlass *= odV * step(kind, 2.5);
+        }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(roughnessFactor, 0.2, odGlass);`);
   };
-  bgMat.customProgramCacheKey = () => 'bg-towers-v1';
+  bgMat.customProgramCacheKey = () => 'bg-towers-v2';
   const bm = new THREE.InstancedMesh(unit, bgMat, bg.length);
-  const bgCols = [0xeee8dc, 0xe6ddd0, 0xf0e6d6, 0xdfe3e0, 0xe9dccf];
+  const aBg = new Float32Array(bg.length * 4);
+  const bgCols = [0xf0ece4, 0xe9e3d8, 0xf2ede4, 0xe6e8e6, 0xeee6da, 0xe8ecee, 0xe4e6e2];
   const bq = new THREE.Quaternion(), yAxis = new THREE.Vector3(0, 1, 0);
+  const off = new THREE.Vector3();
+  for (const b of bg) if (b.tier && !b.above) b.parent.tierH = b.h;
   bg.forEach((b, i) => {
-    // varied orientation so side faces catch the sun or fall into shade
-    bq.setFromAxisAngle(yAxis, b.row ? 0 : (rnd() - 0.5) * 0.9);
-    m4.compose(new THREE.Vector3(b.x0, 0, b.z0), bq, new THREE.Vector3(b.x1 - b.x0, b.h, b.w));
+    if (b.parent) {
+      const p = b.parent, d = p.x1 - p.x0;
+      bq.setFromAxisAngle(yAxis, p.rot);
+      off.set(d * b.lx, p.h + (b.above ? p.tierH : 0), p.w * b.lz).applyQuaternion(bq);
+      m4.compose(new THREE.Vector3(p.x0, 0, p.z0).add(off), bq, new THREE.Vector3(d * b.sx, b.h, p.w * b.sz));
+      bm.setColorAt(i, c.setHex(b.tier ? bgCols[bg.indexOf(p) % bgCols.length] : 0xc9c8c2));
+    } else {
+      bq.setFromAxisAngle(yAxis, b.rot);
+      m4.compose(new THREE.Vector3(b.x0, 0, b.z0), bq, new THREE.Vector3(b.x1 - b.x0, b.h, b.w));
+      bm.setColorAt(i, c.setHex(bgCols[i % bgCols.length]));
+    }
     bm.setMatrixAt(i, m4);
-    bm.setColorAt(i, c.setHex(bgCols[i % bgCols.length]));
+    aBg.set([b.kind, 2.9 + rnd() * 0.5, 1.4 + rnd() * 1.4, rnd()], i * 4);
   });
+  bm.geometry = unit.clone();
+  bm.geometry.setAttribute('aBg', new THREE.InstancedBufferAttribute(aBg, 4));
   bm.castShadow = bm.receiveShadow = true;
   group.add(bm);
+
+  // rounded ends on some slab towers (a half-cylinder bulging past the box end)
+  const rounds = bg.filter((b) => b.round);
+  if (rounds.length) {
+    const cylG = new THREE.CylinderGeometry(0.5, 0.5, 1, 24).translate(0, 0.5, 0);
+    const cm = new THREE.InstancedMesh(cylG, bgMat, rounds.length);
+    const aR = new Float32Array(rounds.length * 4);
+    rounds.forEach((b, i) => {
+      const d = b.x1 - b.x0;
+      bq.setFromAxisAngle(yAxis, b.rot);
+      off.set(d / 2, 0, 0).applyQuaternion(bq);
+      m4.compose(new THREE.Vector3(b.x0, 0, b.z0).add(off), bq, new THREE.Vector3(d, b.h, d));
+      cm.setMatrixAt(i, m4);
+      cm.setColorAt(i, c.setHex(bgCols[bg.indexOf(b) % bgCols.length]));
+      aR.set([b.kind, 3.1, 1.6, rnd()], i * 4);
+    });
+    cm.geometry.setAttribute('aBg', new THREE.InstancedBufferAttribute(aR, 4));
+    cm.castShadow = cm.receiveShadow = true;
+    group.add(cm);
+  }
 }
 
 function frondGeometry() {
