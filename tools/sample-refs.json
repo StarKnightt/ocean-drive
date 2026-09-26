@@ -1,0 +1,57 @@
+{
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref16-miami-beach-sunrise.jpg": {
+    "sky top": [0.1, 0.02, 0.9, 0.12],
+    "sky mid (25deg)": [0.1, 0.3, 0.35, 0.38],
+    "horizon band": [0.05, 0.45, 0.35, 0.5],
+    "near sun": [0.44, 0.4, 0.54, 0.48],
+    "water left of glint": [0.2, 0.56, 0.4, 0.66],
+    "water right": [0.6, 0.56, 0.9, 0.66],
+    "glitter column": [0.475, 0.53, 0.495, 0.7],
+    "wet sand glint": [0.45, 0.82, 0.5, 0.86],
+    "dry sand": [0.1, 0.88, 0.4, 0.97]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref11-morning-miami-beach2.jpg": {
+    "sky top away": [0.6, 0.02, 0.95, 0.15],
+    "sky top left": [0.02, 0.02, 0.2, 0.15],
+    "glare near sun": [0.2, 0.2, 0.45, 0.42],
+    "horizon away": [0.75, 0.42, 0.98, 0.46],
+    "water": [0.6, 0.5, 0.95, 0.58],
+    "sand into sun": [0.05, 0.75, 0.45, 0.95]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref09-sunrise-miami-beach.jpg": {
+    "sky top": [0.1, 0.02, 0.5, 0.12],
+    "sky mid": [0.4, 0.18, 0.6, 0.28],
+    "horizon": [0.4, 0.58, 0.6, 0.62],
+    "cloud dark core": [0.55, 0.42, 0.62, 0.47],
+    "cloud gold edge": [0.8, 0.5, 0.88, 0.55],
+    "water": [0.4, 0.66, 0.7, 0.72],
+    "sand shade": [0.3, 0.9, 0.7, 0.98],
+    "tower shaded wall": [0.16, 0.47, 0.23, 0.6]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref10-morning-miami-beach.jpg": {
+    "sky top teal": [0.1, 0.05, 0.3, 0.15],
+    "glare near sun": [0.78, 0.18, 0.98, 0.38],
+    "sand path": [0.3, 0.75, 0.55, 0.9],
+    "water": [0.33, 0.59, 0.5, 0.63]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref12-sunrise-soleil-levant.jpg": {
+    "near sun": [0.38, 0.22, 0.56, 0.36],
+    "horizon": [0.1, 0.38, 0.3, 0.4],
+    "water left": [0.2, 0.5, 0.35, 0.6],
+    "glitter": [0.45, 0.45, 0.52, 0.55]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref04-ocean-drive-district.jpg": {
+    "far towers": [0.065, 0.55, 0.12, 0.63],
+    "sky beside towers": [0.01, 0.45, 0.05, 0.55],
+    "asphalt sunlit": [0.25, 0.85, 0.45, 0.95],
+    "white wall shade": [0.84, 0.62, 0.9, 0.72]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref02-deco-hotels.jpg": {
+    "asphalt sunlit": [0.1, 0.9, 0.4, 0.98],
+    "white wall lit": [0.12, 0.5, 0.17, 0.6],
+    "white wall shade": [0.0, 0.62, 0.05, 0.7]
+  },
+  "C:/Users/prase/AppData/Local/Temp/ocean-drive-refs/ref03-ocean-drive-buildings.jpg": {
+    "asphalt sunlit": [0.4, 0.85, 0.7, 0.95]
+  }
+}

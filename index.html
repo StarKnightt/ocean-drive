@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Ocean Drive — Sunrise</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #c9b7a4; }
+      canvas { display: block; }
+      #overlay {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: rgba(30, 24, 32, 0.28); cursor: pointer;
+        font: 500 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #fff8ef;
+        letter-spacing: 0.02em; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+      }
+      #overlay .card { text-align: center; }
+      #overlay h1 { font-weight: 300; font-size: 34px; letter-spacing: 0.18em; margin: 0 0 6px; text-transform: uppercase; }
+      #overlay p { margin: 4px 0; opacity: 0.85; }
+      #overlay.hidden, #hud.hidden { display: none; }
+      #hud {
+        position: fixed; left: 12px; bottom: 10px; font: 12px/1.4 ui-monospace, monospace;
+        color: rgba(255, 250, 240, 0.7); pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay" class="hidden">
+      <div class="card">
+        <h1>Ocean Drive</h1>
+        <p>Miami Beach · sunrise</p>
+        <p>Click to walk — WASD to move, mouse to look, Shift to hurry, F to fly (Space / Q)</p>
+      </div>
+    </div>
+    <div id="hud" class="hidden"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
