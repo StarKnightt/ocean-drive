@@ -9,15 +9,33 @@
       html, body { margin: 0; height: 100%; overflow: hidden; background: #c9b7a4; }
       canvas { display: block; }
       #overlay {
-        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-        background: rgba(30, 24, 32, 0.28); cursor: pointer;
-        font: 500 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #fff8ef;
-        letter-spacing: 0.02em; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+        position: fixed; inset: 0; cursor: pointer; color: #fff8ef;
+        background: radial-gradient(ellipse at 50% 55%, rgba(20, 14, 18, 0) 45%, rgba(20, 14, 18, 0.32) 100%);
+        transition: opacity 0.6s ease;
       }
-      #overlay .card { text-align: center; }
-      #overlay h1 { font-weight: 300; font-size: 34px; letter-spacing: 0.18em; margin: 0 0 6px; text-transform: uppercase; }
-      #overlay p { margin: 4px 0; opacity: 0.85; }
-      #overlay.hidden, #hud.hidden { display: none; }
+      #overlay .caption {
+        position: absolute; left: 6vw; bottom: 9vh; max-width: 36rem;
+        text-shadow: 0 1px 10px rgba(30, 18, 12, 0.45);
+      }
+      #overlay h1 {
+        margin: 0; font: italic 400 30px/1.2 Georgia, 'Times New Roman', serif; letter-spacing: 0.01em;
+      }
+      #overlay .place {
+        margin: 6px 0 22px; font: 400 12px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+        letter-spacing: 0.22em; text-transform: uppercase; opacity: 0.85;
+      }
+      #overlay .how {
+        margin: 0; font: 400 13px/1.7 system-ui, -apple-system, 'Segoe UI', sans-serif; opacity: 0.78;
+      }
+      #overlay .how b { font-weight: 500; opacity: 1; }
+      #overlay.hidden { opacity: 0; pointer-events: none; }
+      #note {
+        position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%); opacity: 0;
+        font: 400 12px/1.4 system-ui, sans-serif; letter-spacing: 0.08em; color: rgba(255, 248, 239, 0.85);
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4); transition: opacity 0.8s ease; pointer-events: none;
+      }
+      #note.show { opacity: 1; }
+      #hud.hidden { display: none; }
       #hud {
         position: fixed; left: 12px; bottom: 10px; font: 12px/1.4 ui-monospace, monospace;
         color: rgba(255, 250, 240, 0.7); pointer-events: none;
@@ -26,12 +44,13 @@
   </head>
   <body>
     <div id="overlay" class="hidden">
-      <div class="card">
+      <div class="caption">
         <h1>Ocean Drive</h1>
-        <p>Miami Beach · sunrise</p>
-        <p>Click to walk — WASD to move, mouse to look, Shift to hurry, F to fly (Space / Q)</p>
+        <p class="place">Miami Beach · 6:52 am</p>
+        <p class="how"><b>Click to walk</b> — WASD to move, mouse to look, Shift to stroll faster, M to mute</p>
       </div>
     </div>
+    <div id="note"></div>
     <div id="hud" class="hidden"></div>
     <script type="module" src="./src/main.js"></script>
   </body>

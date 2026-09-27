@@ -2405,6 +2405,8 @@ export function buildHotels(scene) {
     group.add(bm);
   }
 
+  // walk collision: each building's front line (patios in front are raised terraces)
+  group.userData.footprints = specs.map((S) => ({ z0: S.z0, z1: S.z1, fx: S.fx }));
   scene.add(group);
   window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + c.grime.pos.length / 3, 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length };
   return group;

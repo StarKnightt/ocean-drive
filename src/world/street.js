@@ -590,8 +590,19 @@ function signPostGeo(h) {
   return mergeGeometries([cyl(0.035, 0.035, h, 8, 0, 0x8d908c), cyl(0.05, 0.05, 0.05, 8, h, 0x8d908c)]);
 }
 
-function place(list, g, x, y, z, rotY = 0) {
-  list.push(g.clone().rotateY(rotY).translate(x, y, z));
+// Walk colliders for street furniture: { x, z, r } circles or { min, max } boxes.
+export const STREET_COLLIDERS = [];
+
+// col: a radius (m) for a post-like circle, 'box' for the footprint of the piece
+function place(list, g, x, y, z, rotY = 0, col) {
+  const c = g.clone().rotateY(rotY).translate(x, y, z);
+  list.push(c);
+  if (typeof col === 'number') STREET_COLLIDERS.push({ x, z, r: col });
+  else if (col === 'box') {
+    c.computeBoundingBox();
+    const b = c.boundingBox;
+    STREET_COLLIDERS.push({ min: { x: b.min.x, y: b.min.y, z: b.min.z }, max: { x: b.max.x, y: b.max.y, z: b.max.z } });
+  }
 }
 
 function furniture() {
@@ -608,30 +619,30 @@ function furniture() {
       let q = zz;
       while (palmNear(x, q, 3.2)) q += 1.2;
       if (Math.abs(q - CROSSWALK_Z) < 3) q += 4;
-      place(L, lamp, x, H, q);
-      if (rnd() < 0.55) place(L, trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1));
+      place(L, lamp, x, H, q, 0, 0.14);
+      if (rnd() < 0.55) place(L, trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1), 0, 0.3);
     }
   }
   // parking pay stations on the hotel side, bike racks near hotel entrances
   for (let z = -270; z <= 270; z += 42 + rnd() * 10) {
     let q = z;
     while (palmNear(hx, q, 1.4) || Math.abs(q - CAR.z) < 3) q += 1.5;
-    place(L, pay, hx + 0.05, H, q, -Math.PI / 2);
+    place(L, pay, hx + 0.05, H, q, -Math.PI / 2, 'box');
   }
-  for (const z of [-58, -19, 27, 61]) place(L, rack, SIDEWALK_W.x1 - 1.1, H, z);
+  for (const z of [-58, -19, 27, 61]) place(L, rack, SIDEWALK_W.x1 - 1.1, H, z, 0, 'box');
   // hotel-side bins, a valet stand at an entrance, news boxes, an extra pay kiosk
-  for (const z of [16, 4, -21, -47]) { let q = z; while (palmNear(hx, q, 1.2)) q += 1; place(L, trash, hx - 0.1, H, q); }
-  place(L, valet, -26.9, H, 25.5, Math.PI / 2);
-  place(L, newsB, SIDEWALK_W.x1 - 1.3, H, 13.2, -Math.PI / 2);
-  place(L, newsR, SIDEWALK_W.x1 - 1.3, H, 13.8, -Math.PI / 2);
-  place(L, pay, hx + 0.05, H, 20.5, -Math.PI / 2);
+  for (const z of [16, 4, -21, -47]) { let q = z; while (palmNear(hx, q, 1.2)) q += 1; place(L, trash, hx - 0.1, H, q, 0, 0.3); }
+  place(L, valet, -26.9, H, 25.5, Math.PI / 2, 'box');
+  place(L, newsB, SIDEWALK_W.x1 - 1.3, H, 13.2, -Math.PI / 2, 'box');
+  place(L, newsR, SIDEWALK_W.x1 - 1.3, H, 13.8, -Math.PI / 2, 'box');
+  place(L, pay, hx + 0.05, H, 20.5, -Math.PI / 2, 'box');
   // hydrants
-  for (const [x, z] of [[hx + 0.15, -33], [hx + 0.15, 22], [px - 0.15, -8], [px - 0.15, 46], [hx + 0.15, -110], [px - 0.15, 120]]) place(L, hyd, x, H, z);
+  for (const [x, z] of [[hx + 0.15, -33], [hx + 0.15, 22], [px - 0.15, -8], [px - 0.15, 46], [hx + 0.15, -110], [px - 0.15, 120]]) place(L, hyd, x, H, z, 0, 0.2);
   // benches in the park facing the sea, just east of the promenade
   for (let z = -150; z <= 150; z += 16 + rnd() * 10) {
     const x = promenadeX(z) + 3.4;
     if (palmNear(x, z, 1.8) || x > PARK.x1 - 1) continue;
-    place(L, bench, x, H, z);
+    place(L, bench, x, H, z, 0, 'box');
   }
   // storm drains at both curbs, manholes in the lanes
   for (let z = -280; z <= 280; z += 45) {
@@ -644,9 +655,9 @@ function furniture() {
   }
   // sign posts at the crosswalk corners, regulation signs along the parking lane
   const posts = [[SIDEWALK_W.x1 - 0.35, CW.z0 - 0.6], [SIDEWALK_E.x0 + 0.35, CW.z1 + 0.6]];
-  for (const [x, z] of posts) place(L, signPostGeo(3.2), x, H, z);
+  for (const [x, z] of posts) place(L, signPostGeo(3.2), x, H, z, 0, 0.08);
   const regs = [[SIDEWALK_W.x1 - 0.35, -12], [SIDEWALK_W.x1 - 0.35, 36], [SIDEWALK_W.x1 - 0.35, 74]];
-  for (const [x, z] of regs) place(L, signPostGeo(2.4), x, H, z);
+  for (const [x, z] of regs) place(L, signPostGeo(2.4), x, H, z, 0, 0.08);
 
   const m = new THREE.Mesh(mergeGeometries(L), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 }));
   m.castShadow = m.receiveShadow = true;

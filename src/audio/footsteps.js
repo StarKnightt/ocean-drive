@@ -64,6 +64,18 @@ export function createFootsteps(env) {
       su.frequency.exponentialRampToValueAtTime(350, t + 0.24);
       burst(t + 0.14, B.pink, [su], 0.35 * v, 0.02, 0.08, 1, d);
     },
+    // foot in shallow swash: a wet slap, water sloshing off, fizzing foam
+    splash(t, v, d, depth = 0.05) {
+      const k = Math.min(1, 0.4 + depth * 6);
+      burst(t, B.brown, [f('lowpass', rr(260, 360), 0.8)], 0.45 * v, 0.004, 0.08, 1, d);
+      burst(t, B.pink, [f('bandpass', rr(500, 800), 1.2)], 0.7 * v * k, 0.006, rr(0.12, 0.2), 1, d);
+      const sl = f('bandpass', rr(900, 1300), 2.5);
+      sl.frequency.setValueAtTime(sl.frequency.value, t + 0.03);
+      sl.frequency.exponentialRampToValueAtTime(rr(400, 600), t + 0.3);
+      burst(t + 0.03, B.white, [sl], 0.35 * v * k, 0.03, rr(0.2, 0.3), 1, d);
+      burst(t + 0.05, B.crackleDense, [f('highpass', rr(2500, 3500), 0.7)], 0.5 * v * k, 0.03, rr(0.25, 0.4), rr(0.9, 1.2), d);
+      for (let i = 0; i < 3; i++) { const b = rr(700, 1600); tone(t + rr(0.04, 0.2), b, b * 1.6, 0.04 * v * k, 0.002, 0.03, 'sine', d); }
+    },
     wood(t, v, d) {
       const hollow = new GainNode(ctx, { gain: 1 });
       hollow.connect(d);
@@ -86,12 +98,13 @@ export function createFootsteps(env) {
     },
   };
 
-  function step(surface = 'pavement', { gain = 1, at } = {}) {
+  // opts.depth: water depth (m) for 'splash'
+  function step(surface = 'pavement', { gain = 1, at, depth } = {}) {
     const t = (at ?? ctx.currentTime) + 0.005;
     side = -side;
     const pan = new StereoPannerNode(ctx, { pan: side * rr(0.06, 0.14) });
     pan.connect(out);
-    (S[surface] ?? S.pavement)(t, gain * rr(0.8, 1.1), pan);
+    (S[surface] ?? S.pavement)(t, gain * rr(0.8, 1.1), pan, depth);
   }
 
   return { step };

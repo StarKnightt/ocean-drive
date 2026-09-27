@@ -376,7 +376,11 @@ export function createSky(renderer, scene) {
 
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(8192, 2048);
+  // 8192-wide sun map on capable GPUs; 4096 when the GPU can't or the device looks modest
+  const lowPerf = (navigator.hardwareConcurrency ?? 8) <= 4 || (navigator.deviceMemory ?? 8) <= 4 ||
+    /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || new URLSearchParams(location.search).has('lowshadow');
+  const big = renderer.capabilities.maxTextureSize >= 8192 && !lowPerf;
+  sun.shadow.mapSize.set(big ? 8192 : 4096, big ? 2048 : 1024);
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.035;
   sun.shadow.radius = 1.5;

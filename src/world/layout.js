@@ -97,5 +97,5 @@ export function groundHeight(x, z) {
   if (x < SIDEWALK_W.x1) return CURB_HEIGHT;
   if (x < LANES.x1) return roadHeight(x);
   if (x < SAND.x0) return CURB_HEIGHT;
-  return Math.max(sandHeight(x) + sandDetail(x, z), SEA_LEVEL);
+  return sandHeight(x) + sandDetail(x, z);   // (under the sea: the seabed you wade on)
 }

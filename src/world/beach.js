@@ -23,6 +23,12 @@ import { SURF_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
 
 const DETAIL_TILE = 6;   // m covered by one tile of the micro-relief texture
+// beach access through the seawall: steps up from the lawn, over the cap, onto the sand
+export const ACCESS_Z = [-30, 32];
+const ACCESS_HALF = 1.2;
+const WALL = { x0: PARK.wallX - 0.3, x1: PARK.wallX + 0.4, top: 0.68 };
+const STEPS = [[10.8, 11.1, 0.33], [11.1, 11.4, 0.5], [11.4, 12.55, 0.7]];   // x0, x1, top
+const nearAccess = (z, pad = 0) => ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
 
 // ---------------------------------------------------------------------------
 // churned-sand bake: R,G = slope (dh/dx, dh/dz), B = lit fraction under the fixed
@@ -330,12 +336,19 @@ function swashSheet(surf) {
       ${FOG_FN_GLSL}
       ${SURF_GLSL}
       float odFoam(vec2 p, float t) {
-        float a = sqrt(odWorley(p * 3.6 + vec2(t * 0.2, 0.0)));
-        float b = sqrt(odWorley(p * 9.0 - vec2(0.0, t * 0.12) + 3.1));
-        float dens = odNoise(p * 0.8);
-        float fPatch = smoothstep(0.3, 0.7, odNoise(p * vec2(0.5, 0.22)));
-        float lace = smoothstep(0.68 - 0.08 * dens, 0.76, a) * 0.8 + smoothstep(0.66 - 0.08 * dens, 0.74, b) * 0.45;
-        return clamp(lace * (0.35 + 0.65 * fPatch) + 0.25 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
+        // domain-warped cells so the bubble holes are ragged, a fine bubble grain for close
+        // views (faded out once it would alias), and foam gathered in patches with clear water
+        vec2 w = vec2(odNoise(p * 1.1 + 2.3), odNoise(p * 1.1 + 7.9)) - 0.5;
+        vec2 pw = p + w * 0.6;
+        float a = sqrt(odWorley(pw * 3.0 + vec2(t * 0.15, 0.0)));
+        float b = sqrt(odWorley(pw * 8.0 + w * 0.9 - vec2(0.0, t * 0.1) + 3.1));
+        float fine = 1.0 - smoothstep(0.015, 0.04, fwidth(p.x) + fwidth(p.y));
+        float c = fine > 0.0 ? sqrt(odWorley(p * 21.0 + w * 2.0 + 1.7)) : 0.0;
+        float dens = odNoise(p * 0.6 + t * 0.05);
+        float lace = smoothstep(0.7 - 0.08 * dens, 0.8, a) * 0.75 + smoothstep(0.68 - 0.08 * dens, 0.78, b) * 0.45
+          + smoothstep(0.6, 0.8, c) * 0.25 * fine;
+        float fPatch = smoothstep(0.35, 0.75, odNoise(pw * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
+        return clamp(lace * (0.2 + 0.8 * fPatch) + 0.18 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
       }
       void main() {
         float t = uSurfT;
@@ -378,6 +391,8 @@ function swashSheet(surf) {
         col = mix(col, foamCol, foam);
         col += OD_SUNCOL * OD_SUN_I * vec3(1.0, 0.7, 0.4) * spec * (1.0 - foam) * 0.02;
         alpha = max(alpha * (1.0 - foam), foam);
+        // a draining sheet thins out to nothing at its edge (the uprush keeps its foam line)
+        alpha *= mix(smoothstep(-0.02, 0.18, s), 1.0, fresh);
         // hand over to the sea past the shoreline
         alpha *= 1.0 - smoothstep(SURF_SHORE_X + 0.4, SURF_SHORE_X + 1.6, p.x);
         #ifdef USE_FOG
@@ -812,10 +827,10 @@ function palmettoGeometry(rnd) {
   return mergeGeometries(parts.map(prep));
 }
 
-function duneVegetation(scene, rnd) {
+function duneVegetation(scene, rnd, colliders) {
   const ground = (x, z) => sandHeight(x) + sandDetail(x, z);
   const fenceX = SAND.x0 + 4.6;
-  const path = (z) => Math.abs(z - 32) < 2.5;         // beach-access gap
+  const path = (z) => nearAccess(z, 1.3);             // beach-access gaps
   const grape = [], oats = [], palms = [];
   // irregular clumps: dense where the along-shore noise is high, gaps elsewhere
   for (let z = -220; z < 220; z += 0.5 + rnd() * 1.0) {
@@ -860,6 +875,7 @@ function duneVegetation(scene, rnd) {
       }
       fence.push(colorize(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4), 0xd6c6a0));
     }
+    if (prev && Math.abs(z) < 100) colliders.push({ min: { x: Math.min(x, prev[0]) - 0.08, y, z: prev[2] }, max: { x: Math.max(x, prev[0]) + 0.08, y: y + 0.9, z } });
     prev = [x, y, z];
   }
   const fm = new THREE.Mesh(mergeGeometries(fence.map(prep)), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
@@ -891,6 +907,24 @@ function wrackClumps(scene, rnd) {
   im.receiveShadow = true;
   im.castShadow = true;
   scene.add(im);
+}
+
+// steps over the seawall at the access points, and the wall itself as a collider
+function seawallAccess(scene, colliders) {
+  const parts = [];
+  for (const az of ACCESS_Z) {
+    for (const [x0, x1, top] of STEPS) parts.push(boxAt(x0, x1, 0, top, az - ACCESS_HALF, az + ACCESS_HALF, 0xd8cbb2));
+    for (const s of [-1, 1]) parts.push(boxAt(10.75, 12.6, 0, 0.78, az + s * (ACCESS_HALF + 0.1) - 0.1, az + s * (ACCESS_HALF + 0.1) + 0.1, 0xcbbd9f));   // cheek walls
+  }
+  const m = new THREE.Mesh(mergeGeometries(parts), paintedMaterial({ wear: 0 }));
+  m.castShadow = m.receiveShadow = true;
+  scene.add(m);
+  const cuts = [-100, ...ACCESS_Z.flatMap((a) => [a - ACCESS_HALF, a + ACCESS_HALF]), 100];
+  for (let i = 0; i < cuts.length; i += 2) colliders.push({ min: { x: WALL.x0, y: 0, z: cuts[i] }, max: { x: WALL.x1, y: WALL.top, z: cuts[i + 1] } });
+  for (const az of ACCESS_Z) for (const s of [-1, 1]) {
+    const zc = az + s * (ACCESS_HALF + 0.1);
+    colliders.push({ min: { x: 10.75, y: 0, z: zc - 0.1 }, max: { x: 12.6, y: 0.78, z: zc + 0.1 } });
+  }
 }
 
 function props(scene, colliders) {
@@ -970,7 +1004,8 @@ export function buildBeach(scene, surf) {
   const sheet = swashSheet(surf);
   scene.add(sheet);
   wrackClumps(scene, rnd);
-  duneVegetation(scene, rnd);
+  duneVegetation(scene, rnd, colliders);
+  seawallAccess(scene, colliders);
   const { surfaces, flagU } = buildTower(scene, colliders);
   props(scene, colliders);
 
@@ -979,6 +1014,10 @@ export function buildBeach(scene, surf) {
     const g = groundAt(x, z);
     const d = surfaces.deck, s = surfaces.stair;
     const reach = (y) => currentY >= y - 0.45;   // a step up of up to 45 cm is walkable
+    if (x >= STEPS[0][0] && x < STEPS[2][1] && nearAccess(z)) {
+      const st = STEPS.find((q) => x < q[1]);
+      if (reach(st[2])) return st[2];
+    }
     if (x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1 && reach(surfaces.deckY)) return surfaces.deckY;
     if (x >= s.x0 && x < s.x1 && z >= s.z0 && z <= s.z1) {
       const i = Math.floor((s.x1 - x) / s.run);

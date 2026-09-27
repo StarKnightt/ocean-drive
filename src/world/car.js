@@ -370,28 +370,41 @@ export function buildCars(scene) {
   // hero: parked at the west curb, facing south (the direction of the west lane), top down
   const hero = makeCar({ paint: 0x86cfc1, flatten: true, cast: true });
   seat(hero.car, CAR.x, CAR.z, 0);
+  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
   // a few ordinary parked cars along the lane, gaps between, the hero spot kept clear
   for (const [z, col] of [[-1.5, 0xa9adb1], [-24, 0x2e3a4e], [-31.5, 0xd8d7d2], [58, 0x5b5f63]]) {
     const s = makeSedan(col, scene.environment);
     seat(s, CAR.x + 0.05, z, 0);
     scene.add(s);
+    colliders.push({ min: { x: CAR.x + 0.05 - 0.95, y: 0, z: z - 2.35 }, max: { x: CAR.x + 0.05 + 0.95, y: 1.5, z: z + 2.35 } });
   }
   scene.add(hero.car);
 
-  // moving car: follows the audio engine's pass (hidden when no car is sounding)
-  const mover = makeCar({ paint: 0xe8a4b8, flatten: false, cast: false });
-  mover.car.visible = false;
-  scene.add(mover.car);
-  let spin = 0;
+  // moving cars: one mesh per sounding audio car (hidden when none is passing)
+  const pool = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0].map((paint) => {
+    const m = makeCar({ paint, flatten: false, cast: false });
+    m.car.visible = false;
+    scene.add(m.car);
+    return { ...m, id: null, spin: 0 };
+  });
+  const mover = pool[0];
   return {
     hero: hero.car,
+    mover: mover.car,
+    movers: pool.map((m) => m.car),
+    colliders,
     update(dt, cars) {
-      const c = cars && cars.find((k) => k.active && k.progress > 0 && k.progress < 1);
-      if (!c) { mover.car.visible = false; return; }
-      mover.car.visible = true;
-      seat(mover.car, c.x, c.z, c.dir > 0 ? 0 : Math.PI);
-      spin += (c.speed * dt) / WHEEL_R;
-      for (const w of mover.wheels) w.rotation.x = spin;
+      const live = (cars || []).filter((k) => k.active && k.progress > 0 && k.progress < 1);
+      for (const m of pool) if (!live.some((k) => k.id === m.id)) m.id = null;
+      for (const c of live) {
+        const m = pool.find((q) => q.id === c.id) ?? pool.find((q) => q.id === null);
+        if (!m) continue;
+        m.id = c.id;
+        seat(m.car, c.x, c.z, c.dir > 0 ? 0 : Math.PI);
+        m.spin += (c.speed * dt) / WHEEL_R;
+        for (const w of m.wheels) w.rotation.x = m.spin;
+      }
+      for (const m of pool) { m.car.visible = m.id !== null; m.car.userData.audioId = m.id; }
     },
   };
 }

@@ -143,14 +143,19 @@ export function createOcean(scene, surf) {
 
       // foam lace: white bubble filaments around dark holes, drifting
       float odFoam(vec2 p, float t) {
-        // thin white filaments along the bubble-cell borders, open water in the cells
-        float a = sqrt(odWorley(p * 3.0 + vec2(t * 0.15, 0.0)));
-        float b = sqrt(odWorley(p * 8.0 - vec2(0.0, t * 0.1) + 3.1));
+        // domain-warped cells so the bubble holes are ragged, a fine bubble grain for close
+        // views (faded out once it would alias), and foam gathered in patches with clear water
+        vec2 w = vec2(odNoise(p * 1.1 + 2.3), odNoise(p * 1.1 + 7.9)) - 0.5;
+        vec2 pw = p + w * 0.6;
+        float a = sqrt(odWorley(pw * 3.0 + vec2(t * 0.15, 0.0)));
+        float b = sqrt(odWorley(pw * 8.0 + w * 0.9 - vec2(0.0, t * 0.1) + 3.1));
+        float fine = 1.0 - smoothstep(0.015, 0.04, fwidth(p.x) + fwidth(p.y));
+        float c = fine > 0.0 ? sqrt(odWorley(p * 21.0 + w * 2.0 + 1.7)) : 0.0;
         float dens = odNoise(p * 0.6 + t * 0.05);
-        float lace = smoothstep(0.68 - 0.08 * dens, 0.76, a) * 0.8 + smoothstep(0.66 - 0.08 * dens, 0.74, b) * 0.5;
-        // foam gathers in streaky patches, not an even net
-        float fPatch = smoothstep(0.3, 0.7, odNoise(p * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
-        return clamp(lace * (0.35 + 0.65 * fPatch) + 0.25 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
+        float lace = smoothstep(0.7 - 0.08 * dens, 0.8, a) * 0.75 + smoothstep(0.68 - 0.08 * dens, 0.78, b) * 0.45
+          + smoothstep(0.6, 0.8, c) * 0.25 * fine;
+        float fPatch = smoothstep(0.35, 0.75, odNoise(pw * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
+        return clamp(lace * (0.2 + 0.8 * fPatch) + 0.18 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
       }
 
       void main() {
@@ -260,7 +265,8 @@ export function createOcean(scene, surf) {
         spec *= 1.0 - foamAmt;
 
         // shallow water is clear: the wet sand shows through the last few centimetres
-        float alpha = smoothstep(-0.02, 0.03, depth) * mix(0.72, 1.0, smoothstep(0.03, 0.35, depth));
+        float alpha = smoothstep(-0.02, 0.03, depth) * mix(0.38, 1.0, smoothstep(0.05, 0.9, depth));
+        alpha = mix(alpha, 1.0, F);
         alpha = max(alpha, foamAmt * smoothstep(-0.02, 0.02, depth));
         col += spec;
 
