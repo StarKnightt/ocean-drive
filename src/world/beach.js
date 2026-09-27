@@ -19,7 +19,7 @@ import {
   sandHeight, sandDetail, groundHeight, compassToDir, SUN,
 } from './layout.js';
 import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
-import { SURF_GLSL } from './surf.js';
+import { SURF_GLSL, FOAM_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
 import { QUALITY } from '../quality.js';
 
@@ -370,21 +370,7 @@ function swashSheet(surf) {
       ${SKY_FULL_GLSL}
       ${FOG_FN_GLSL}
       ${SURF_GLSL}
-      float odFoam(vec2 p, float t) {
-        // domain-warped cells so the bubble holes are ragged, a fine bubble grain for close
-        // views (faded out once it would alias), and foam gathered in patches with clear water
-        vec2 w = vec2(odNoise(p * 1.1 + 2.3), odNoise(p * 1.1 + 7.9)) - 0.5;
-        vec2 pw = p + w * 0.6;
-        float a = sqrt(odWorley(pw * 3.0 + vec2(t * 0.15, 0.0)));
-        float b = sqrt(odWorley(pw * 8.0 + w * 0.9 - vec2(0.0, t * 0.1) + 3.1));
-        float fine = 1.0 - smoothstep(0.015, 0.04, fwidth(p.x) + fwidth(p.y));
-        float c = fine > 0.0 ? sqrt(odWorley(p * 21.0 + w * 2.0 + 1.7)) : 0.0;
-        float dens = odNoise(p * 0.6 + t * 0.05);
-        float lace = smoothstep(0.7 - 0.08 * dens, 0.8, a) * 0.75 + smoothstep(0.68 - 0.08 * dens, 0.78, b) * 0.45
-          + smoothstep(0.6, 0.8, c) * 0.25 * fine;
-        float fPatch = smoothstep(0.35, 0.75, odNoise(pw * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
-        return clamp(lace * (0.2 + 0.8 * fPatch) + 0.18 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
-      }
+      ${FOAM_GLSL}
       void main() {
         float t = uSurfT;
         vec2 p = vWorld.xz;
@@ -420,7 +406,7 @@ function swashSheet(surf) {
         // lacy leading edge, thin bubble trails behind it
         vec2 tq = p * 1.4 + vec2(odNoise(p * 0.6 + 2.0), odNoise(p * 0.6 + 6.0)) * 2.2;
         float trail = smoothstep(0.62, 0.9, odNoise(tq));
-        float foam = max(edge * mix(0.15, 1.0, lace) * 0.9, max(lace, trail * 0.6) * exp(-max(s, 0.0) / 0.9) * 0.55);
+        float foam = max(edge * mix(0.3, 1.0, clamp(lace * 1.5, 0.0, 1.0)) * 0.9, max(lace, trail * 0.6) * exp(-max(s, 0.0) / 0.9) * 0.55);
         foam *= 0.35 + 0.65 * fresh;
         vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
         float foamL = dot(OD_SUNCOL * OD_SUN_I * 0.318 * 0.35 + skyUp * 1.1, vec3(0.2126, 0.7152, 0.0722));
@@ -1009,26 +995,7 @@ function props(scene, colliders) {
     parts.push(colorize(new THREE.CylinderGeometry(0.28, 0.28, 0.03, 16).translate(x, y + 0.6, z), 0x1e2022));
     addCol(x - 0.33, x + 0.33, y, y + 0.95, z - 0.33, z + 0.33);
   }
-  // lifeguard ATV parked south of the tower
-  {
-    const x = TOWER.x + 1.2, z = TOWER.z + 4.8, y = ground(x, z) + 0.28;
-    const a = [];
-    a.push(boxAt(-0.45, 0.45, 0.1, 0.42, -0.95, 0.95, 0xc8302a));                 // body
-    a.push(boxAt(-0.52, 0.52, 0.36, 0.44, 0.55, 1.1, 0xc8302a));                  // front fenders
-    a.push(boxAt(-0.52, 0.52, 0.36, 0.44, -1.1, -0.55, 0xc8302a));                // rear fenders
-    a.push(boxAt(-0.2, 0.2, 0.42, 0.58, -0.45, 0.2, 0x1d1f22));                   // seat
-    a.push(boxAt(-0.5, 0.5, 0.5, 0.54, -1.05, -0.6, 0x2a2c2e));                   // rear rack
-    a.push(boxAt(-0.5, 0.5, 0.5, 0.54, 0.65, 1.05, 0x2a2c2e));                    // front rack
-    a.push(beam([0, 0.42, 0.45], [0, 0.78, 0.35], 0.05, 0x2a2c2e));
-    a.push(beam([-0.35, 0.8, 0.33], [0.35, 0.8, 0.33], 0.035, 0x1d1f22));         // bars
-    a.push(boxAt(-0.25, 0.25, 0.25, 0.4, 1.0, 1.12, 0xf2f0ea));                   // headlight panel
-    for (const wz of [-0.72, 0.72]) for (const wx of [-0.5, 0.5]) {
-      a.push(colorize(new THREE.CylinderGeometry(0.28, 0.28, 0.24, 16).rotateZ(Math.PI / 2).translate(wx, 0, wz), 0x1a1a1a));
-      a.push(colorize(new THREE.CylinderGeometry(0.13, 0.13, 0.25, 10).rotateZ(Math.PI / 2).translate(wx, 0, wz), 0xb9bcbf));
-    }
-    for (const g of a) { g.rotateY(0.35); g.translate(x, y, z); parts.push(g); }
-    addCol(x - 0.9, x + 0.9, y - 0.3, y + 0.8, z - 1.2, z + 1.2);
-  }
+  // (the lifeguard ATV parked south of the tower is rideable: vehicles/)
   // volleyball court far north: posts, net
   const netX = 34, netZ = -58;
   const yN = ground(netX, netZ);

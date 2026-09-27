@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 const keys = process.argv.slice(2);
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 }, deviceScaleFactor: 1 });
 page.on('pageerror', (e) => console.log('[pageerror]', String(e)));
 await page.goto('http://localhost:5173/?shot=1');

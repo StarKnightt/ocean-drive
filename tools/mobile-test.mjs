@@ -13,7 +13,7 @@ const expectTier = { 'iPhone 13': 'low', 'Pixel 7': 'low', 'iPad (gen 7)': 'medi
 
 const browser = await chromium.launch({
   channel: 'chrome', headless: false,
-  args: ['--window-position=1940,120', '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist'],
+  args: ['--mute-audio', '--window-position=1940,120', '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist'],
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;

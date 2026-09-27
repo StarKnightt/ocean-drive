@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-const b = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-position=1940,120'] });
+const b = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120'] });
 const p = await b.newPage();
 p.on('pageerror', (e) => console.log('PAGEERROR', String(e.stack || e).slice(0, 1500)));
 await p.goto('http://localhost:5173/?shot=1');

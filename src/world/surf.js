@@ -127,6 +127,49 @@ export function createSurf({ frozen = false, anchorTime = 12.0 } = {}) {
 // ---------------------------------------------------------------------------
 // GLSL: same model for the shaders (self-contained: also used in vertex shaders)
 
+// Foam lace for the sea and the swash sheet (needs odNoise / odHash from the sky GLSL).
+// Thin bubble filaments where Voronoi cells meet (F2 - F1), domain-warped at two scales
+// and broken up by noise so no closed ring reads as a disc, over a thin milky film: the
+// space between the strands is never darker than the clear water around the foam.
+export const FOAM_GLSL = /* glsl */ `
+vec2 odVor(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  float m1 = 8.0, m2 = 8.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+    vec2 o = vec2(float(x), float(y));
+    vec2 r = o + vec2(odHash(i + o), odHash(i + o + 19.7)) * 0.9 - f;
+    float d = dot(r, r);
+    if (d < m1) { m2 = m1; m1 = d; } else if (d < m2) m2 = d;
+  }
+  return sqrt(vec2(m1, m2));
+}
+float odFoam(vec2 p, float t) {
+  vec2 w = vec2(odNoise(p * 0.9 + 2.3), odNoise(p * 0.9 + 7.9)) - 0.5;
+  vec2 w2 = vec2(odNoise(p * 3.1 + 4.1), odNoise(p * 3.1 + 1.3)) - 0.5;
+  vec2 pw = p + w * 1.1 + w2 * 0.2;
+  vec2 A = odVor(pw * 2.6 + vec2(t * 0.15, 0.0));
+  vec2 B = odVor(pw * 6.5 + w * 1.3 - vec2(0.0, t * 0.1) + 3.1);
+  float fine = 1.0 - smoothstep(0.015, 0.04, fwidth(p.x) + fwidth(p.y));
+  float wa = 0.05 + 0.12 * odNoise(p * 1.7 + 5.0);
+  float la = 1.0 - smoothstep(0.0, wa, A.y - A.x);
+  float lb = 1.0 - smoothstep(0.0, wa * 0.8, B.y - B.x);
+  float brk = smoothstep(0.28, 0.62, odNoise(pw * 1.9 + 11.0));
+  float brk2 = smoothstep(0.25, 0.6, odNoise(pw * 4.3 + 17.0));
+  float grain = fine > 0.0 ? smoothstep(0.62, 0.85, odNoise(p * 26.0 + w * 3.0)) * fine : 0.0;
+  float dens = odNoise(p * 0.6 + t * 0.05);
+  // worm-like strands (isolines of warped value noise) so the net is never all polygons
+  float r1 = 1.0 - abs(odNoise(pw * 3.3 + w2 * 1.5 + vec2(t * 0.05, 0.0)) * 2.0 - 1.0);
+  float r2 = 1.0 - abs(odNoise(pw * 7.9 - w * 2.0 + 3.7) * 2.0 - 1.0);
+  float lr = smoothstep(0.86, 0.97, r1) * 0.75 + smoothstep(0.88, 0.98, r2) * 0.45 * brk2;
+  // bubbly clots where the foam gathers
+  float clot = smoothstep(0.64, 0.82, odNoise(pw * 2.2 + 9.0)) * smoothstep(0.35, 0.7, odNoise(pw * 9.0 + 1.0));
+  float lace = max(max(la * brk * 0.7, lr), clot * 0.65) + lb * brk2 * brk * (0.25 + 0.2 * dens) + grain * 0.22;
+  float fPatch = smoothstep(0.3, 0.75, odNoise(pw * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
+  float film = 0.2 * fPatch * smoothstep(0.2, 0.8, odNoise(pw * 1.3 + 3.0));
+  return clamp(lace * (0.3 + 0.7 * fPatch) + film, 0.0, 1.0);
+}
+`;
+
 export const SURF_GLSL = /* glsl */ `
 uniform vec4 uSurfA[${SURF_EVENTS}];   // t0, k, size, runup
 uniform vec4 uSurfB[${SURF_EVENTS}];   // zc, phase

@@ -14,6 +14,7 @@ import { createWind } from './wind.js';
 import { createCars } from './car.js';
 import { createMusic } from './music.js';
 import { createFootsteps } from './footsteps.js';
+import { createVehicleAudio } from './vehicles.js';
 import { surfaceAt } from './surface.js';
 import { PALM_CLUSTERS } from '../world/palms.js';
 
@@ -68,6 +69,7 @@ function buildScene(env, reduced) {
     cars: createCars(env),
     music: createMusic(env, PATIO),
     steps: createFootsteps(env),
+    vehicles: createVehicleAudio(env),
   };
 }
 
@@ -143,6 +145,11 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
 
     footstep(surface = 'pavement', opts) {
       if (ctx && ctx.state === 'running') parts.steps.step(surface, opts);
+    },
+    // the ridden vehicle's sounds, once per frame: state = { kind: 'bike' | 'atv' | null, ... }
+    // (see audio/vehicles.js); { kind: null } switches them off
+    vehicle(state) {
+      if (ctx && ctx.state === 'running') parts.vehicles.update(state);
     },
     surfaceAt,
     setAutoSteps(on) { auto = !!on; },

@@ -17,6 +17,7 @@ import { createBirds } from './world/birds.js'; // BIRDS: pelicans, gulls, sande
 import { buildPeople } from './world/people.js'; // PEOPLE: jogger, beach walker, cafe worker, cyclist
 import { QUALITY, IS_TOUCH } from './quality.js';
 import { createTouchControls } from './player/touch.js';
+import { createVehicles } from './vehicles/index.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') === '1';
@@ -109,6 +110,17 @@ const people = buildPeople(scene, {
 walkWorld.circles.push(...people.colliders);
 window.__people = people;
 
+// --- rideable beach cruiser and lifeguard ATV (E to ride); parked colliders block the walker
+const vehicles = createVehicles(scene, {
+  walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
+  staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c)),
+  dynamicCircles: people.colliders,
+  requestShadow: () => { renderer.shadowMap.needsUpdate = true; },
+  getTouch: () => touch,
+});
+walkWorld.circles.push(...vehicles.colliders);
+window.__vehicles = vehicles;
+
 // footstep surface: audio's map, refined by the beach (deck, stairs, damp sand, swash)
 function stepSurface(x, z, feetY) {
   const ground = beach.groundAt(x, z);
@@ -145,9 +157,9 @@ let touch = null;
 const howEl = overlay.querySelector('.how');
 function enableTouch() {
   if (touch || SHOT) return;
-  touch = createTouchControls(controls, { audio });
+  touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle() });
   window.__touch = touch;
-  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look';
+  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV';
   if (controls.active && !controls.locked) touch.setEnabled(true);
 }
 function beginTouch() {
@@ -294,7 +306,10 @@ function frame(t) {
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
 
-  if (!SHOT) controls.update(dt);
+  if (!SHOT) {
+    if (!vehicles.riding) controls.update(dt);
+    vehicles.update(dt);
+  }
   if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
   sky.update(camera);
   if (updateLod(camera)) renderer.shadowMap.needsUpdate = true; // DISTRICT

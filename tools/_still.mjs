@@ -7,7 +7,7 @@ const q = process.argv[2] ?? '?shot=1';
 const W = 960, H = 540;
 const browser = await chromium.launch({
   channel: 'chrome', headless: false,
-  args: ['--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'],
+  args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 await page.goto(url + q);

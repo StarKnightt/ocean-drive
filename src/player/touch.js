@@ -32,6 +32,10 @@ html.touch canvas { touch-action: none; }
 #touch .jump { width: 64px; height: 64px; right: calc(env(safe-area-inset-right, 0px) + 26px); bottom: calc(env(safe-area-inset-bottom, 0px) + 30px); }
 #touch .jump span { position: absolute; top: 100%; margin-top: 7px; left: 50%; transform: translateX(-50%); font: 400 8.5px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.3em; padding-left: 0.3em; text-transform: uppercase; color: rgba(255, 250, 242, 0.42); text-shadow: 0 1px 6px rgba(30, 18, 12, 0.35); }
+#touch .ride { width: 56px; height: 56px; right: calc(env(safe-area-inset-right, 0px) + 30px); bottom: calc(env(safe-area-inset-bottom, 0px) + 196px);
+  opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0s linear 0.3s, background 0.15s ease, transform 0.15s ease;
+  font: 500 9px/1 system-ui, -apple-system, sans-serif; letter-spacing: 0.22em; padding-left: 0.22em; text-transform: uppercase; }
+#touch .ride.show { opacity: 1; visibility: visible; transition: opacity 0.3s ease, visibility 0s, background 0.15s ease, transform 0.15s ease; }
 #touch .mute { width: 36px; height: 36px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); }
 #touch .mute .x { display: none; }
 #touch .mute.muted .x { display: inline; }
@@ -39,6 +43,7 @@ html.touch canvas { touch-action: none; }
 @media (max-height: 420px) {
   #touch .jump { bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); }
   #touch .mute { bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); right: calc(env(safe-area-inset-right, 0px) + 108px); }
+  #touch .ride { bottom: calc(env(safe-area-inset-bottom, 0px) + 104px); }
 }
 `;
 
@@ -49,12 +54,13 @@ const HTML = `
   <button class="jump" type="button" aria-label="Jump">
     <svg width="22" height="22" viewBox="0 0 22 22"><path d="M6 13.5 L11 8.5 L16 13.5" /></svg><span>Jump</span>
   </button>
+  <button class="ride" type="button" aria-label="Ride">Ride</button>
   <button class="mute" type="button" aria-label="Mute">
     <svg width="18" height="18" viewBox="0 0 18 18"><path d="M3 7 H5.5 L9 4 V14 L5.5 11 H3 Z" />
       <path class="w" d="M11.5 6.5 Q13 9 11.5 11.5 M13.5 5 Q16 9 13.5 13" /><path class="x" d="M12 7 L16 11 M16 7 L12 11" /></svg>
   </button>`;
 
-export function createTouchControls(walker, { audio } = {}) {
+export function createTouchControls(walker, { audio, onRide } = {}) {
   document.documentElement.classList.add('touch');
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -65,7 +71,7 @@ export function createTouchControls(walker, { audio } = {}) {
   document.body.appendChild(root);
   const $ = (s) => root.querySelector(s);
   const stickEl = $('.stick'), knobEl = $('.knob'), hintEl = $('.hint');
-  const jumpBtn = $('.jump'), muteBtn = $('.mute');
+  const jumpBtn = $('.jump'), muteBtn = $('.mute'), rideBtn = $('.ride'), jumpLabel = $('.jump span');
 
   const stick = { x: 0, y: 0 };
   walker.stick = stick;
@@ -145,6 +151,7 @@ export function createTouchControls(walker, { audio } = {}) {
     btn.addEventListener('click', (e) => { e.preventDefault(); fn(); });   // mouse / accessibility
   };
   press(jumpBtn, () => walker.jump());
+  press(rideBtn, () => onRide?.());
   const syncMute = () => {
     const m = !!audio?.muted;
     muteBtn.classList.toggle('muted', m);
@@ -162,5 +169,14 @@ export function createTouchControls(walker, { audio } = {}) {
       if (!enabled) releaseAll();
     },
     syncMute,
+    // mode: 'ride' (a vehicle in reach), 'off' (riding), null; kind: the ridden vehicle
+    setRide(mode, kind) {
+      rideBtn.classList.toggle('show', !!mode);
+      rideBtn.textContent = mode === 'off' ? 'Off' : 'Ride';
+      rideBtn.setAttribute('aria-label', mode === 'off' ? 'Get off' : 'Ride');
+      const riding = mode === 'off';
+      jumpLabel.textContent = riding ? (kind === 'atv' ? 'Boost' : 'Hop') : 'Jump';
+      jumpBtn.setAttribute('aria-label', jumpLabel.textContent);
+    },
   };
 }
