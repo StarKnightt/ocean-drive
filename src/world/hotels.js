@@ -71,6 +71,10 @@ class Buf {
     g.setAttribute('aE', new THREE.Float32BufferAttribute(this.ae, 3));
     g.setAttribute('aB', new THREE.Float32BufferAttribute(this.ab, 4));
     g.computeBoundingSphere();
+    // the plain arrays cost ~8x the Float32 copies and closures in buildHotels keep every
+    // Buf alive, so drop them once copied
+    this.count = this.pos.length / 3;
+    this.pos = []; this.nrm = []; this.col = []; this.uv = []; this.aw = []; this.ae = []; this.ab = [];
     return g;
   }
   get empty() { return this.pos.length === 0; }
@@ -358,25 +362,34 @@ class SignAtlas {
     return { uv: this.uv(r), aspect: r.w / r.h, n: chars.length };
   }
   textures() {
-    // lower tiers upload a downscaled copy and free the full-size canvases
+    // Upload only the rows the shelves used (the atlas fills from the top), the faint neon
+    // layer at half resolution and, on lower tiers, a downscaled copy; the full-size
+    // canvases are freed. The UVs were laid out for the full atlas, so the textures remap
+    // v -> 1 - (1 - v) * H / usedH.
     const s = QUALITY.signAtlas;
-    if (s < 1) {
-      const shrink = (src) => {
-        const c = document.createElement('canvas');
-        c.width = Math.round(this.W * s); c.height = Math.round(this.H * s);
-        const g = c.getContext('2d');
-        g.imageSmoothingQuality = 'high';
-        g.drawImage(src, 0, 0, c.width, c.height);
-        src.width = src.height = 1;
-        return c;
-      };
-      this.cv = shrink(this.cv); this.ev = shrink(this.ev);
-    }
-    const map = new THREE.CanvasTexture(this.cv);
-    map.colorSpace = THREE.SRGBColorSpace;
+    const usedH = Math.min(this.H, 4 * Math.ceil((Math.max(this.hp.y + this.hp.rowH, this.vp.y + this.vp.rowH) + 8) / 4));
+    const shrink = (src, f) => {
+      if (f === 1 && usedH === this.H) return src;
+      const c = document.createElement('canvas');
+      c.width = Math.round(this.W * f); c.height = Math.round(usedH * f);
+      const g = c.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(src, 0, 0, this.W, usedH, 0, 0, c.width, c.height);
+      src.width = src.height = 1;
+      return c;
+    };
+    this.cv = shrink(this.cv, s); this.ev = shrink(this.ev, s * 0.5);
+    const k = this.H / usedH;
+    const make = (cv) => {
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.repeat.set(1, k);
+      t.offset.set(0, 1 - k);
+      return t;
+    };
+    const map = make(this.cv);
     map.anisotropy = 8;
-    const em = new THREE.CanvasTexture(this.ev);
-    em.colorSpace = THREE.SRGBColorSpace;
+    const em = make(this.ev);
     return { map, em };
   }
 }
@@ -2176,7 +2189,8 @@ function streetPlan() {
 }
 
 // ---------------------------------------------------------------------------
-export function buildHotels(scene) {
+// pause(): optional async yield, awaited every ~120 ms of building so the page can paint
+export async function buildHotels(scene, pause = null) {
   const group = new THREE.Group();
   group.name = 'hotels';
   const specs = streetPlan();
@@ -2199,7 +2213,9 @@ export function buildHotels(scene) {
   // the authored block first (as always), then outward, so the nearest buildings get their
   // sign-atlas space first
   const order = [...specs.slice(0, 8), ...specs.slice(8).sort((a, b) => Math.abs(a.z0 + a.z1) - Math.abs(b.z0 + b.z1))];
+  let tYield = performance.now();
   for (const S of order) {
+    if (pause && performance.now() - tYield > 120) { await pause(); tYield = performance.now(); }
     const zc = (S.z0 + S.z1) / 2;
     const B = chunks.find((c) => zc < c.max);
     ctx.chairCol = pick(rndC, [0xc0343c, 0xe07a9a, 0xefece6, 0x3f8a5a, 0x2d6f9f, 0x6b5a45, 0xd9a13a, 0x2f8f7f, 0xefece6, 0xc0343c]);
@@ -2216,6 +2232,7 @@ export function buildHotels(scene) {
   const rnd = mulberry32(4711);
   const glassIdx = [], revealRect = [], revealRound = [];
   for (const w of ctx.windows) {
+    if (pause && performance.now() - tYield > 120) { await pause(); tYield = performance.now(); }
     const B = chunks.find((c) => w.c[2] < c.max);
     const Nv = w.N, Z = cross(Nv, UP);
     const F = { o: w.c, X: Nv, Y: UP, Z };
@@ -2420,6 +2437,7 @@ export function buildHotels(scene) {
   });
   const isSignMat = (m) => signMats.some((q) => q.signMat === m);
   for (const c of chunks) {
+    if (pause && performance.now() - tYield > 120) { await pause(); tYield = performance.now(); }
     // base: the building shells, awnings, signs and glass (always drawn); detail: frames,
     // grime, wires, terrazzo, glass block and furniture (dropped with distance)
     const add = (buf, mat, cast = true, where = 'base') => {
@@ -2519,6 +2537,6 @@ export function buildHotels(scene) {
   // walk collision: each building's front line (patios in front are raised terraces)
   group.userData.footprints = specs.map((S) => ({ z0: S.z0, z1: S.z1, fx: S.fx }));
   scene.add(group);
-  window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + c.grime.pos.length / 3, 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length, signMiss: atlases.map((a) => a.miss ?? 0), signMissAt: atlases.flatMap((a) => a.missAt ?? []), chunks: chunks.length };
+  window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + (c.grime.count ?? 0), 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length, signMiss: atlases.map((a) => a.miss ?? 0), signMissAt: atlases.flatMap((a) => a.missAt ?? []), chunks: chunks.length };
   return group;
 }

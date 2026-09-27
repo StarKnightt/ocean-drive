@@ -331,7 +331,9 @@ function installSmoothShadows(shadowCam, mapSize) {
   const b = src.indexOf(') * 0.2;', a);
   if (a < 0 || b < 0) throw new Error('smooth shadow patch: three shadowmap chunk changed');
   const f = (v) => v.toFixed(5);
-  const texM = [(shadowCam.right - shadowCam.left) / mapSize.x, (shadowCam.top - shadowCam.bottom) / mapSize.y];
+  // world size of the map; metres per texel follow the live map size (texelSize), so the
+  // map can be resized at run time without a recompile
+  const ext = [shadowCam.right - shadowCam.left, shadowCam.top - shadowCam.bottom];
   const range = shadowCam.far - shadowCam.near;
   const taps = QUALITY.shadowTaps, tapC = (taps - 1) / 2;   // taps x taps bilinear grid  // receiver-to-blocker distance (m): integral of blocker occupancy over depth offset.
   // full: 3x3 ring x 6 depths (54 samples); lite: centre + 4 diagonals x 4 depths (20)
@@ -359,7 +361,7 @@ function installSmoothShadows(shadowCam, mapSize) {
 					dSum += 0.75 * ( b0 + b1 ) + 1.75 * ( b1 + b2 ) + 10.0 * ( b2 + b3 ) + 20.0 * b3;
 				}`;
   const code = /* glsl */ `
-				const vec2 odTexM = vec2( ${f(texM[0])}, ${f(texM[1])} );
+				vec2 odTexM = vec2( ${f(ext[0])}, ${f(ext[1])} ) * texelSize;
 				const float odRange = ${f(range)};
 				float zr = shadowCoord.z;
 				// minimum filter: 1.5 texels, or ~1 screen pixel of ground (1 / gl_FragCoord.w
@@ -389,7 +391,7 @@ function installSmoothShadows(shadowCam, mapSize) {
   THREE.ShaderChunk.shadowmap_pars_fragment = src.slice(0, a) + code + src.slice(b + ') * 0.2;'.length);
 }
 
-export function createSky(renderer, scene) {
+export async function createSky(renderer, scene, { requestShadow = () => { renderer.shadowMap.needsUpdate = true; } } = {}) {
   installAerialPerspective();
   installGroundBounce();
   scene.fog = new THREE.FogExp2(0xffffff, FOG_DENSITY);
@@ -401,6 +403,17 @@ export function createSky(renderer, scene) {
 
   const envScene = new THREE.Scene();
   envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 64, 32), makeSkyMaterial(1)));
+  // build the sky shader for PMREM's linear half-float cube target in the background first:
+  // compiled inside fromScene it blocks the page for about a second
+  {
+    const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: false });
+    rt.texture.colorSpace = THREE.LinearSRGBColorSpace;
+    renderer.setRenderTarget(rt);
+    const job = renderer.compileAsync(envScene, new THREE.PerspectiveCamera(90, 1, 0.1, 500));
+    renderer.setRenderTarget(null);
+    await job;
+    rt.dispose();
+  }
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envRT = pmrem.fromScene(envScene, 0, 0.1, 500);
   pmrem.dispose();
@@ -428,11 +441,17 @@ export function createSky(renderer, scene) {
   const base = sun.target.position.clone();
   const axX = new THREE.Vector3().setFromMatrixColumn(sc.matrixWorld, 0);
   const axY = new THREE.Vector3().setFromMatrixColumn(sc.matrixWorld, 1);
-  const texX = (sc.right - sc.left) / sun.shadow.mapSize.x, texY = (sc.top - sc.bottom) / sun.shadow.mapSize.y;
+  let texX, texY;
+  const texels = () => {
+    texX = (sc.right - sc.left) / sun.shadow.mapSize.x;
+    texY = (sc.top - sc.bottom) / sun.shadow.mapSize.y;
+  };
+  texels();
+  let step = QUALITY.shadowStep;
   const _d = new THREE.Vector3(), _c = new THREE.Vector3();
   let lastZ = NaN;
   function placeShadow(z) {
-    if (Math.abs(z - lastZ) < QUALITY.shadowStep) return;   // 0.5 m at 'high'; a re-render of every caster
+    if (Math.abs(z - lastZ) < step) return;   // 0.5 m at 'high'; a re-render of the casters in the box
     lastZ = z;
     _d.set(0, 0, z);
     const u = _d.dot(axX), v = _d.dot(axY);
@@ -443,14 +462,28 @@ export function createSky(renderer, scene) {
     sun.position.copy(_c).addScaledVector(sunDir, 400);
     sun.updateMatrixWorld();
     sun.target.updateMatrixWorld();
-    renderer.shadowMap.needsUpdate = true;
+    requestShadow();
   }
-  renderer.shadowMap.needsUpdate = true;
+  requestShadow();
   installSmoothShadows(sc, sun.shadow.mapSize);
 
   return {
     dome,
     sun,
+    // one step lighter sun shadows (GPU guard): half the map, half as many re-renders.
+    // Returns false at the floor.
+    lowerShadow() {
+      const s = sun.shadow;
+      if (s.mapSize.x <= 1024) return false;
+      s.mapSize.multiplyScalar(0.5);
+      s.map?.dispose();
+      s.map = null;
+      texels();
+      step *= 2;
+      lastZ = NaN;
+      requestShadow();
+      return true;
+    },
     update(camera) {
       dome.position.copy(camera.position);
       placeShadow(camera.position.z);

@@ -860,6 +860,35 @@ function palmettoGeometry(rnd) {
   return mergeGeometries(parts.map(prep));
 }
 
+// One InstancedMesh along the whole beach has a single bounding sphere hundreds of metres
+// wide, so neither the view nor the sun's shadow box could skip any of it: add it as
+// blocks along z instead (same instances, same order within a block).
+function addInBlocks(scene, im, block = 60) {
+  const byBlock = new Map();
+  const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), c = new THREE.Color();
+  for (let i = 0; i < im.count; i++) {
+    im.getMatrixAt(i, m4);
+    if (m4.determinant() === 0) continue;   // an empty placeholder (gap), invisible anyway
+    const k = Math.floor(p.setFromMatrixPosition(m4).z / block);
+    if (!byBlock.has(k)) byBlock.set(k, []);
+    byBlock.get(k).push(i);
+  }
+  for (const k of [...byBlock.keys()].sort((a, b) => a - b)) {
+    const idx = byBlock.get(k);
+    const part = new THREE.InstancedMesh(im.geometry, im.material, idx.length);
+    idx.forEach((src, j) => {
+      im.getMatrixAt(src, m4);
+      part.setMatrixAt(j, m4);
+      if (im.instanceColor) { im.getColorAt(src, c); part.setColorAt(j, c); }
+    });
+    part.castShadow = im.castShadow;
+    part.receiveShadow = im.receiveShadow;
+    part.computeBoundingSphere();
+    scene.add(part);
+  }
+  im.dispose();
+}
+
 // ranges: z spans to plant; path: the gaps that steer the random stream (the original
 // accesses for the original span), gap: extra gaps left empty without touching the stream
 function duneVegetation(scene, rnd, colliders, ranges = [[-220, 220]], path = (z) => nearOrigAccess(z, 1.3), gap = (z) => nearMoreAccess(z, 1.3)) {
@@ -892,7 +921,7 @@ function duneVegetation(scene, rnd, colliders, ranges = [[-220, 220]], path = (z
     });
     im.castShadow = true;
     im.receiveShadow = true;
-    scene.add(im);
+    addInBlocks(scene, im);
   };
   const leafMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: THREE.DoubleSide });
   const oatMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
@@ -959,7 +988,7 @@ function wrackClumps(scene, rnd, zAt = (r) => (r - 0.5) * 400, N = 9000, keep = 
   im.count = Math.min(N, Math.round(QUALITY.wrack * keep));   // strands are in random order: any prefix is a uniform thinning
   im.receiveShadow = true;
   im.castShadow = true;
-  scene.add(im);
+  addInBlocks(scene, im);
 }
 
 // steps over the seawall at the access points, and the wall itself as a collider
