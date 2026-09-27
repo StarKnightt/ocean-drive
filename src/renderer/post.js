@@ -5,6 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { sunDir } from '../sky.js';
 
 // Operates on linear HDR scene colour, before tone mapping.
@@ -70,28 +71,27 @@ const GradeShader = {
     }`,
 };
 
-// Display-referred (after tone mapping + sRGB): a gentle S-curve, sensor noise that
-// is visible in darks and mids and absent above mid-grey, and a ~17% corner vignette.
+// Display-referred (after tone mapping + sRGB): a gentle S-curve and a subtle corner
+// vignette. No grain; only a static half-step dither so the sky gradient doesn't band.
 const FinishShader = {
   name: 'CameraFinish',
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uGrain: { value: 0.055 },
-    uVignette: { value: 0.17 },
+    uVignette: { value: 0.12 },
     uContrast: { value: 0.4 },
   },
   vertexShader: GradeShader.vertexShader,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float uTime, uGrain, uVignette, uContrast;
+    uniform float uVignette, uContrast;
     uniform vec2 uResolution;
     varying vec2 vUv;
-    float hash(vec3 p) {
-      p = fract(p * 0.1031);
-      p += dot(p, p.zyx + 31.32);
-      return fract((p.x + p.y) * p.z);
+    float hash(vec2 p) {
+      vec3 q = fract(vec3(p.xyx) * 0.1031);
+      q += dot(q, q.yzx + 33.33);
+      return fract((q.x + q.y) * q.z);
     }
     void main() {
       vec3 c = texture2D(tDiffuse, vUv).rgb;
@@ -101,26 +101,24 @@ const FinishShader = {
       vec2 p = (vUv - 0.5) * vec2(uResolution.x / uResolution.y, 1.0) / 1.02;
       c *= 1.0 - uVignette * smoothstep(0.1, 1.0, dot(p, p));
       vec2 px = floor(vUv * uResolution);
-      float fr = floor(uTime * 24.0);
-      float g = hash(vec3(px, fr)) + hash(vec3(px + 17.0, fr + 3.0)) - 1.0;
-      float lm = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      // monochrome, in darks and mids only: smooth bright sky stays clean
-      c += vec3(g) * uGrain * (1.0 - smoothstep(0.3, 0.6, lm));
+      c += (hash(px) + hash(px + 71.0) - 1.0) / 255.0;
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
     }`,
 };
 
 const _fwd = new THREE.Vector3(), _sp = new THREE.Vector3();
 
-export function createPost(renderer, scene, camera, { bloomStrength = 0.16 } = {}) {
+// Quality knobs: samples = MSAA of the scene target (0 = none), bloom = add the bloom
+// pass, fxaa = a final FXAA pass (cheap edge smoothing when there is no MSAA).
+export function createPost(renderer, scene, camera, { bloomStrength = 0.16, samples = 4, bloom: useBloom = true, fxaa: useFxaa = false } = {}) {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-  const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+  const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples });
   const composer = new EffectComposer(renderer, rt);
 
   composer.addPass(new RenderPass(scene, camera));
 
-  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), bloomStrength, 0.25, 4.0);
-  composer.addPass(bloom);
+  const bloom = useBloom ? new UnrealBloomPass(new THREE.Vector2(size.x, size.y), bloomStrength, 0.25, 4.0) : null;
+  if (bloom) composer.addPass(bloom);
 
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
@@ -128,12 +126,18 @@ export function createPost(renderer, scene, camera, { bloomStrength = 0.16 } = {
   composer.addPass(new OutputPass());
   const finish = new ShaderPass(FinishShader);
   composer.addPass(finish);
+  const fxaa = useFxaa ? new ShaderPass(FXAAShader) : null;
+  if (fxaa) composer.addPass(fxaa);
 
-  function setSize(w, h) {
-    composer.setSize(w, h);
+  function updateUniforms() {
     const s = renderer.getDrawingBufferSize(new THREE.Vector2());
     grade.uniforms.uResolution.value.set(s.x, s.y);
     finish.uniforms.uResolution.value.set(s.x, s.y);
+    fxaa?.uniforms.resolution.value.set(1 / s.x, 1 / s.y);
+  }
+  function setSize(w, h) {
+    composer.setSize(w, h);
+    updateUniforms();
   }
   setSize(size.x / renderer.getPixelRatio(), size.y / renderer.getPixelRatio());
 
@@ -142,6 +146,11 @@ export function createPost(renderer, scene, camera, { bloomStrength = 0.16 } = {
     bloom,
     grade,
     setSize,
+    // call after renderer.setPixelRatio (dynamic resolution)
+    setPixelRatio(r) {
+      composer.setPixelRatio(r);
+      updateUniforms();
+    },
     render(time) {
       grade.uniforms.uTime.value = time;
       finish.uniforms.uTime.value = time;

@@ -59,24 +59,27 @@ function applyListener(ctx, L, immediate) {
   }
 }
 
-function buildScene(env) {
+function buildScene(env, reduced) {
   return {
     waves: createWaves(env, { waterlineX: WATERLINE }),
     gulls: createGulls(env),
-    wind: createWind(env, PALMS),
+    // fewer simultaneous voices on small devices: every other palm-cluster rustle source
+    wind: createWind(env, reduced ? PALMS.filter((_, i) => i % 2 === 0) : PALMS),
     cars: createCars(env),
     music: createMusic(env, PATIO),
     steps: createFootsteps(env),
   };
 }
 
-export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
+export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } = {}) {
+  const reduced = voices === 'reduced';
   let ctx = null, env = null, parts = null, timer = null;
   let muted = false, vol = volume, auto = autoSteps;
   let nextWave = 0, nextGull = 0, nextCar = 0, spatialAcc = 0;
   const L = { x: 0, y: EYE, z: 0, fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 };
   const carCbs = new Set(), waveCbs = new Set();
   const walk = { x: null, z: null, acc: 0, still: 0 };
+  let gullSource = null;   // BIRDS hook: calls come from real gulls
 
   function tick() {
     if (!ctx || ctx.state !== 'running') return;
@@ -90,7 +93,7 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
       nextWave += rr(6, 10);
     }
     if (nextGull < now) nextGull = now + rr(1, 4);
-    while (nextGull < ahead) { parts.gulls.callAt(nextGull, L); nextGull += rr(5, 20); }
+    while (nextGull < ahead) { parts.gulls.callAt(nextGull, L); nextGull += reduced ? rr(10, 30) : rr(5, 20); }
     if (now >= nextCar) { parts.cars.spawn(); nextCar = now + rr(40, 70); }
   }
 
@@ -110,8 +113,9 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
         env = createEngine(ctx);
         Object.assign(env.listener, L);
         applyListener(ctx, L, true);
-        parts = buildScene(env);
+        parts = buildScene(env, reduced);
         parts.cars.onPass((c) => carCbs.forEach((cb) => cb(c)));
+        parts.gulls.setSource(gullSource);   // BIRDS hook
         const now = ctx.currentTime;
         nextWave = now + 0.8; nextGull = now + rr(2, 6); nextCar = now + rr(10, 25);
         timer = setInterval(tick, 50);
@@ -154,6 +158,10 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
     onCarEnd(cb) { return parts ? parts.cars.onEnd(cb) : () => {}; },
     getCars() { return parts ? parts.cars.list() : []; },
     spawnCar(opts) { return parts ? parts.cars.spawn(opts) : null; },
+    // BIRDS hooks: fn(L) -> { x, y, z, vx, vy, vz } of a visible gull (or null) voices each
+    // gull call; wingFlutter(p) plays the wingbeats of a gull taking off near the listener
+    setGullSource(fn) { gullSource = fn; parts?.gulls.setSource(fn); },
+    wingFlutter(p) { if (ctx && ctx.state === 'running') parts.gulls.flutterAt(ctx.currentTime + 0.02, p); },
 
     get context() { return ctx; },
     stats() {

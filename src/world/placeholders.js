@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   WORLD_Z, CURB_HEIGHT, SIDEWALK_W, PARKING, LANES, SIDEWALK_E, PARK, SAND,
-  CAR, TOWER, sandHeight, SHORE_X,
+  CAR, TOWER, sandHeight, SHORE_X, CROSS, CROSS_STREETS,
 } from './layout.js';
 import { noiseColorTexture, mulberry32 } from '../textures/noise.js';
 
@@ -342,6 +342,16 @@ function buildBackground(group) {
   const bq = new THREE.Quaternion(), yAxis = new THREE.Vector3(0, 1, 0);
   const off = new THREE.Vector3();
   for (const b of bg) if (b.tier && !b.above) b.parent.tierH = b.h;
+  // keep the cross streets open: the back row (and near towers) standing in a roadway
+  // are drawn empty (zero scale, so the random stream and every other building stay)
+  const inRoad = (b) => {
+    if (b.parent) return b.parent.hidden;
+    const reach = b.kind === 1 && b.x1 > -64 ? Infinity : 110;
+    if (b.x1 < -reach) return false;
+    const slack = Math.abs(Math.sin(b.rot)) * (b.x1 - b.x0);
+    return CROSS_STREETS.some((c) => (c.far ? reach === Infinity : true) && b.z0 - slack < c.z + CROSS.hw + 1 && b.z0 + b.w + slack > c.z - CROSS.hw - 1);
+  };
+  for (const b of bg) if (!b.parent) b.hidden = inRoad(b);
   bg.forEach((b, i) => {
     if (b.parent) {
       const p = b.parent, d = p.x1 - p.x0;
@@ -354,6 +364,7 @@ function buildBackground(group) {
       m4.compose(new THREE.Vector3(b.x0, 0, b.z0), bq, new THREE.Vector3(b.x1 - b.x0, b.h, b.w));
       bm.setColorAt(i, c.setHex(bgCols[i % bgCols.length]));
     }
+    if (inRoad(b)) m4.makeScale(0, 0, 0);
     bm.setMatrixAt(i, m4);
     aBg.set([b.kind, 2.9 + rnd() * 0.5, 1.4 + rnd() * 1.4, rnd()], i * 4);
   });
@@ -376,6 +387,7 @@ function buildBackground(group) {
       bq.setFromAxisAngle(yAxis, b.rot);
       off.set(d / 2, 0, 0).applyQuaternion(bq);
       m4.compose(new THREE.Vector3(b.x0, 0, b.z0).add(off), bq, new THREE.Vector3(d, b.h, d));
+      if (b.hidden) m4.makeScale(0, 0, 0);
       cm.setMatrixAt(i, m4);
       cm.setColorAt(i, c.setHex(bgCols[bg.indexOf(b) % bgCols.length]));
       aR.set([b.kind, 3.1, 1.6, rnd()], i * 4);

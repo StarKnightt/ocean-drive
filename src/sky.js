@@ -4,6 +4,7 @@
 // always dissolves into exactly the sky colour behind it.
 import * as THREE from 'three';
 import { SUN, compassToDir } from './world/layout.js';
+import { QUALITY } from './quality.js';
 
 export const sunDir = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.Vector3());
 
@@ -124,7 +125,7 @@ float odNoise(vec2 p) {
 float odFbm(vec2 p) {
   float a = 0.5, s = 0.0;
   mat2 r = mat2(0.8, 0.6, -0.6, 0.8);
-  for (int i = 0; i < 5; i++) { s += a * odNoise(p); p = r * p * 2.03 + 17.1; a *= 0.5; }
+  for (int i = 0; i < ${QUALITY.cloudOctaves}; i++) { s += a * odNoise(p); p = r * p * 2.03 + 17.1; a *= 0.5; }
   return s;
 }
 
@@ -332,6 +333,7 @@ function installSmoothShadows(shadowCam, mapSize) {
   const f = (v) => v.toFixed(5);
   const texM = [(shadowCam.right - shadowCam.left) / mapSize.x, (shadowCam.top - shadowCam.bottom) / mapSize.y];
   const range = shadowCam.far - shadowCam.near;
+  const taps = QUALITY.shadowTaps, tapC = (taps - 1) / 2;   // taps x taps bilinear grid
   const code = /* glsl */ `
 				const vec2 odTexM = vec2( ${f(texM[0])}, ${f(texM[1])} );
 				const float odRange = ${f(range)};
@@ -363,15 +365,15 @@ function installSmoothShadows(shadowCam, mapSize) {
 					// and fringed crowns stay readable far from their casters
 					float pen = max( 0.0016 * dSum / bSum, minM );
 					vec2 rT = clamp( pen / odTexM, vec2( 1.0 ), vec2( 6.0 ) );
-					vec2 stp = rT * texelSize / 3.5;
+					vec2 stp = rT * texelSize / ${f(tapC)};
 					shadow = 0.0;
-					for ( int i = 0; i < 8; i ++ ) {
-						for ( int j = 0; j < 8; j ++ ) {
-							vec2 o = ( vec2( float( i ), float( j ) ) - 3.5 ) * stp;
+					for ( int i = 0; i < ${taps}; i ++ ) {
+						for ( int j = 0; j < ${taps}; j ++ ) {
+							vec2 o = ( vec2( float( i ), float( j ) ) - ${f(tapC)} ) * stp;
 							shadow += texture( shadowMap, vec3( shadowCoord.xy + o, zr ) );
 						}
 					}
-					shadow /= 64.0;
+					shadow /= ${(taps * taps).toFixed(1)};
 				}`;
   THREE.ShaderChunk.shadowmap_pars_fragment = src.slice(0, a) + code + src.slice(b + ') * 0.2;'.length);
 }
@@ -396,30 +398,44 @@ export function createSky(renderer, scene) {
 
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
   sun.castShadow = true;
-  // 8192-wide sun map on capable GPUs; 4096 when the GPU can't or the device looks modest
-  const lowPerf = (navigator.hardwareConcurrency ?? 8) <= 4 || (navigator.deviceMemory ?? 8) <= 4 ||
-    /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || new URLSearchParams(location.search).has('lowshadow');
-  const big = renderer.capabilities.maxTextureSize >= 8192 && !lowPerf;
-  sun.shadow.mapSize.set(big ? 8192 : 4096, big ? 2048 : 1024);
+  // 8192-wide sun map at 'high' on capable GPUs (4096 on modest ones), smaller per tier
+  const [smW, smH] = QUALITY.shadowMap;
+  const fits = renderer.capabilities.maxTextureSize >= smW;
+  sun.shadow.mapSize.set(fits ? smW : smW / 2, fits ? smH : smH / 2);
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.035;
   sun.shadow.radius = 1.5;
   scene.add(sun, sun.target);
 
-  // The shadow box follows the viewer along the street in 10 m steps
-  // (re-rendered only when it moves): ~2 cm texels on the facades.
+  // The shadow box (~2 cm texels on the facades) follows the viewer along the street. It
+  // is only ever translated by whole shadow texels in light space, so static casters
+  // rasterize identically after a move and nothing shimmers or pops; re-rendered each
+  // time the viewer has moved 0.5 m.
   const SPAN = 80;
-  let centerZ = NaN;
+  fitShadow(sun, new THREE.Box3(new THREE.Vector3(-62, -1.5, -SPAN), new THREE.Vector3(96, 30, SPAN)));
+  const sc = sun.shadow.camera;
+  const base = sun.target.position.clone();
+  const axX = new THREE.Vector3().setFromMatrixColumn(sc.matrixWorld, 0);
+  const axY = new THREE.Vector3().setFromMatrixColumn(sc.matrixWorld, 1);
+  const texX = (sc.right - sc.left) / sun.shadow.mapSize.x, texY = (sc.top - sc.bottom) / sun.shadow.mapSize.y;
+  const _d = new THREE.Vector3(), _c = new THREE.Vector3();
+  let lastZ = NaN;
   function placeShadow(z) {
-    const cz = Math.round(z / 10) * 10;
-    if (cz === centerZ) return;
-    centerZ = cz;
-    fitShadow(sun, new THREE.Box3(
-      new THREE.Vector3(-62, -1.5, cz - SPAN), new THREE.Vector3(96, 30, cz + SPAN)));
+    if (Math.abs(z - lastZ) < QUALITY.shadowStep) return;   // 0.5 m at 'high'; a re-render of every caster
+    lastZ = z;
+    _d.set(0, 0, z);
+    const u = _d.dot(axX), v = _d.dot(axY);
+    // keep the along-light part, snap the two light-space image axes to whole texels
+    _c.copy(_d).addScaledVector(axX, -u).addScaledVector(axY, -v)
+      .addScaledVector(axX, Math.round(u / texX) * texX).addScaledVector(axY, Math.round(v / texY) * texY).add(base);
+    sun.target.position.copy(_c);
+    sun.position.copy(_c).addScaledVector(sunDir, 400);
+    sun.updateMatrixWorld();
+    sun.target.updateMatrixWorld();
     renderer.shadowMap.needsUpdate = true;
   }
-  placeShadow(0);
-  installSmoothShadows(sun.shadow.camera, sun.shadow.mapSize);
+  renderer.shadowMap.needsUpdate = true;
+  installSmoothShadows(sc, sun.shadow.mapSize);
 
   return {
     dome,

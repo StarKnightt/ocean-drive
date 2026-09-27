@@ -8,6 +8,7 @@ import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
 import { SAND, SHORE_X, SEA_LEVEL, BREAK_X } from './layout.js';
 import { SURF_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
+import { QUALITY } from '../quality.js';
 
 function waveTable() {
   const rnd = mulberry32(4242);
@@ -48,13 +49,15 @@ float odSandY(float x) {
 
 function swellGLSL() {
   return /* glsl */ `
-  // Gerstner swell: displacement (xyz) and slope (d h / d x, d h / d z)
-  vec3 odSwell(vec2 p, float t, float amp, out vec2 slope) {
+  // Gerstner swell: displacement (xyz) and slope (d h / d x, d h / d z). h = grid spacing
+  // (0 per pixel): a component the mesh can't resolve is left to the per-pixel normal,
+  // otherwise it swims and pops across the moving vertices.
+  vec3 odSwell(vec2 p, float t, float amp, float h, out vec2 slope) {
     vec3 d = vec3(0.0); slope = vec2(0.0);
     ${SWELL.map((s) => {
       const k = (2 * Math.PI) / s.L, w = Math.sqrt(9.81 * k), dx = Math.cos(s.ang), dz = Math.sin(s.ang);
       return `{ float ph = dot(p, vec2(${dx.toFixed(4)}, ${dz.toFixed(4)})) * ${k.toFixed(4)} - t * ${w.toFixed(4)} + ${s.ph.toFixed(2)};
-      float a = ${s.a.toFixed(3)} * amp;
+      float a = ${s.a.toFixed(3)} * amp * (1.0 - smoothstep(${(s.L * 0.1).toFixed(3)}, ${(s.L * 0.22).toFixed(3)}, h));
       d += vec3(${dx.toFixed(4)} * -0.6 * a * sin(ph), a * cos(ph), ${dz.toFixed(4)} * -0.6 * a * sin(ph));
       slope += vec2(${dx.toFixed(4)}, ${dz.toFixed(4)}) * (-a * ${k.toFixed(4)} * sin(ph)); }`;
     }).join('\n    ')}
@@ -62,7 +65,11 @@ function swellGLSL() {
   }`;
 }
 
-function polarGrid(rings = 240, segs = 320, r0 = 0.25, r1 = 25000) {
+const GRID = { ...QUALITY.oceanGrid, r0: 0.25, r1: 25000 };   // high: 400 rings x 320 segs
+// vertex spacing / radius of the polar grid (the coarser of ring step and arc step)
+const GRID_K = Math.max(Math.pow(GRID.r1 / GRID.r0, 1 / (GRID.rings - 1)) - 1, (2 * Math.PI) / GRID.segs);
+
+function polarGrid({ rings, segs, r0, r1 } = GRID) {
   const q = Math.pow(r1 / r0, 1 / (rings - 1));
   const pos = new Float32Array((rings * segs + 1) * 3);
   let o = 3; // vertex 0 = centre
@@ -116,12 +123,15 @@ export function createOcean(scene, surf) {
         float r = length(position.xz);
         float shore = smoothstep(${(SHORE_X - 1.0).toFixed(2)}, ${(SHORE_X + 12.0).toFixed(2)}, p.x);
         float amp = shore * (1.0 - smoothstep(120.0, 500.0, r));
+        // the grid moves with the camera: displace only by what its spacing resolves
+        float h = ${GRID_K.toFixed(5)} * max(r, ${GRID.r0.toFixed(2)});
         vec2 sl;
-        vec3 d = amp > 0.0 ? odSwell(p, uTime, amp, sl) : vec3(0.0);
+        vec3 d = amp > 0.0 ? odSwell(p, uTime, amp, h, sl) : vec3(0.0);
         float white = 0.0;
         float crest = 0.0;
         if (r < 400.0 && p.x > ${(SHORE_X - 2.0).toFixed(2)} && p.x < ${(BREAK_X + 40.0).toFixed(2)})
           crest = surfCrest(p.x, p.y, uTime, white) * smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 2.0).toFixed(2)}, p.x);
+        crest *= 1.0 - smoothstep(0.6, 1.4, h);   // breaker faces are ~1 m wide
         vec3 wp = vec3(p.x + d.x, ${SEA_LEVEL.toFixed(3)} + d.y + crest, p.y + d.z);
         vWorld = wp;
         vBase = p;
@@ -182,15 +192,19 @@ export function createOcean(scene, surf) {
         // normal: swell (analytic) + crest (finite difference) + sub-pixel chop
         vec2 swSl;
         float swAmp = shore * (1.0 - smoothstep(120.0, 500.0, length(p - cameraPosition.xz)));
-        if (swAmp > 0.0) odSwell(p, t, swAmp, swSl); else swSl = vec2(0.0);
+        if (swAmp > 0.0) odSwell(p, t, swAmp, 0.0, swSl); else swSl = vec2(0.0);
         vec2 crSl = vec2(0.0);
         // whitewater evaluated per pixel (per vertex it smears into grid-aligned dots)
         float whiteF = 0.0;
+        float crestP = vCrest;
         if (p.x < ${(BREAK_X + 40.0).toFixed(2)} && dist < 400.0) {
-          float w1, w2;
+          float w0, w1, w2;
           float e = max(0.35, fp * 1.5);
+          // crest height per pixel too: the vertex value is faded where the grid is coarse
+          float h0 = surfCrest(p.x, p.y, t, w0);
           float hx = surfCrest(p.x + e, p.y, t, w1), hz = surfCrest(p.x, p.y + e, t, w2);
-          crSl = vec2(hx - vCrest, hz - vCrest) / e;
+          crestP = h0 * smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 2.0).toFixed(2)}, p.x);
+          crSl = vec2(hx - h0, hz - h0) / e;
           crSl *= min(1.0, 0.6 / (length(crSl) + 1e-4));   // no needle-steep facets flashing the sky
           whiteF = 0.5 * (w1 + w2);
         }
@@ -221,7 +235,7 @@ export function createOcean(scene, surf) {
         // backlit wave faces: sun through the thin crest, green-turquoise
         float toSun = max(dot(-V, OD_SUN), 0.0);
         float face = clamp(dot(normalize(n.xz + 1e-5), normalize(V.xz + 1e-5)), 0.0, 1.0) * length(n.xz) * 3.0;
-        float thick = clamp(vCrest / 0.35, 0.0, 1.0);
+        float thick = clamp(crestP / 0.35, 0.0, 1.0);
         // grey-silver / gold through the crest, only the thinnest lip a faint green
         vec3 thru = mix(vec3(0.36, 0.33, 0.27), vec3(0.3, 0.33, 0.29), smoothstep(0.6, 0.15, thick));
         col += OD_SUNCOL * OD_SUN_I * thru * 0.03 * thick * clamp(face, 0.0, 1.0) * (0.25 + toSun * toSun);

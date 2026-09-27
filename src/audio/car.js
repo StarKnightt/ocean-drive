@@ -15,11 +15,11 @@ export function createCars(env) {
   const passCbs = new Set(), endCbs = new Set();
   let ids = 0;
 
-  // opts: dir (+1 = southbound, z -200 -> +200), speed m/s, zStart (tests), at (start time)
+  // opts: dir (+1 = southbound, z -400 -> +400, the whole district), speed m/s, zStart (tests), at (start time)
   function spawn({ dir = Math.random() < 0.6 ? 1 : -1, speed = (25 / 3.6) * rr(0.9, 1.1), zStart, at } = {}) {
     const t0 = (at ?? ctx.currentTime) + 0.05;
     const x = dir > 0 ? LANE_CX - 1.75 : LANE_CX + 1.75;
-    const z0 = zStart ?? -200 * dir, z1 = 200 * dir;
+    const z0 = zStart ?? -400 * dir, z1 = 400 * dir;
     const T = Math.abs(z1 - z0) / speed;
     const y = 0.6;
     const sp = createSpatial(env, { x, y, z: z0, ref: 6, rolloff: 1, airScale: 28, wet: 0.14, wetFall: 50 });

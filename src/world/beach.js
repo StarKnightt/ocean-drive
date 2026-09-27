@@ -15,20 +15,26 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  SAND, SEA_LEVEL, SHORE_X, BREAK_X, WET_LINE_X, TOWER, PARK, SAND_DETAIL_Z,
+  SAND, SEA_LEVEL, SHORE_X, BREAK_X, WET_LINE_X, TOWER, TOWERS, PARK, SAND_DETAIL_Z, DISTRICT,
   sandHeight, sandDetail, groundHeight, compassToDir, SUN,
 } from './layout.js';
 import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
 import { SURF_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
+import { QUALITY } from '../quality.js';
 
 const DETAIL_TILE = 6;   // m covered by one tile of the micro-relief texture
 // beach access through the seawall: steps up from the lawn, over the cap, onto the sand
 export const ACCESS_Z = [-30, 32];
+// one more access per block of the extended district
+export const MORE_ACCESS_Z = [-322, -245, -134, 134, 245, 322];
+const ALL_ACCESS_Z = [...ACCESS_Z, ...MORE_ACCESS_Z];
 const ACCESS_HALF = 1.2;
 const WALL = { x0: PARK.wallX - 0.3, x1: PARK.wallX + 0.4, top: 0.68 };
 const STEPS = [[10.8, 11.1, 0.33], [11.1, 11.4, 0.5], [11.4, 12.55, 0.7]];   // x0, x1, top
-const nearAccess = (z, pad = 0) => ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
+const nearAccess = (z, pad = 0) => ALL_ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
+const nearOrigAccess = (z, pad = 0) => ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
+const nearMoreAccess = (z, pad = 0) => MORE_ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
 
 // ---------------------------------------------------------------------------
 // churned-sand bake: R,G = slope (dh/dx, dh/dz), B = lit fraction under the fixed
@@ -251,7 +257,7 @@ function sandMaterial(detailTex, surf) {
             odS += vec2(odLumps(vOdW.xz + vec2(le, 0.0)) - l0, odLumps(vOdW.xz + vec2(0.0, le)) - l0) / le * (1.0 - 0.7 * odWet) * (1.0 - 0.5 * odRake);
           }
           float odDist = length(vOdW - cameraPosition);
-          float odNear = (1.0 - smoothstep(35.0, 60.0, odDist)) * odPrintK;
+          float odNear = (1.0 - smoothstep(${f(QUALITY.printFade[0])}, ${f(QUALITY.printFade[1])}, odDist)) * odPrintK;
           float odDent = 0.0;
           if (odNear > 0.01) {
             vec2 p = vOdW.xz;
@@ -517,11 +523,18 @@ const T = {
   stair: { z0: -1.85, z1: -0.75, run: 0.28 },
 };
 
-function buildTower(scene, colliders) {
-  const bx = TOWER.x, bz = TOWER.z;
+// colour schemes: the original pink / teal, a lime / violet one and an orange / blue one
+const TOWER_PALETTES = {
+  classic: { PINK: 0xf0a0b4, TEAL: 0x2fb5a8, YEL: 0xf6d24a, NAVY: 0x2b3f8c, ORANGE: 0xf08a3c, skirt: 0.3, skirt3: false },
+  lime: { PINK: 0xb9d84c, TEAL: 0x7a55b4, YEL: 0xf3eed8, NAVY: 0x3d2c72, ORANGE: 0xf4c23a, skirt: 0.26, skirt3: true },
+  sunset: { PINK: 0xf2893e, TEAL: 0x2f7fcf, YEL: 0xf6de4e, NAVY: 0xcf3a5c, ORANGE: 0x3aa96a, skirt: 0.55, skirt3: false },
+};
+function buildTower(scene, colliders, TW = TOWER) {
+  const bx = TW.x, bz = TW.z;
   const base = sandHeight(bx) + sandDetail(bx, bz);
-  const D = TOWER.deckHeight;
-  const PINK = 0xf0a0b4, TEAL = 0x2fb5a8, YEL = 0xf6d24a, NAVY = 0x2b3f8c, WHITE = 0xf3efe6, DECK = 0xd9cdb6, ORANGE = 0xf08a3c;
+  const D = TW.deckHeight;
+  const PAL = TOWER_PALETTES[TW.palette ?? 'classic'];
+  const { PINK, TEAL, YEL, NAVY, ORANGE } = PAL, WHITE = 0xf3efe6, DECK = 0xd9cdb6;
   const parts = [], glass = [], rails = [];
   const add = (g) => parts.push(g);
   const addR = (g) => rails.push(g);
@@ -547,14 +560,15 @@ function buildTower(scene, colliders) {
   }
   for (const x of [-1.86, 3.26]) { add(beam([x, yb0, -1.8], [x, D - 0.35, 1.8], 0.15, NAVY)); add(beam([x, yb0, 1.8], [x, D - 0.35, -1.8], 0.15, NAVY)); }
   // solid painted skirt panel around the stilts: vertical pink / white stripes, teal trim
-  const skY0 = 0.3, skY1 = 0.85, sw0 = 0.3;
+  const skY0 = 0.3, skY1 = 0.85, sw0 = PAL.skirt;
+  const skirtCol = (i) => (PAL.skirt3 ? [PINK, WHITE, TEAL][i % 3] : i % 2 ? WHITE : PINK);
   for (const z of [-1.92, 1.92]) {
-    for (let x = -1.9, i = 0; x < 3.3; x += sw0, i++) add(boxAt(x, Math.min(x + sw0, 3.3), skY0, skY1, z - 0.03, z + 0.03, i % 2 ? WHITE : PINK));
+    for (let x = -1.9, i = 0; x < 3.3; x += sw0, i++) add(boxAt(x, Math.min(x + sw0, 3.3), skY0, skY1, z - 0.03, z + 0.03, skirtCol(i)));
     add(boxAt(-1.95, 3.35, skY1, skY1 + 0.08, z - 0.05, z + 0.05, TEAL));
     add(boxAt(-1.95, 3.35, skY0 - 0.08, skY0, z - 0.05, z + 0.05, TEAL));
   }
   for (const x of [-1.92, 3.32]) {
-    for (let z = -1.9, i = 0; z < 1.9; z += sw0, i++) add(boxAt(x - 0.03, x + 0.03, skY0, skY1, z, Math.min(z + sw0, 1.9), i % 2 ? WHITE : PINK));
+    for (let z = -1.9, i = 0; z < 1.9; z += sw0, i++) add(boxAt(x - 0.03, x + 0.03, skY0, skY1, z, Math.min(z + sw0, 1.9), skirtCol(i)));
     add(boxAt(x - 0.05, x + 0.05, skY1, skY1 + 0.08, -1.95, 1.95, TEAL));
     add(boxAt(x - 0.05, x + 0.05, skY0 - 0.08, skY0, -1.95, 1.95, TEAL));
   }
@@ -860,13 +874,14 @@ function palmettoGeometry(rnd) {
   return mergeGeometries(parts.map(prep));
 }
 
-function duneVegetation(scene, rnd, colliders) {
+// ranges: z spans to plant; path: the gaps that steer the random stream (the original
+// accesses for the original span), gap: extra gaps left empty without touching the stream
+function duneVegetation(scene, rnd, colliders, ranges = [[-220, 220]], path = (z) => nearOrigAccess(z, 1.3), gap = (z) => nearMoreAccess(z, 1.3)) {
   const ground = (x, z) => sandHeight(x) + sandDetail(x, z);
   const fenceX = SAND.x0 + 4.6;
-  const path = (z) => nearAccess(z, 1.3);             // beach-access gaps
   const grape = [], oats = [], palms = [];
   // irregular clumps: dense where the along-shore noise is high, gaps elsewhere
-  for (let z = -220; z < 220; z += 0.5 + rnd() * 1.0) {
+  for (const [zA, zB] of ranges) for (let z = zA; z < zB; z += 0.5 + rnd() * 1.0) {
     if (path(z)) continue;
     const dens = 0.5 + 0.5 * Math.sin(z * 0.043 + 1.3) * Math.sin(z * 0.11 + 0.4);
     if (rnd() > 0.5 + 0.5 * dens) continue;
@@ -877,12 +892,16 @@ function duneVegetation(scene, rnd, colliders) {
     else if (r < 0.5) palms.push([x, z, 0.6 + rnd() * 0.9]);
     for (let k = 0, n = 1 + Math.floor(rnd() * rnd() * 9); k < n; k++) oats.push([x + (rnd() - 0.5) * 2.6, z + (rnd() - 0.5) * 2.6, 0.45 + rnd() * 0.85]);
   }
-  const place = (geo, mat, items, sy = 1) => {
+  const place = (geo, mat, all, sy = 1) => {
+    // lower tiers thin the clumps beyond the walkable block
+    const keep = QUALITY.farFoliage, step = keep < 1 ? Math.round(1 / keep) : 1;
+    const items = step > 1 ? all.filter(([, z], i) => Math.abs(z) < 100 || i % step === 0) : all;
     const im = new THREE.InstancedMesh(geo, mat, items.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
     items.forEach(([x, z, s], i) => {
       e.set((rnd() - 0.5) * 0.15, rnd() * 6.28, (rnd() - 0.5) * 0.15);
       m4.compose(new THREE.Vector3(x, ground(x, z) - 0.03, z), q.setFromEuler(e), new THREE.Vector3(s * (0.8 + rnd() * 0.5), s * sy * (0.7 + rnd() * 0.4), s * (0.8 + rnd() * 0.5)));
+      if (gap(z)) m4.makeScale(0, 0, 0);   // (drawn empty: the random stream stays the same)
       im.setMatrixAt(i, m4);
     });
     im.castShadow = true;
@@ -901,12 +920,15 @@ function duneVegetation(scene, rnd, colliders) {
 
   // rope-and-post dune fence
   const fence = [];
-  let prev = null;
-  for (let z = -220; z <= 220; z += 1.9 + rnd() * 1.1) {
-    if (path(z)) { prev = null; continue; }
+  for (const [zA, zB] of ranges) {
+  let prev = null, drawn = null;
+  for (let z = zA; z <= zB; z += 1.9 + rnd() * 1.1) {
+    if (path(z)) { prev = drawn = null; continue; }
+    const open = gap(z);
     const x = fenceX + 0.15 * Math.sin(z * 0.07) + (rnd() - 0.5) * 0.25, y = ground(x, z);
     const ph = 0.9 + rnd() * 0.22, lx = (rnd() - 0.5) * 0.16, lz = (rnd() - 0.5) * 0.16;
-    fence.push(colorize(new THREE.CylinderGeometry(0.045 + rnd() * 0.015, 0.055, ph, 7).translate(0, ph / 2 - 0.08, 0).rotateX(lz).rotateZ(lx).translate(x, y, z), new THREE.Color(0x8d8478).multiplyScalar(0.8 + rnd() * 0.35).getHex()));
+    const post = colorize(new THREE.CylinderGeometry(0.045 + rnd() * 0.015, 0.055, ph, 7).translate(0, ph / 2 - 0.08, 0).rotateX(lz).rotateZ(lx).translate(x, y, z), new THREE.Color(0x8d8478).multiplyScalar(0.8 + rnd() * 0.35).getHex());
+    if (!open) fence.push(post);
     const top = [x - Math.sin(lx) * (ph - 0.2), y + ph - 0.2, z + Math.sin(lz) * (ph - 0.2)];
     if (prev) {
       const pts = [], sag = 0.05 + rnd() * 0.2;
@@ -914,10 +936,12 @@ function duneVegetation(scene, rnd, colliders) {
         const f = i / 8;
         pts.push(new THREE.Vector3(prev[3][0] + (top[0] - prev[3][0]) * f, prev[3][1] + (top[1] - prev[3][1]) * f - sag * Math.sin(f * Math.PI), prev[3][2] + (top[2] - prev[3][2]) * f));
       }
-      fence.push(colorize(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4), 0xd6c6a0));
+      if (drawn && !open) fence.push(colorize(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4), 0xd6c6a0));
     }
-    if (prev && Math.abs(z) < 100) colliders.push({ min: { x: Math.min(x, prev[0]) - 0.08, y, z: prev[2] }, max: { x: Math.max(x, prev[0]) + 0.08, y: y + 0.9, z } });
+    if (drawn && !open && Math.abs(z) < DISTRICT.zMax + 5) colliders.push({ min: { x: Math.min(x, drawn[0]) - 0.08, y, z: drawn[2] }, max: { x: Math.max(x, drawn[0]) + 0.08, y: y + 0.9, z } });
     prev = [x, y, z, top];
+    drawn = open ? null : prev;
+  }
   }
   const fm = new THREE.Mesh(mergeGeometries(fence.map(prep)), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
   fm.castShadow = true;
@@ -925,19 +949,18 @@ function duneVegetation(scene, rnd, colliders) {
   scene.add(fm);
 }
 
-function wrackClumps(scene, rnd) {
+function wrackClumps(scene, rnd, zAt = (r) => (r - 0.5) * 400, N = 9000, keep = 1) {
   const g = new THREE.CylinderGeometry(0.007, 0.007, 1, 4, 4).rotateZ(Math.PI / 2);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i), p.getY(i) * 0.6 + Math.sin(p.getX(i) * 9.0) * 0.012, p.getZ(i) + Math.sin(p.getX(i) * 6.0 + 1.0) * 0.03);
   g.computeVertexNormals();
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
-  const N = 9000;
   const im = new THREE.InstancedMesh(g, mat, N);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
   for (let i = 0; i < N; i++) {
     // strands tangled in clusters along the line, with bare gaps between clusters
     let z;
-    do z = (rnd() - 0.5) * 400; while (Math.sin(z * 0.09) + 0.6 * Math.sin(z * 0.23 + 2.0) < -0.5);
+    do z = zAt(rnd()); while (Math.sin(z * 0.09) + 0.6 * Math.sin(z * 0.23 + 2.0) < -0.5);
     const wx = WET_LINE_X - 0.9 + 0.5 * Math.sin(z * 0.047) + 0.25 * Math.sin(z * 0.19 + 1);
     const x = wx + (rnd() - 0.5) * (0.25 + 0.35 * rnd());
     const len = 0.06 + rnd() * rnd() * 0.24;
@@ -947,6 +970,7 @@ function wrackClumps(scene, rnd) {
     const gold = rnd();
     im.setColorAt(i, c.setRGB(0.4 + gold * 0.25, 0.3 + gold * 0.16, 0.13 + gold * 0.06, THREE.SRGBColorSpace));
   }
+  im.count = Math.min(N, Math.round(QUALITY.wrack * keep));   // strands are in random order: any prefix is a uniform thinning
   im.receiveShadow = true;
   im.castShadow = true;
   scene.add(im);
@@ -955,16 +979,16 @@ function wrackClumps(scene, rnd) {
 // steps over the seawall at the access points, and the wall itself as a collider
 function seawallAccess(scene, colliders) {
   const parts = [];
-  for (const az of ACCESS_Z) {
+  for (const az of ALL_ACCESS_Z) {
     for (const [x0, x1, top] of STEPS) parts.push(boxAt(x0, x1, 0, top, az - ACCESS_HALF, az + ACCESS_HALF, 0xd8cbb2));
     for (const s of [-1, 1]) parts.push(boxAt(10.75, 12.6, 0, 0.78, az + s * (ACCESS_HALF + 0.1) - 0.1, az + s * (ACCESS_HALF + 0.1) + 0.1, 0xcbbd9f));   // cheek walls
   }
   const m = new THREE.Mesh(mergeGeometries(parts), paintedMaterial({ wear: 0 }));
   m.castShadow = m.receiveShadow = true;
   scene.add(m);
-  const cuts = [-100, ...ACCESS_Z.flatMap((a) => [a - ACCESS_HALF, a + ACCESS_HALF]), 100];
+  const cuts = [DISTRICT.zMin - 10, ...[...ALL_ACCESS_Z].sort((a, b) => a - b).flatMap((a) => [a - ACCESS_HALF, a + ACCESS_HALF]), DISTRICT.zMax + 10];
   for (let i = 0; i < cuts.length; i += 2) colliders.push({ min: { x: WALL.x0, y: 0, z: cuts[i] }, max: { x: WALL.x1, y: WALL.top, z: cuts[i + 1] } });
-  for (const az of ACCESS_Z) for (const s of [-1, 1]) {
+  for (const az of ALL_ACCESS_Z) for (const s of [-1, 1]) {
     const zc = az + s * (ACCESS_HALF + 0.1);
     colliders.push({ min: { x: 10.75, y: 0, z: zc - 0.1 }, max: { x: 12.6, y: 0.78, z: zc + 0.1 } });
   }
@@ -1037,12 +1061,17 @@ function props(scene, colliders) {
 export function buildBeach(scene, surf) {
   const rnd = mulberry32(2024);
   const colliders = [];
-  const detail = bakeSandDetail();
+  const detail = bakeSandDetail(QUALITY.sandDetail);
   const mat = sandMaterial(detail, surf);
   const addSand = (g) => { const m = new THREE.Mesh(g, mat); m.receiveShadow = true; scene.add(m); };
-  addSand(sandGeometry(-SAND_DETAIL_Z, SAND_DETAIL_Z, 440, true));
-  addSand(sandGeometry(SAND_DETAIL_Z, 2500, 1, false));
-  addSand(sandGeometry(-2500, -SAND_DETAIL_Z, 1, false));
+  // detailed sand through the district (the original +-220 m sheet, then the extensions
+  // at the same row spacing), flat low-res sand beyond
+  addSand(sandGeometry(-220, 220, QUALITY.sandRows, true));
+  const extRows = Math.round(QUALITY.sandRows * (SAND_DETAIL_Z + 5 - 220) / 440);
+  addSand(sandGeometry(220, SAND_DETAIL_Z + 5, extRows, true));
+  addSand(sandGeometry(-SAND_DETAIL_Z - 5, -220, extRows, true));
+  addSand(sandGeometry(SAND_DETAIL_Z + 5, 2500, 1, false));
+  addSand(sandGeometry(-2500, -SAND_DETAIL_Z - 5, 1, false));
 
   const sheet = swashSheet(surf);
   scene.add(sheet);
@@ -1051,21 +1080,29 @@ export function buildBeach(scene, surf) {
   seawallAccess(scene, colliders);
   const { surfaces, flagU } = buildTower(scene, colliders);
   props(scene, colliders);
+  // the extended beach (own random streams): wrack, dune plants and fence, two more towers
+  const span = DISTRICT.zMax + 5 - 200;
+  wrackClumps(scene, mulberry32(2026), (r) => (r < 0.5 ? -200 - span + r * 2 * span : 200 + (r - 0.5) * 2 * span), 6600, span / 400);
+  duneVegetation(scene, mulberry32(2025), colliders, [[-DISTRICT.zMax - 5, -221], [221, DISTRICT.zMax + 5]], (z) => nearAccess(z, 1.3), () => false);
+  const towers = [{ surfaces, flagU }, ...TOWERS.slice(1).map((tw) => buildTower(scene, colliders, tw))];
 
   const groundAt = (x, z) => groundHeight(x, z);
   function heightAt(x, z, currentY = -Infinity) {
     const g = groundAt(x, z);
-    const d = surfaces.deck, s = surfaces.stair;
     const reach = (y) => currentY >= y - 0.45;   // a step up of up to 45 cm is walkable
     if (x >= STEPS[0][0] && x < STEPS[2][1] && nearAccess(z)) {
       const st = STEPS.find((q) => x < q[1]);
       if (reach(st[2])) return st[2];
     }
-    if (x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1 && reach(surfaces.deckY)) return surfaces.deckY;
-    if (x >= s.x0 && x < s.x1 && z >= s.z0 && z <= s.z1) {
-      const i = Math.floor((s.x1 - x) / s.run);
-      const y = surfaces.deckY - (i + 1) * s.rise;
-      if (y > g && reach(y)) return y;
+    for (const { surfaces: T } of towers) {
+      const d = T.deck, s = T.stair;
+      if (Math.abs(z - (d.z0 + d.z1) / 2) > 8) continue;
+      if (x >= d.x0 && x <= d.x1 && z >= d.z0 && z <= d.z1 && reach(T.deckY)) return T.deckY;
+      if (x >= s.x0 && x < s.x1 && z >= s.z0 && z <= s.z1) {
+        const i = Math.floor((s.x1 - x) / s.run);
+        const y = T.deckY - (i + 1) * s.rise;
+        if (y > g && reach(y)) return y;
+      }
     }
     return g;
   }
@@ -1075,10 +1112,11 @@ export function buildBeach(scene, surf) {
     groundAt,
     colliders,
     surfaces,
+    towers: towers.map((t) => t.surfaces),
     swashAt: (x, z, t) => surf.swashAt(x, z, t),
     waterDepthAt: (x, z, t) => surf.waterDepthAt(x, z, t),
     update(t, camera) {
-      flagU.value = t;
+      for (const tw of towers) tw.flagU.value = t;
       if (camera) sheet.position.z = Math.round(camera.position.z / 2) * 2;
     },
   };

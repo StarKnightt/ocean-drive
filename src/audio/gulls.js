@@ -87,16 +87,42 @@ export function createGulls(env) {
     return { end: tt, last };
   }
 
+  // BIRDS hook: source(L) -> { x, y, z, vx, vy, vz } of a real (visible) gull, or null
+  let source = null;
+  function setSource(fn) { source = fn; }
+
   // A gull (sometimes answered by a second one) calling while gliding over the beach.
   function callAt(t, L, kind = pick(['kyow', 'kyow', 'laugh', 'kek'])) {
-    const x = rr(15, 105), y = rr(10, 28), z = L.z + rr(-50, 50);
+    const src = source?.(L);
+    const x = src ? src.x : rr(15, 105), y = src ? src.y : rr(10, 28), z = src ? src.z : L.z + rr(-50, 50);
     const sp = createSpatial(env, { x, y, z, ref: 6, rolloff: 1, airScale: 30, wet: 0.12 });
     const { end, last } = phrase(t, kind, sp.input);
     const dur = end - t + 0.3;
-    sp.setPosition(clamp(x + rr(-6, 6) * dur, 10, 120), y + rr(-1, 1) * dur, z + rr(-6, 6) * dur, { at: t, ramp: dur });
+    if (src) sp.setPosition(x + src.vx * dur, y + src.vy * dur, z + src.vz * dur, { at: t, ramp: dur });
+    else sp.setPosition(clamp(x + rr(-6, 6) * dur, 10, 120), y + rr(-1, 1) * dur, z + rr(-6, 6) * dur, { at: t, ramp: dur });
     last.onended = () => setTimeout(() => sp.dispose(), 400);
     if (Math.random() < 0.3) callAt(t + rr(0.4, 1.5), L, pick(['kek', 'laugh', 'kyow']));
   }
 
-  return { callAt };
+  // BIRDS hook: soft wingbeats of a gull taking off nearby (p = { x, y, z, vx, vy, vz })
+  function flutterAt(t, p) {
+    const sp = createSpatial(env, { x: p.x, y: p.y, z: p.z, ref: 2, rolloff: 1.4, airScale: 30, wet: 0.04 });
+    const n = new AudioBufferSourceNode(ctx, { buffer: B.white, loop: true });
+    const g = new GainNode(ctx, { gain: 0 });
+    chain(n, bq(ctx, 'bandpass', rr(550, 800), 0.9), bq(ctx, 'lowpass', 2200), g, sp.input);
+    const beats = 6, rate = rr(4, 4.6);
+    for (let i = 0; i < beats; i++) {
+      const tb = t + i / rate, pk = 0.35 * (1 - i / (beats + 1));
+      g.gain.setValueAtTime(0, tb);
+      g.gain.linearRampToValueAtTime(pk, tb + 0.035);
+      g.gain.linearRampToValueAtTime(0, tb + 0.15);
+    }
+    const dur = beats / rate + 0.2;
+    sp.setPosition(p.x + p.vx * dur, p.y + p.vy * dur, p.z + p.vz * dur, { at: t, ramp: dur });
+    n.start(t, Math.random() * 5);
+    n.stop(t + dur);
+    n.onended = () => setTimeout(() => sp.dispose(), 300);
+  }
+
+  return { callAt, setSource, flutterAt };
 }

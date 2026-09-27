@@ -10,15 +10,23 @@ import { createOcean } from './world/ocean.js';
 import { createSurf } from './world/surf.js';
 import { buildBeach } from './world/beach.js';
 import { Walker } from './player/walker.js';
-import { EYE_HEIGHT, CURB_HEIGHT, SAND, WET_LINE_X, TOWER, HOTEL } from './world/layout.js';
+import { EYE_HEIGHT, CURB_HEIGHT, SAND, WET_LINE_X, TOWERS, HOTEL, DISTRICT } from './world/layout.js';
+import { updateLod } from './world/lod.js'; // DISTRICT: per-block distance culling
 import { createAudio } from './audio/index.js'; // SOUND agent: synthesized spatial audio
+import { createBirds } from './world/birds.js'; // BIRDS: pelicans, gulls, sanderlings, grackles
+import { buildPeople } from './world/people.js'; // PEOPLE: jogger, beach walker, cafe worker, cyclist
+import { QUALITY, IS_TOUCH } from './quality.js';
+import { createTouchControls } from './player/touch.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') === '1';
 const FROZEN_TIME = 12.0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+// render scale: the tier's base scale, stepped down / up by the dynamic resolution below
+const baseDpr = () => Math.min(window.devicePixelRatio, QUALITY.maxDpr);
+let renderScale = QUALITY.renderScale;
+renderer.setPixelRatio(baseDpr() * renderScale);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const TONE = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutral: THREE.NeutralToneMapping };
@@ -33,17 +41,38 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 30000);
 
+// LOADER hook: report a build phase to the loading screen (index.html) and, outside ?shot mode,
+// yield one painted frame so it can repaint between the synchronous build steps.
+const loadStep = (fraction, label) => {
+  window.__loadProgress?.(fraction, label);
+  if (SHOT) return;
+  return new Promise((r) => {
+    const t = setTimeout(r, 120); // hidden tab: rAF is paused, don't stall the build
+    requestAnimationFrame(() => setTimeout(() => { clearTimeout(t); r(); }, 0));
+  });
+};
+
+await loadStep(0.1, 'Raising the sun…'); // LOADER
 const sky = createSky(renderer, scene);
 buildPlaceholders(scene);
+await loadStep(0.22, 'Painting the hotels…'); // LOADER
 const hotels = buildHotels(scene);
+await loadStep(0.4, 'Planting palms…'); // LOADER
 const palms = buildPalms(scene);
+await loadStep(0.5, 'Laying Ocean Drive…'); // LOADER
 buildStreet(scene);
 const cars = buildCars(scene);
+await loadStep(0.6, 'Pouring the ocean…'); // LOADER
 const surf = createSurf({ frozen: SHOT, anchorTime: FROZEN_TIME });
 const beach = buildBeach(scene, surf);
 const ocean = createOcean(scene, surf);
-const post = createPost(renderer, scene, camera,
-  params.has('bloom') ? { bloomStrength: parseFloat(params.get('bloom')) } : undefined);
+const birds = createBirds(scene, { beach, surf, shot: SHOT }); // BIRDS
+window.__birds = birds; // BIRDS
+await loadStep(0.72, 'Tuning the waves…'); // LOADER
+const post = createPost(renderer, scene, camera, {
+  ...(params.has('bloom') ? { bloomStrength: parseFloat(params.get('bloom')) } : {}),
+  samples: QUALITY.msaa, bloom: QUALITY.bloom, fxaa: QUALITY.fxaa,
+});
 
 // --- walking: the hotel terraces are raised, so the facade line stops the walker at the
 // patio edge; everything else collides as boxes / circles
@@ -55,9 +84,9 @@ const walkWorld = {
   ],
   circles: [
     ...STREET_COLLIDERS.filter((c) => c.r),
-    ...PALM_TREES.filter((t) => Math.abs(t.z) < 110).map((t) => ({ x: t.x, z: t.z, r: 0.26 })),
+    ...PALM_TREES.filter((t) => Math.abs(t.z) < DISTRICT.zMax + 10).map((t) => ({ x: t.x, z: t.z, r: 0.26 })),
   ],
-  bounds: { x0: HOTEL.patioX + 0.2, x1: 110, z0: -90, z1: 90 },
+  bounds: { x0: HOTEL.patioX + 0.2, x1: 110, z0: DISTRICT.zMin, z1: DISTRICT.zMax, soft: 14 },
 };
 const controls = new Walker(camera, renderer.domElement, walkWorld);
 // first frame: hotel sidewalk, looking up the row of sunlit fronts
@@ -66,14 +95,24 @@ window.__walker = controls;
 window.__cars = cars;
 
 // --- SOUND hook: audio starts on the click-to-start gesture; never in ?shot mode ---
-const audio = createAudio();
+const audio = createAudio({ voices: QUALITY.audioVoices });
 window.__audio = audio;
+audio.setGullSource?.((L) => birds.gullSource(L)); // BIRDS: gull calls come from visible gulls
+birds.onFlutter = (p) => audio.wingFlutter?.(p);   // BIRDS: wingbeats of a gull taking off nearby
 audio.setAutoSteps(false);   // the walker drives the footsteps
+
+// --- PEOPLE hook: a few procedural passers-by; their circle colliders move with them ---
+const people = buildPeople(scene, {
+  beach, hotels, walker: controls, shot: SHOT, mode: params.get('people'),
+  getCars: () => (SHOT ? [] : audio.getCars()),   // the cyclist waits for a clear road
+});
+walkWorld.circles.push(...people.colliders);
+window.__people = people;
 
 // footstep surface: audio's map, refined by the beach (deck, stairs, damp sand, swash)
 function stepSurface(x, z, feetY) {
   const ground = beach.groundAt(x, z);
-  if (feetY - ground > 0.25 && Math.abs(x - TOWER.x) < 9 && Math.abs(z - TOWER.z) < 5) return { surface: 'wood' };
+  if (feetY - ground > 0.25 && TOWERS.some((T) => Math.abs(x - T.x) < 9 && Math.abs(z - T.z) < 5)) return { surface: 'wood' };
   if (feetY - ground > 0.12 && x > 10.5 && x < 12.8) return { surface: 'pavement' };   // seawall steps
   let surface = audio.surfaceAt(x, z, feetY, SAND.waterline);
   if (x > SAND.x0 + 0.5) {
@@ -85,11 +124,12 @@ function stepSurface(x, z, feetY) {
 }
 const stepLog = [];
 window.__stepLog = stepLog;
-controls.onStep = ({ x, z, feetY, speed }) => {
+controls.onStep = ({ x, z, feetY, speed, land }) => {
   const { surface, depth } = stepSurface(x, z, feetY);
-  stepLog.push({ x: +x.toFixed(2), z: +z.toFixed(2), y: +feetY.toFixed(2), surface, depth: depth && +depth.toFixed(3) });
+  stepLog.push({ x: +x.toFixed(2), z: +z.toFixed(2), y: +feetY.toFixed(2), surface, depth: depth && +depth.toFixed(3), land });
   if (stepLog.length > 400) stepLog.shift();
-  audio.footstep(surface, { gain: Math.min(1.25, 0.8 + speed * 0.1) * (surface === 'splash' ? 1.1 : 1), depth });
+  const gain = land ? 1.3 : Math.min(1.25, 0.8 + speed * 0.1);   // a jump lands a little harder
+  audio.footstep(surface, { gain: gain * (surface === 'splash' ? 1.1 : 1), depth });
 };
 
 // UI: a quiet caption over the first frame; no HUD while walking
@@ -100,27 +140,64 @@ function begin() {
   audio.start();
   controls.active = true;
 }
+// TOUCH: joystick + drag-look, shown on coarse-pointer devices or after the first touch
+let touch = null;
+const howEl = overlay.querySelector('.how');
+function enableTouch() {
+  if (touch || SHOT) return;
+  touch = createTouchControls(controls, { audio });
+  window.__touch = touch;
+  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look';
+  if (controls.active && !controls.locked) touch.setEnabled(true);
+}
+function beginTouch() {
+  begin();   // inside touchend: resumes the AudioContext on iOS
+  touch.setEnabled(true);
+  overlay.classList.add('hidden');
+  const el = document.documentElement;
+  const fs = el.requestFullscreen ?? el.webkitRequestFullscreen;
+  if (fs && !document.fullscreenElement && !params.has('nofs')) {
+    try {
+      Promise.resolve(fs.call(el, { navigationUI: 'hide' }))
+        .then(() => screen.orientation?.lock?.('landscape'))
+        .catch(() => {});
+    } catch { /* not allowed here */ }
+  }
+}
 if (!SHOT) {
+  if (IS_TOUCH) enableTouch();
+  else addEventListener('touchstart', enableTouch, { once: true, passive: true, capture: true });
   if (params.has('autostart')) {
     // testing: walk and hear without pointer lock
     begin();
+    touch?.setEnabled(true);
   } else {
     overlay.classList.remove('hidden');
-    overlay.addEventListener('click', () => { begin(); controls.lock(); });
+    // a tap: touch controls, no pointer lock (touchend is a valid gesture for audio + fullscreen)
+    overlay.addEventListener('touchend', (e) => {
+      e.preventDefault();   // no emulated click -> no pointer lock request
+      enableTouch();
+      beginTouch();
+    }, { passive: false });
+    // lock first, synchronously inside the click (the user gesture), then start the audio
+    overlay.addEventListener('click', () => {
+      if (touch?.enabled) return;
+      controls.lock(); begin();
+    });
     controls.onLockChange = (locked) => {
       overlay.classList.toggle('hidden', locked);
       controls.active = locked || controls.dragLook;
     };
-    controls.onLockError = () => {
-      overlay.classList.add('hidden');
-      note.textContent = 'Drag to look around';
+    controls.onLockError = ({ dragLook }) => {
+      overlay.classList.toggle('hidden', dragLook);
+      note.textContent = dragLook ? 'Drag to look around' : 'Click again to capture the mouse';
       note.classList.add('show');
       setTimeout(() => note.classList.remove('show'), 3500);
-      controls.active = true;
+      controls.active = dragLook;
     };
   }
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyM') audio.setMuted(!audio.muted);
+    if (e.code === 'KeyM') { audio.setMuted(!audio.muted); touch?.syncMute(); }
     if (e.code === 'Escape' && controls.dragLook) { controls.active = false; overlay.classList.remove('hidden'); }
   });
   if (params.has('hud')) hud.classList.remove('hidden');
@@ -128,12 +205,63 @@ if (!SHOT) {
 // visuals follow the audio's wave schedule (audio clock -> render clock)
 audio.onWave((w) => surf.pushAudioWave({ visualT0: elapsed + (w.t - w.now), k: w.k, size: w.size, runup: w.runup, z: w.z }));
 
-window.addEventListener('resize', () => {
+function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(baseDpr() * renderScale);   // devicePixelRatio can change (zoom, other screen)
   renderer.setSize(window.innerWidth, window.innerHeight);
+  post.setPixelRatio(renderer.getPixelRatio());
   post.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onResize);
+// mobile: the new size can settle a little after the rotation event
+window.addEventListener('orientationchange', () => { onResize(); setTimeout(onResize, 350); });
+window.visualViewport?.addEventListener('resize', () => {
+  if (renderer.domElement.width !== Math.floor(window.innerWidth * renderer.getPixelRatio())) onResize();
 });
+
+// Dynamic resolution: if frames average over ~22 ms (under ~45 fps) for 2 s, step the
+// render scale down (to 0.6 at least); step back up after a long calm stretch. A scale
+// that had to be abandoned is not retried for a while (and longer each time), so it
+// never oscillates. Off in ?shot mode and with ?dynres=0.
+const DYN = {
+  on: !SHOT && params.get('dynres') !== '0',
+  min: 0.6, max: QUALITY.renderScale, step: 0.1,
+  acc: 0, n: 0, slow: 0, fast: 0, hold: 3, clock: 0,
+  failed: new Map(),   // scale -> { until, backoff }: scales that proved too heavy
+};
+const scaleKey = (s) => Math.round(s * 100);
+function setRenderScale(s) {
+  renderScale = Math.round(s * 100) / 100;
+  onResize();
+}
+function dynamicResolution(rawDt) {
+  if (!DYN.on || document.hidden) return;
+  DYN.clock += rawDt;
+  if (DYN.hold > 0) { DYN.hold -= rawDt; return; }       // settle after start / a change
+  if (rawDt > 0.25) return;                              // a hitch (tab switch, GC), not load
+  DYN.acc += rawDt; DYN.n++;
+  if (DYN.acc < 0.5) return;
+  const avg = DYN.acc / DYN.n;                           // mean frame time over ~0.5 s
+  DYN.acc = 0; DYN.n = 0;
+  DYN.slow = avg > 0.022 ? DYN.slow + 0.5 : 0;
+  DYN.fast = avg < 0.0185 ? DYN.fast + 0.5 : 0;
+  if (DYN.slow >= 2 && renderScale > DYN.min + 1e-3) {
+    // the scale we just left was too heavy: don't retry it for a while (longer each time)
+    const f = DYN.failed.get(scaleKey(renderScale));
+    const backoff = f ? Math.min(f.backoff * 2, 300) : 15;
+    DYN.failed.set(scaleKey(renderScale), { until: DYN.clock + backoff, backoff });
+    DYN.slow = DYN.fast = 0; DYN.hold = 1.5;
+    setRenderScale(Math.max(DYN.min, renderScale - DYN.step));
+  } else if (DYN.fast >= 4 && renderScale < DYN.max - 1e-3) {
+    const next = Math.min(DYN.max, renderScale + DYN.step / 2);
+    if (DYN.clock > (DYN.failed.get(scaleKey(next))?.until ?? 0)) {
+      DYN.slow = DYN.fast = 0; DYN.hold = 2;
+      setRenderScale(next);
+    }
+  }
+}
+window.__dynres = () => ({ scale: renderScale, pixelRatio: renderer.getPixelRatio(), on: DYN.on });
 
 // Harness hooks
 let fps = 0;
@@ -159,7 +287,9 @@ let elapsed = 0, frames = 0, fpsAcc = 0, fpsFrames = 0;
 
 function frame(t) {
   timer.update(t);
-  const dt = Math.min(timer.getDelta(), 0.1);
+  const rawDt = timer.getDelta();
+  const dt = Math.min(rawDt, 0.1);
+  dynamicResolution(rawDt);
   elapsed = SHOT ? FROZEN_TIME : elapsed + dt;
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
@@ -167,10 +297,13 @@ function frame(t) {
   if (!SHOT) controls.update(dt);
   if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
   sky.update(camera);
+  if (updateLod(camera)) renderer.shadowMap.needsUpdate = true; // DISTRICT
   surf.update(elapsed);
   ocean.update(elapsed, camera);
   beach.update(elapsed, camera);
   palms.update(elapsed);
+  birds.update(dt, camera); // BIRDS
+  people.update(dt, camera); // PEOPLE
   cars.update(dt, SHOT ? null : audio.getCars());
 
   renderer.info.reset();
@@ -181,11 +314,13 @@ function frame(t) {
   if (!hud.classList.contains('hidden') && frames % 15 === 0) {
     const i = window.__renderInfo(), p = camera.position;
     hud.textContent = `${i.fps} fps · ${i.calls} calls · ${(i.triangles / 1000).toFixed(0)}k tris · ` +
-      `x ${p.x.toFixed(1)} y ${p.y.toFixed(1)} z ${p.z.toFixed(1)}`;
+      `x ${p.x.toFixed(1)} y ${p.y.toFixed(1)} z ${p.z.toFixed(1)} · ${QUALITY.tier} ×${renderer.getPixelRatio().toFixed(2)}`;
   }
   if (frames === 10) window.__sceneReady = true;
 }
 
 renderer.shadowMap.needsUpdate = true;
+await loadStep(0.8, 'Mixing the morning light…'); // LOADER: shader compile phase
 await renderer.compileAsync(scene, camera);
+window.__loadProgress?.(0.94, 'Almost there…'); // LOADER
 renderer.setAnimationLoop(frame);

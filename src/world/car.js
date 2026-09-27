@@ -5,7 +5,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { CAR, roadHeight } from './layout.js';
+import { CAR, roadHeight, CROSS, CROSS_STREETS, crossLegs, DISTRICT } from './layout.js';
+import { registerLod } from './lod.js';
+
+const blockedBay = (zc, hl) => CROSS_STREETS.some((c) => {
+  if (Math.abs(zc - c.z) < CROSS.hw + CROSS.R + hl + 0.5) return true;
+  return !c.far && crossLegs(c.z).some(([a, b]) => zc + hl > a - 0.5 && zc - hl < b + 0.5);
+});
 
 const LEN = 5.3, HALF = LEN / 2;
 const WHEEL_R = 0.36, WHEELS_Z = [1.62, -1.52], TRACK = 0.8;
@@ -589,21 +595,23 @@ function makeSedan(paint, env, type = 'sedan') {
 
 // Nose-to-tail parked cars along the rest of the lane (a few empty bays), a muted modern
 // palette; merged by material so the whole row costs a handful of draw calls.
-function parkedFleet(scene, taken) {
+function parkedFleet(scene, taken, { z0 = -88, z1 = 90, seed = 7331, parent = scene, clip = false } = {}) {
   const S = shared(), P = sedanParts();
-  const rnd = (() => { let a = 7331; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
+  const rnd = (() => { let a = seed; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
   const cols = [0xb9bcbf, 0xe4e4e0, 0x1c1d1f, 0x1f2c44, 0x4a4d52, 0x8a1e1e, 0xb8a98a, 0xa6a9ac, 0x2e3033];
   const types = ['sedan', 'sedan', 'hatch', 'suv', 'suv', 'pickup'].map(modernGeometry);
   const parts = { body: [], glass: [], trim: [], lens: [], red: [], tyre: [], rim: [], blob: [] };
   const colliders = [];
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
   const add = (list, geo, m, col) => { const g = geo.clone().applyMatrix4(m); list.push(col === undefined ? g : paintColors(g, col)); };
-  for (let z = -88; z < 90;) {
+  for (let z = z0; z < z1;) {
     const ty = types[Math.floor(rnd() * types.length)], T = ty.T;
     const zc = z + T.L / 2;
     z += T.L + 0.7 + rnd() * 1.6;
+    if (clip && zc + T.L / 2 > z1) break;
     if (Math.abs(zc - CAR.z) < 6.5 || Math.abs(zc - (-10)) < 6.5 || (zc > 22 && zc < 44) || taken.some((t) => Math.abs(zc - t) < 5.6) || rnd() < 0.2) continue;
     const x = CAR.x + 0.05 + (rnd() - 0.5) * 0.3;
+    const mark = Object.values(parts).map((l) => l.length);
     q.setFromEuler(new THREE.Euler(0, (rnd() - 0.5) * 0.09, 0));
     m4.compose(new THREE.Vector3(x, roadHeight(x), zc), q, one);
     add(parts.body, ty.paint, m4, cols[Math.floor(rnd() * cols.length)]);
@@ -617,6 +625,9 @@ function parkedFleet(scene, taken) {
       add(parts.tyre, ty.tyre, w);
       add(parts.rim, ty.rim, w);
     }
+    // no parking in the cross-street mouths or on their crosswalks (decided after the
+    // random draws, so the rest of the row is unchanged)
+    if (blockedBay(zc, T.L / 2)) { Object.values(parts).forEach((l, k) => { l.length = mark[k]; }); continue; }
     colliders.push({ min: { x: x - 1.0, y: 0, z: zc - T.L / 2 - 0.05 }, max: { x: x + 1.0, y: T.top, z: zc + T.L / 2 + 0.05 } });
   }
   if (!colliders.length) return colliders;
@@ -625,7 +636,7 @@ function parkedFleet(scene, taken) {
   const mk = (list, mat, shadow = true, keepUv = false) => {
     const m = new THREE.Mesh(mergeGeometries(keepUv ? list : list.map(strip)), mat);
     m.castShadow = m.receiveShadow = shadow;
-    scene.add(m);
+    parent.add(m);
     return m;
   };
   mk(parts.body, modernPaint(scene.environment, 'fleet'));
@@ -658,6 +669,18 @@ export function buildCars(scene) {
   scene.add(hero.car);
   const fleet = parkedFleet(scene, [-1.5, -24, -31.5, 58]);
   colliders.push(...fleet);
+  // the extended blocks: one row per block, clear of the intersections, culled by distance
+  const stops = [DISTRICT.zMin - 4, ...CROSS_STREETS.filter((c) => !c.far && Math.abs(c.z) > 100).map((c) => c.z), -79, 79, DISTRICT.zMax + 4].sort((a, b) => a - b);
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i], b = stops[i + 1];
+    if (a === -79 && b === 79) continue;   // the authored block (row above)
+    const za = a <= DISTRICT.zMin - 4 ? a : a + 17, zb = b >= DISTRICT.zMax + 4 ? b : b - 16;
+    if (zb - za < 8) continue;
+    const g = new THREE.Group();
+    colliders.push(...parkedFleet(scene, [], { z0: za, z1: zb, seed: 9100 + i * 77, parent: g, clip: true }));
+    scene.add(g);
+    registerLod(g, za, zb, 'cars');
+  }
 
   // moving cars: one mesh per sounding audio car (hidden when none is passing)
   const pool = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0].map((paint) => {

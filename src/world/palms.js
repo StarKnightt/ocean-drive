@@ -7,15 +7,17 @@
 // shadows show the gaps between them. Wind sways crowns and frond tips in the vertex
 // shader (frozen in ?shot mode through the time passed to update()).
 import * as THREE from 'three';
-import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT } from './layout.js';
+import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, CROSS_STREETS, crossLegs, crossStreetAt, DISTRICT } from './layout.js';
+import { registerLodHook, LOD } from './lod.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
+import { QUALITY } from '../quality.js';
 
 // ---------------------------------------------------------------------------
 // Placement (pure data, also used by the audio engine)
 const SPAN = 300;
 
 function plan() {
-  const rnd = mulberry32(3301);
+  let rnd = mulberry32(3301);
   const trees = [];
   const pick = (arr) => arr[Math.floor(rnd() * arr.length) % arr.length];
   // coconut trunk variants (see TRUNK_DEFS): 0 young 6 m, 1 gentle curve 10 m, 2 strong
@@ -41,8 +43,8 @@ function plan() {
     trees.push({ x, z, row, ground, species: o.species ?? species, variant, rotY, k, hs, scale: 0.88 + rnd() * 0.26, seed: Math.floor(rnd() * 1e9) });
   };
   // irregular rows: mostly 7-14 m, the odd long gap, the odd close pair
-  const row = (x0, rowName, ground, skip) => {
-    for (let z = -SPAN; z <= SPAN;) {
+  const row = (x0, rowName, ground, skip, zA = -SPAN, zB = SPAN) => {
+    for (let z = zA; z <= zB;) {
       const x = x0 + (rnd() - 0.5) * 0.3;
       if (!skip(z)) {
         tree(x, z + (rnd() - 0.5), rowName, ground);
@@ -80,17 +82,33 @@ function plan() {
     }
     for (const [x, zz] of pts) tree(x, zz, 'park', 1);
   }
-  return trees;
+  // the ends of the extended district (own random stream: everything above is unchanged)
+  rnd = mulberry32(3302);
+  for (const [zA, zB] of [[-EXT, -SPAN - 4], [SPAN + 4, EXT]]) {
+    row(SIDEWALK_W.x1 - 0.9, 'hotel', 0, () => false, zA, zB);
+    row(SIDEWALK_E.x1 + 0.9, 'edge', 1, () => false, zA, zB);
+    for (let z = zA; z <= zB; z += 6 + rnd() * 7) {
+      const x = PARK.x0 + 2 + rnd() * (PARK.x1 - PARK.x0 - 4);
+      if (promenade(x, z) || x > PARK.x1 - 1.0) continue;
+      tree(x, z, 'park', 1);
+    }
+  }
+  // no tree grates in the cross-street mouths or on the crosswalk ramps
+  const legs = CROSS_STREETS.filter((c) => !c.far).flatMap((c) => crossLegs(c.z));
+  return trees.filter((t) => t.row !== 'hotel' || (!crossStreetAt(t.z, 1.5) && !legs.some(([a, b]) => t.z > a - 1.2 && t.z < b + 1.2)));
 }
+const EXT = DISTRICT.zMax + 8;
 
 export const PALM_TREES = plan();
 
-// Wind-rustle sound sources: one per ~45 m of each row near the block.
+// Wind-rustle sound sources: one per ~45 m of each row near the block, ~100 m beyond it
+// through the district.
 export const PALM_CLUSTERS = (() => {
   const bins = new Map();
   for (const t of PALM_TREES) {
-    if (Math.abs(t.z) > 80) continue;
-    const key = `${t.row === 'hotel' ? 0 : 1}|${Math.floor((t.z + 80) / 45)}`;
+    if (Math.abs(t.z) > DISTRICT.zMax + 5) continue;
+    const band = Math.abs(t.z) <= 80 ? Math.floor((t.z + 80) / 45) : `f${Math.floor((t.z + 1000) / 100)}`;
+    const key = `${t.row === 'hotel' ? 0 : 1}|${band}`;
     const b = bins.get(key) ?? { x: 0, z: 0, n: 0 };
     b.x += t.x; b.z += t.z; b.n++;
     bins.set(key, b);
@@ -374,9 +392,8 @@ function coconutGeometry() {
 
 // Pinnate frond: arching rachis along +x (local), leaflet ribbons hanging from both
 // sides in a V; uv.x = region + across (0 healthy, 1 ragged), uv.y = rachis tiles.
-function pinnateFrond({ L, rise, droop, leaf, v0, v1, region, seed, tw = 0 }) {
+function pinnateFrond({ L, rise, droop, leaf, v0, v1, region, seed, tw = 0, segs = 14 }) {
   const rnd = mulberry32(seed);
-  const segs = 14;
   const rach = (t) => [L * t * (1 - 0.1 * t), L * (rise * t - droop * t * t), 0.06 * L * Math.sin(t * 2.2 + seed) * t];
   const frame = (t) => {
     const p = rach(t), q = rach(t + 0.01);
@@ -656,16 +673,19 @@ export function buildPalms(scene) {
   const nutGeo = coconutGeometry();
 
   // frond variants
-  const frondGeos = [
+  const frondDefs = [
     // arc out, then the tip drops well below the midrib; leaflets hang from the rachis
-    pinnateFrond({ L: 5.0, rise: 0.42, droop: 0.8, leaf: 0.95, v0: 0.45, v1: 0.9, region: 0, seed: 11, tw: 0.5 }),
-    pinnateFrond({ L: 4.6, rise: 0.48, droop: 0.95, leaf: 0.9, v0: 0.5, v1: 1.0, region: 0, seed: 12, tw: -0.6 }),
-    pinnateFrond({ L: 5.2, rise: 0.35, droop: 0.75, leaf: 1.0, v0: 0.45, v1: 0.9, region: 1, seed: 13, tw: 0.8 }),
-    pinnateFrond({ L: 4.4, rise: 0.5, droop: 1.15, leaf: 0.85, v0: 0.55, v1: 1.05, region: 0, seed: 14, tw: -0.4 }),
-    pinnateFrond({ L: 4.0, rise: 0.05, droop: 0.35, leaf: 0.75, v0: 1.25, v1: 1.45, region: 1, seed: 15 }),   // dead, hanging
-    pinnateFrond({ L: 3.8, rise: 0.55, droop: 1.1, leaf: 0.85, v0: 0.35, v1: 0.8, region: 0, seed: 16 }),    // royal: flatter, plumose
-    fanFrond(17),
+    { L: 5.0, rise: 0.42, droop: 0.8, leaf: 0.95, v0: 0.45, v1: 0.9, region: 0, seed: 11, tw: 0.5 },
+    { L: 4.6, rise: 0.48, droop: 0.95, leaf: 0.9, v0: 0.5, v1: 1.0, region: 0, seed: 12, tw: -0.6 },
+    { L: 5.2, rise: 0.35, droop: 0.75, leaf: 1.0, v0: 0.45, v1: 0.9, region: 1, seed: 13, tw: 0.8 },
+    { L: 4.4, rise: 0.5, droop: 1.15, leaf: 0.85, v0: 0.55, v1: 1.05, region: 0, seed: 14, tw: -0.4 },
+    { L: 4.0, rise: 0.05, droop: 0.35, leaf: 0.75, v0: 1.25, v1: 1.45, region: 1, seed: 15 },   // dead, hanging
+    { L: 3.8, rise: 0.55, droop: 1.1, leaf: 0.85, v0: 0.35, v1: 0.8, region: 0, seed: 16 },    // royal: flatter, plumose
   ];
+  const frondGeos = [...frondDefs.map((d) => pinnateFrond(d)), fanFrond(17)];
+  // distant crowns: the same fronds with a coarse rachis (FROND_LOW + g)
+  const FROND_LOW = frondGeos.length;
+  frondGeos.push(...frondDefs.map((d) => pinnateFrond({ ...d, segs: 5 })));
 
   const countV = (g) => g.attributes.position.count, countI = (g) => g.index.count;
   const trunkTris = [...trunks.map((t) => t.geo), nutGeo];
@@ -675,7 +695,9 @@ export function buildPalms(scene) {
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
   const Y = new THREE.Vector3(0, 1, 0), Zax = new THREE.Vector3(0, 0, 1), Xax = new THREE.Vector3(1, 0, 0);
   const col = new THREE.Color();
+  let treeI = -1;
   for (const t of PALM_TREES) {
+    treeI++;
     const rnd = mulberry32(t.seed);
     const ti = t.species === 'royal' ? 6 : t.species === 'sabal' ? 7 : t.variant;
     const base = new THREE.Vector3(t.x, CURB_HEIGHT, t.z);
@@ -690,12 +712,19 @@ export function buildPalms(scene) {
     const top = new THREE.Vector3(...trunks[ti].top).applyMatrix4(tm);
     const bleach = rnd();
     const fresh = new THREE.Color().setRGB(0.1, 0.2, 0.038).lerp(new THREE.Color(0.2, 0.26, 0.05), bleach).multiplyScalar(0.85 + 0.3 * rnd());   // mid-deep olive; the warm sun makes the gold
+    // lower tiers thin the crowns of palms beyond the walkable block (separate random
+    // stream, so the kept fronds are exactly the 'high' ones)
+    const thin = Math.abs(t.z) > 100 ? QUALITY.farFoliage : 1;
+    const rThin = mulberry32(t.seed + 7919);
     const addFrond = (g, az, pitch, s, c, roll = 0) => {
+      if (thin < 1 && rThin() > thin) return;
       qa.setFromAxisAngle(Y, t.rotY + az);
       qb.setFromAxisAngle(Zax, pitch);
       const qr = new THREE.Quaternion().setFromAxisAngle(Xax, roll);
       const qq = qa.clone().multiply(qb).multiply(qr);
-      frondInst.push({ g, m: new THREE.Matrix4().compose(top, qq, new THREE.Vector3(s, s, s).multiplyScalar(sc)), c: c.clone() });
+      // far crowns keep ~60% of their fronds (hashed, no random draws), always the first
+      const n = frondInst.length, first = !frondInst.length || frondInst[n - 1].tree !== treeI;
+      frondInst.push({ g, m: new THREE.Matrix4().compose(top, qq, new THREE.Vector3(s, s, s).multiplyScalar(sc)), c: c.clone(), tree: treeI, keep: first || ((Math.imul(n + 1, 2654435761) >>> 0) % 10) < 6 });
     };
     if (t.species === 'sabal') {
       const n = 16 + Math.floor(rnd() * 8);
@@ -749,6 +778,7 @@ export function buildPalms(scene) {
     const ids = geos.map((g) => bm.addGeometry(g));
     for (const it of insts) {
       const id = bm.addInstance(ids[it.g]);
+      it.id = id;
       bm.setMatrixAt(id, it.m);
       bm.setColorAt(id, it.c);
     }
@@ -762,6 +792,26 @@ export function buildPalms(scene) {
   const { m: fMat, depth } = frondMaterial(atlas);
   const fMesh = batched(frondGeos, frondInst, fMat);
   fMesh.customDepthMaterial = depth;
+  // crown LOD: beyond LOD.palmNear the coarse fronds, and fewer of them
+  {
+    const byTree = PALM_TREES.map(() => []);
+    for (const f of frondInst) byTree[f.tree].push(f);
+    const far = new Uint8Array(PALM_TREES.length);
+    registerLodHook((p) => {
+      let changed = false;
+      PALM_TREES.forEach((t, i) => {
+        const isFar = Math.hypot(t.x - p.x, t.z - p.z) > LOD.palmNear ? 1 : 0;
+        if (isFar === far[i]) return;
+        far[i] = isFar;
+        changed = true;
+        for (const f of byTree[i]) {
+          if (f.g < FROND_LOW - 1) fMesh.setGeometryIdAt(f.id, isFar ? FROND_LOW + f.g : f.g);
+          fMesh.setVisibleAt(f.id, !isFar || f.keep);
+        }
+      });
+      return changed;
+    });
+  }
   // (crowns only grazed by a 7 deg sun; their own shadow on each other only blackened them)
   fMesh.receiveShadow = false;
   group.add(tMesh, fMesh, ...groundMesh(PALM_TREES));

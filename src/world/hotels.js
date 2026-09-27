@@ -6,8 +6,10 @@
 // material and per street chunk; windows, reveals and furniture are instanced.
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { HOTEL, BLOCK, CURB_HEIGHT, SIDEWALK_W } from './layout.js';
+import { HOTEL, BLOCK, CURB_HEIGHT, SIDEWALK_W, CROSS, CROSS_STREETS, DISTRICT } from './layout.js';
+import { registerLod } from './lod.js';
 import { mulberry32, noiseColorTexture, noiseNormalTexture } from '../textures/noise.js';
+import { QUALITY } from '../quality.js';
 
 const G = CURB_HEIGHT;          // sidewalk level, where the buildings stand
 const PATIO_X = HOTEL.patioX;   // porches come forward to here
@@ -252,6 +254,14 @@ const NAMES = [
   'MARBELLE', 'ISLA VERDE', 'COQUINA', 'PALOMA', 'LUNA MAR', 'ASHBY', 'HELIOS', 'SEAFOAM',
   'BRIARCLIFF', 'MONTCLAIRE', 'ALDEMAR', 'NEREIDA', 'SUNHAVEN', 'CORAL BAY', 'MAREVISTA', 'LINDEN',
 ];
+// more invented names for the extended district
+const MORE_NAMES = [
+  'SOLMARE', 'AZULEJO', 'BAHIA LUZ', 'VERANDINE', 'CORALETTE', 'MAREA', 'ESTRELLITA', 'LAGUNITA',
+  'PERLAMAR', 'SEABRIGHT', 'BRISA', 'MAR AZUL', 'GLENWOOD', 'LINDAMAR', 'CALLOWAY', 'ALMIRA',
+  'VISTA SOL', 'COSTA LUNA', 'AURELIA', 'LUMARA', 'BAYBERRY', 'MARIGOLD', 'PALMETTE', 'CORINNA',
+  'BELLWOOD', 'LA GAVIOTA', 'ROSEMERE', 'FLORAMAR', 'OCEANETTE', 'SUNMERE', 'ALBA MAR', 'NOVAMAR',
+  'AMBERLY', 'KESTREL',
+];
 
 // ---------------------------------------------------------------------------
 // Sign atlas: painted metal letters with thin neon tubes (faint at sunrise).
@@ -270,7 +280,7 @@ class SignAtlas {
   alloc(w, h, vertical = false) {
     const s = vertical ? this.vp : this.hp;
     if (s.x + w > s.x1) { s.x = s.x0; s.y += s.rowH + 24; s.rowH = 0; }
-    if (s.y + h > this.H - 4) return null;
+    if (s.y + h > this.H - 4) { this.miss = (this.miss ?? 0) + 1; return null; }
     const r = { x: s.x, y: s.y, w, h };
     s.x += w + 24; s.rowH = Math.max(s.rowH, h);
     return r;
@@ -312,6 +322,7 @@ class SignAtlas {
     this.ctx.restore(); this.ectx.restore();
   }
   horizontal(text, st, px = 150) {
+    px *= this.scale ?? 1;
     const key = `${text}|${st.fill}|${st.font}|${st.tube}`;
     this.cache ??= new Map();
     if (this.cache.has(key)) return this.cache.get(key);
@@ -334,6 +345,7 @@ class SignAtlas {
     return { uv: this.uv(r), aspect: r.w / r.h };
   }
   vertical(text, st0, px = 130) {
+    px *= this.scale ?? 1;
     // upright letters stacked top to bottom (never rotated text); script does not stack
     const st = st0.font === 'script' ? { ...st0, font: 'geo' } : st0;
     const chars = [...text.replace(/ /g, '')];
@@ -346,6 +358,20 @@ class SignAtlas {
     return { uv: this.uv(r), aspect: r.w / r.h, n: chars.length };
   }
   textures() {
+    // lower tiers upload a downscaled copy and free the full-size canvases
+    const s = QUALITY.signAtlas;
+    if (s < 1) {
+      const shrink = (src) => {
+        const c = document.createElement('canvas');
+        c.width = Math.round(this.W * s); c.height = Math.round(this.H * s);
+        const g = c.getContext('2d');
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(src, 0, 0, c.width, c.height);
+        src.width = src.height = 1;
+        return c;
+      };
+      this.cv = shrink(this.cv); this.ev = shrink(this.ev);
+    }
     const map = new THREE.CanvasTexture(this.cv);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = 8;
@@ -2119,30 +2145,31 @@ function streetPlan() {
     [57.6, 70, { floors: 2, style: 'plain', r0: 0, r1: 3.0, scheme: { body: COL.lemon, trim: COL.white, accent: COL.aqua }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'full', name: 'SOLANA', canopy: 'full', patio: 'awning', awningColor: 0x3d7d4e, parapetStep: true, roof: 'sign', fins: true, exposed: [false, true] }],
   ];
   const specs = plan.map(([a, b, o]) => makeSpec(rnd, a, b, { porch: true, ...o, detail: 1 }));
-  let nameI = 8;
-  // continuing blocks: 18 m cross streets every ~160 m
+  const names = [...NAMES.slice(8), ...MORE_NAMES];
+  let nameI = 0;
+  // continuing blocks between the cross streets (layout.CROSS_STREETS): full detail
+  // through the walkable district, the simpler far row beyond it
   for (const dir of [1, -1]) {
-    let blockStart = dir > 0 ? BLOCK.zMax + 18 : BLOCK.zMin - 18;
-    while (Math.abs(blockStart) < 900) {
-      const blockLen = 150 + rnd() * 30;
+    const ends = [...CROSS_STREETS.filter((c) => c.z * dir > 0).map((c) => Math.abs(c.z)).sort((a, b) => a - b), 960];
+    for (let k = 0; k < ends.length - 1; k++) {
+      const blockStart = ends[k] + CROSS.gap, blockLen = ends[k + 1] - CROSS.gap - blockStart;
       let z = 0;
-      while (z < blockLen - 10) {
-        const w = Math.min(12 + rnd() * 13, blockLen - z);
-        if (w < 8) break;
-        const first = z === 0, last = z + w >= blockLen - 12;
-        const za = dir > 0 ? blockStart + z : blockStart - z - w;
+      while (z < blockLen - 8) {
+        let w = Math.min(12 + rnd() * 13, blockLen - z);
+        if (blockLen - (z + w) < 10) w = blockLen - z;   // the corner building runs to the cross street
+        const first = z === 0, last = z + w >= blockLen - 0.01;
+        const za = dir > 0 ? blockStart + z : -(blockStart + z + w);
         const zb = za + w;
-        const near = Math.abs((za + zb) / 2) < 260;
+        const near = Math.abs((za + zb) / 2) < DISTRICT.zMax + 5;
         const corner = dir > 0 ? { r0: first ? 2.5 + rnd() : undefined, r1: last ? 2.5 + rnd() : undefined }
           : { r1: first ? 2.5 + rnd() : undefined, r0: last ? 2.5 + rnd() : undefined };
         specs.push(makeSpec(rnd, za, zb, {
           ...Object.fromEntries(Object.entries(corner).filter(([, v]) => v !== undefined)),
-          detail: near ? 1 : 0, name: near || rnd() < 0.5 ? NAMES[nameI++ % NAMES.length] : undefined,
+          detail: near ? 1 : 0, name: near || rnd() < 0.5 ? names[nameI++ % names.length] : undefined,
           exposed: dir > 0 ? [first, last] : [last, first],
         }));
         z += w + (rnd() < 0.5 ? 1.2 + rnd() * 2.5 : 0.4);
       }
-      blockStart += dir * (blockLen + 18);
     }
   }
   return specs;
@@ -2153,17 +2180,36 @@ export function buildHotels(scene) {
   const group = new THREE.Group();
   group.name = 'hotels';
   const specs = streetPlan();
-  const atlas = new SignAtlas();
-  const chunks = [{ max: -80 }, { max: 80 }, { max: Infinity }].map((c) => ({
-    ...c, paint: new Buf(), metal: new Buf(), fabric: new Buf(), terrazzo: new Buf(), block: new Buf(), signs: new Buf(), grime: new Buf(), wire: new Buf(),
+  // sign atlases: the original block and its neighbouring blocks share the first (as
+  // before); the outer district and the far row use a second one
+  const atlases = [new SignAtlas(), new SignAtlas()];
+  const atlasOf = (ci) => (chunks[ci].min >= -200 && chunks[ci].max <= 200 ? 0 : 1);
+  // one chunk per block (split at the cross streets): merged and instanced meshes per
+  // chunk, so frustum culling works per block and the small parts of far blocks can be
+  // dropped by distance (lod.js)
+  const edges = CROSS_STREETS.map((c) => c.z).sort((a, b) => a - b);
+  const chunks = [...edges, Infinity].map((max, i) => ({
+    max, min: i ? edges[i - 1] : -Infinity,
+    paint: new Buf(), metal: new Buf(), fabric: new Buf(), terrazzo: new Buf(), block: new Buf(), signs: new Buf(), grime: new Buf(), wire: new Buf(),
+    base: new THREE.Group(), detail: new THREE.Group(),
   }));
+  const chunkOf = (z) => chunks.findIndex((c) => z < c.max);
   const ctx = { windows: [], chairs: [], tables: [], umbrellas: [], shrubs: [], palms: [], bulbs: [], chairCol: 0x6b5a45 };
   const rndC = mulberry32(99);
-  for (const S of specs) {
+  // the authored block first (as always), then outward, so the nearest buildings get their
+  // sign-atlas space first
+  const order = [...specs.slice(0, 8), ...specs.slice(8).sort((a, b) => Math.abs(a.z0 + a.z1) - Math.abs(b.z0 + b.z1))];
+  for (const S of order) {
     const zc = (S.z0 + S.z1) / 2;
     const B = chunks.find((c) => zc < c.max);
     ctx.chairCol = pick(rndC, [0xc0343c, 0xe07a9a, 0xefece6, 0x3f8a5a, 0x2d6f9f, 0x6b5a45, 0xd9a13a, 0x2f8f7f, 0xefece6, 0xc0343c]);
+    // far LOD: lower tiers leave out the row beyond the haze distance (kept as footprints)
+    if (Math.abs(zc) > QUALITY.hotelFar) continue;
+    const atlas = atlases[atlasOf(chunkOf(zc))];
+    atlas.scale = S.detail > 0 ? 1 : 0.6;   // the far row's letters need less resolution
+    const miss0 = atlas.miss ?? 0;
     buildHotel(S, B, ctx, atlas);
+    if ((atlas.miss ?? 0) > miss0) (atlas.missAt ??= []).push(Math.round(zc));
   }
 
   // window frames, sills, glass-block infill -> merged; glass and reveals -> instanced
@@ -2264,8 +2310,22 @@ export function buildHotels(scene) {
   // assign per-window frame colours by building (stored on spec via window order)
   const glassMat = glassMaterial();
   const quad = new THREE.PlaneGeometry(1, 1).rotateY(Math.PI / 2);
-  const glass = new THREE.InstancedMesh(quad, glassMat, glassIdx.length);
-  const aWin = new Float32Array(glassIdx.length * 4);
+  // per-chunk instanced mesh from a list of { z, m (Matrix4), color?, ... } records
+  const perChunk = (geo, mat, recs, where, fn) => {
+    const byChunk = chunks.map(() => []);
+    for (const r of recs) byChunk[chunkOf(r.z)].push(r);
+    byChunk.forEach((list, ci) => {
+      if (!list.length) return;
+      const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach((r, i) => {
+        mesh.setMatrixAt(i, r.m);
+        if (r.color !== undefined) mesh.setColorAt(i, r.color.isColor ? r.color : new THREE.Color(r.color));
+      });
+      mesh.castShadow = mesh.receiveShadow = true;
+      fn?.(mesh, list);
+      chunks[ci][where].add(mesh);
+    });
+  };
   const m4 = new THREE.Matrix4(), vX = new THREE.Vector3(), vY = new THREE.Vector3(), vZ = new THREE.Vector3();
   const setM = (w, depthOffset, sx, sy, sz, u = 0) => {
     const Z = cross(w.N, UP);
@@ -2275,18 +2335,22 @@ export function buildHotels(scene) {
     m4.setPosition(p[0], p[1], p[2]);
     return m4;
   };
-  glassIdx.forEach((g, i) => {
+  const glassRecs = glassIdx.map((g) => {
     const w = g.w;
-    glass.setMatrixAt(i, setM(w, -w.depth, 1, w.h, g.pw, g.u));
+    const m = setM(w, -w.depth, 1, w.h, g.pw, g.u).clone();
     const it = g.it ?? [0, 0, rnd(), rnd()];
     // storefront / door kinds keep their type; x encodes 4 = round, +10 = ground-floor glass
     const ground = w.kind === 'door' || w.kind === 'store' ? 10 : 0;
-    aWin.set([(w.round ? 4 : it[0]) + ground, it[1], it[2], rnd()], i * 4);
+    return { z: w.c[2], m, a: [(w.round ? 4 : it[0]) + ground, it[1], it[2], rnd()] };
   });
-  glass.geometry = quad.clone();
-  glass.geometry.setAttribute('aWin', new THREE.InstancedBufferAttribute(aWin, 4));
-  glass.receiveShadow = false;   // deep in its reveal the pane only picked up shadow acne
-  group.add(glass);
+  perChunk(quad, glassMat, glassRecs, 'base', (glass, list) => {
+    const aWin = new Float32Array(list.length * 4);
+    list.forEach((r, i) => aWin.set(r.a, i * 4));
+    glass.geometry = quad.clone();
+    glass.geometry.setAttribute('aWin', new THREE.InstancedBufferAttribute(aWin, 4));
+    glass.castShadow = false;
+    glass.receiveShadow = false;   // deep in its reveal the pane only picked up shadow acne
+  });
 
   // reveals: open boxes (rect) and open tubes (round), coloured like their wall
   const revealGeo = (() => {
@@ -2317,25 +2381,13 @@ export function buildHotels(scene) {
     mat.customProgramCacheKey = () => key;
   };
   revealAO(revealMat, 'hotel-reveal-v2');
-  const reveals = new THREE.InstancedMesh(revealGeo, revealMat, revealRect.length);
   const col = new THREE.Color();
-  revealRect.forEach((w, i) => {
-    reveals.setMatrixAt(i, setM(w, 0, w.depth, w.h, w.w));
-    reveals.setColorAt(i, col.setHex(w.reveal).multiplyScalar(0.9));
-  });
-  reveals.castShadow = reveals.receiveShadow = true;
-  group.add(reveals);
+  perChunk(revealGeo, revealMat, revealRect.map((w) => ({ z: w.c[2], m: setM(w, 0, w.depth, w.h, w.w).clone(), color: col.setHex(w.reveal).multiplyScalar(0.9).clone() })), 'base');
   if (revealRound.length) {
     const tube = new THREE.CylinderGeometry(0.5, 0.5, 1, 20, 1, true).rotateZ(Math.PI / 2).translate(-0.5, 0, 0);
     const rMat = new THREE.MeshStandardMaterial({ roughness: 0.9, side: THREE.BackSide });
     revealAO(rMat, 'hotel-reveal-round-v2');
-    const rr = new THREE.InstancedMesh(tube, rMat, revealRound.length);
-    revealRound.forEach((w, i) => {
-      rr.setMatrixAt(i, setM(w, 0, w.depth, w.h, w.w));
-      rr.setColorAt(i, col.setHex(w.reveal).multiplyScalar(0.93));
-    });
-    rr.castShadow = rr.receiveShadow = true;
-    group.add(rr);
+    perChunk(tube, rMat, revealRound.map((w) => ({ z: w.c[2], m: setM(w, 0, w.depth, w.h, w.w).clone(), color: col.setHex(w.reveal).multiplyScalar(0.93).clone() })), 'base');
   }
 
   // merged static meshes per chunk
@@ -2345,66 +2397,71 @@ export function buildHotels(scene) {
   const fabricMat = fabricMaterial();
   const terrMat = terrazzoMaterial();
   const blockMat = glassBlockMaterial();
-  const { map: signMap, em: signEm } = atlas.textures();
-  const signMat = new THREE.MeshStandardMaterial({
-    map: signMap, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.5, metalness: 0.25,
-    emissive: 0xffffff, emissiveMap: signEm, emissiveIntensity: 0.08, side: THREE.DoubleSide,
+  // one sign material pair per atlas
+  const signMats = atlases.map((at) => {
+    const { map: signMap, em: signEm } = at.textures();
+    const signMat = new THREE.MeshStandardMaterial({
+      map: signMap, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.5, metalness: 0.25,
+      emissive: 0xffffff, emissiveMap: signEm, emissiveIntensity: 0.08, side: THREE.DoubleSide,
+    });
+    // soft contact shadow of the channel letters on the wall just behind them
+    const signShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, map: signMap, transparent: true, opacity: 0.4, depthWrite: false });
+    signShadowMat.onBeforeCompile = (s) => {
+      s.vertexShader = s.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\ntransformed += -normal * 0.05 + vec3(0.0, -0.03, 0.0);');
+      s.fragmentShader = s.fragmentShader.replace('#include <map_fragment>', `
+        vec2 odTs = 1.5 / vec2(textureSize(map, 0));
+        float odA = 0.0;
+        for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) odA += texture2D(map, vMapUv + vec2(float(i), float(j)) * odTs * 4.0).a;
+        diffuseColor.a *= odA / 9.0;`);
+    };
+    signShadowMat.customProgramCacheKey = () => 'sign-shadow-v1';
+    return { signMat, signShadowMat };
   });
-  // soft contact shadow of the channel letters on the wall just behind them
-  const signShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, map: signMap, transparent: true, opacity: 0.4, depthWrite: false });
-  signShadowMat.onBeforeCompile = (s) => {
-    s.vertexShader = s.vertexShader.replace('#include <begin_vertex>',
-      '#include <begin_vertex>\ntransformed += -normal * 0.05 + vec3(0.0, -0.03, 0.0);');
-    s.fragmentShader = s.fragmentShader.replace('#include <map_fragment>', `
-      vec2 odTs = 1.5 / vec2(textureSize(map, 0));
-      float odA = 0.0;
-      for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) odA += texture2D(map, vMapUv + vec2(float(i), float(j)) * odTs * 4.0).a;
-      diffuseColor.a *= odA / 9.0;`);
-  };
-  signShadowMat.customProgramCacheKey = () => 'sign-shadow-v1';
+  const isSignMat = (m) => signMats.some((q) => q.signMat === m);
   for (const c of chunks) {
-    const add = (buf, mat, cast = true) => {
-      if (buf.empty) return;
+    // base: the building shells, awnings, signs and glass (always drawn); detail: frames,
+    // grime, wires, terrazzo, glass block and furniture (dropped with distance)
+    const add = (buf, mat, cast = true, where = 'base') => {
+      if (buf.empty) return null;
       const g = buf.geometry();
-      if (mat === signMat || mat === terrMat || mat === blockMat) g.deleteAttribute('color');
-      if (mat === grimeMat) { const m2 = new THREE.Mesh(g, mat); m2.receiveShadow = true; m2.renderOrder = 2; group.add(m2); return; }
+      if (isSignMat(mat) || mat === terrMat || mat === blockMat) g.deleteAttribute('color');
+      if (mat === grimeMat) { const m2 = new THREE.Mesh(g, mat); m2.receiveShadow = true; m2.renderOrder = 2; c[where].add(m2); return m2; }
       const mesh = new THREE.Mesh(g, mat);
       mesh.castShadow = cast;
       mesh.receiveShadow = true;
-      group.add(mesh);
+      c[where].add(mesh);
+      return mesh;
     };
     add(c.paint, paintMat);
-    add(c.metal, metalMat);
+    add(c.metal, metalMat, true, 'detail');
     add(c.fabric, fabricMat);
-    add(c.terrazzo, terrMat, false);
-    add(c.block, blockMat, false);
+    add(c.terrazzo, terrMat, false, 'detail');
+    add(c.block, blockMat, false, 'detail');
     if (!c.signs.empty) {
-      add(c.signs, signMat);
-      const sh = new THREE.Mesh(group.children[group.children.length - 1].geometry, signShadowMat);
+      const { signMat, signShadowMat } = signMats[atlasOf(chunks.indexOf(c))];
+      const sm = add(c.signs, signMat);
+      const sh = new THREE.Mesh(sm.geometry, signShadowMat);
       sh.renderOrder = 3;
-      group.add(sh);
+      c.detail.add(sh);
     }
-    add(c.grime, grimeMat, false);
-    add(c.wire, metalMat, false);
+    add(c.grime, grimeMat, false, 'detail');
+    add(c.wire, metalMat, false, 'detail');
   }
 
   // furniture
   const furnMat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.2 });
   const q = new THREE.Quaternion(), yAx = new THREE.Vector3(0, 1, 0), s1 = new THREE.Vector3(1, 1, 1);
-  const place = (mesh, items, fn) => {
-    items.forEach((it, i) => {
+  const place = (geo, mat, items, fn) => {
+    perChunk(geo, mat, items.map((it) => {
       q.setFromAxisAngle(yAx, it.rot ?? 0);
-      m4.compose(new THREE.Vector3(it.x, it.y, it.z), q, fn ? fn(it) : s1);
-      mesh.setMatrixAt(i, m4);
-      if (it.color !== undefined) mesh.setColorAt(i, col.setHex(it.color));
-    });
-    mesh.castShadow = mesh.receiveShadow = true;
-    group.add(mesh);
+      return { z: it.z, m: new THREE.Matrix4().compose(new THREE.Vector3(it.x, it.y, it.z), q, fn ? fn(it) : s1), color: it.color };
+    }), 'detail');
   };
-  if (ctx.chairs.length) place(new THREE.InstancedMesh(chairGeometry(), furnMat, ctx.chairs.length), ctx.chairs);
+  if (ctx.chairs.length) place(chairGeometry(), furnMat, ctx.chairs);
   if (ctx.tables.length) {
     ctx.tables.forEach((t) => { t.color = 0xe9e6df; });
-    place(new THREE.InstancedMesh(tableGeometry(), furnMat, ctx.tables.length), ctx.tables);
+    place(tableGeometry(), furnMat, ctx.tables);
   }
   if (ctx.umbrellas.length) {
     const umMat = new THREE.MeshStandardMaterial({ roughness: 0.85, side: THREE.DoubleSide });
@@ -2416,16 +2473,16 @@ export function buildHotels(scene) {
         #endif`);
     };
     umMat.customProgramCacheKey = () => 'hotel-umbrella-v1';
-    place(new THREE.InstancedMesh(umbrellaGeometry(), umMat, ctx.umbrellas.length),
+    place(umbrellaGeometry(), umMat,
       ctx.umbrellas.map((u) => ({ ...u, y: u.y + u.h - 0.3, rot: 0 })), (u) => new THREE.Vector3(u.r, 1, u.r));
     const pole = new THREE.CylinderGeometry(0.022, 0.022, 1, 6).translate(0, 0.5, 0);
-    place(new THREE.InstancedMesh(pole, furnMat, ctx.umbrellas.length),
+    place(pole, furnMat,
       ctx.umbrellas.map((u) => ({ x: u.x, y: u.y, z: u.z, color: 0xd8d4cc })), (u) => new THREE.Vector3(1, ctx.umbrellas[0].h, 1));
   }
   if (ctx.shrubs.length) {
     const shrubMat = new THREE.MeshStandardMaterial({ roughness: 0.85, map: leafTexture(), alphaTest: 0.5, side: THREE.DoubleSide });
     const rs = mulberry32(8);
-    place(new THREE.InstancedMesh(shrubGeometry(), shrubMat, ctx.shrubs.length),
+    place(shrubGeometry(), shrubMat,
       ctx.shrubs.map((s) => ({ ...s, rot: rs() * 6, color: [0x3f5a2c, 0x4a6632, 0x355026, 0x56703a][Math.floor(rs() * 4)] })),
       (s) => new THREE.Vector3(s.s * 1.3, s.s * 1.1, s.s * 1.3));
   }
@@ -2434,7 +2491,7 @@ export function buildHotels(scene) {
     const potted = ctx.palms.filter((p) => p.pot);
     if (potted.length) {
       const pot = new THREE.CylinderGeometry(0.3, 0.22, 0.55, 14).translate(0, 0.275, 0);
-      place(new THREE.InstancedMesh(pot, new THREE.MeshStandardMaterial({ roughness: 0.7 }), potted.length),
+      place(pot, new THREE.MeshStandardMaterial({ roughness: 0.7 }),
         potted.map((p) => ({ x: p.x, y: p.y, z: p.z, color: p.potCol })));
     }
     const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide, map: leafTexture(), alphaTest: 0.5 });
@@ -2445,20 +2502,23 @@ export function buildHotels(scene) {
     };
     leafMat.customProgramCacheKey = () => 'hotel-potpalm-v2';
     // bushy clipped shrubs in the terrace planters and pots
-    place(new THREE.InstancedMesh(shrubGeometry().scale(1.1, 1.0, 1.1).translate(0, 0.42, 0), leafMat, ctx.palms.length),
+    place(shrubGeometry().scale(1.1, 1.0, 1.1).translate(0, 0.42, 0), leafMat,
       ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x4f7a2e, 0x5b8636, 0x46702a, 0x668a3a][Math.floor(rp() * 4)] })),
       (p) => new THREE.Vector3(p.s * 0.8, p.s * 0.7, p.s * 0.8));
   }
   if (ctx.bulbs.length) {
     const bulbMat = new THREE.MeshStandardMaterial({ color: 0xfff1d8, emissive: 0xffc27a, emissiveIntensity: 0.9, roughness: 0.3 });
-    const bm = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.03, 1), bulbMat, ctx.bulbs.length);
-    ctx.bulbs.forEach((b, i) => { m4.makeTranslation(b.x, b.y, b.z); bm.setMatrixAt(i, m4); });
-    group.add(bm);
+    perChunk(new THREE.IcosahedronGeometry(0.03, 1), bulbMat, ctx.bulbs.map((b) => ({ z: b.z, m: new THREE.Matrix4().makeTranslation(b.x, b.y, b.z) })), 'detail',
+      (bm) => { bm.castShadow = bm.receiveShadow = false; });
   }
 
+  for (const c of chunks) {
+    group.add(c.base, c.detail);
+    if (c.detail.children.length) registerLod(c.detail, Math.max(c.min, -5000), Math.min(c.max, 5000), 'detail');
+  }
   // walk collision: each building's front line (patios in front are raised terraces)
   group.userData.footprints = specs.map((S) => ({ z0: S.z0, z1: S.z1, fx: S.fx }));
   scene.add(group);
-  window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + c.grime.pos.length / 3, 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length };
+  window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + c.grime.pos.length / 3, 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length, signMiss: atlases.map((a) => a.miss ?? 0), signMissAt: atlases.flatMap((a) => a.missAt ?? []), chunks: chunks.length };
   return group;
 }
