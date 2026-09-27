@@ -75,6 +75,7 @@ export function createWaves(env, { waterlineX = 90 } = {}) {
     ramp(e.g.gain, t, [[0, 0], [T(3.2), 0], [T(4.2), 0.07 * size], [T(8.5), 0]]);
 
     a.s.onended = () => { crash.dispose(); wash.dispose(); };
+    return { t, k, size, runup, z };
   }
 
   return { track, breakAt };

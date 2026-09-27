@@ -75,10 +75,6 @@ function buildGround(group) {
   };
   grass.customProgramCacheKey = () => 'grass-translucent-v3';
 
-  const sandTex = noiseColorTexture({
-    size: 512, seed: 41, colorA: [214, 204, 188], colorB: [236, 228, 214], baseCells: 6, speckle: 0.12,
-  });
-
   // (street, curbs and sidewalks: street.js)
 
   // Park lawn.
@@ -118,103 +114,7 @@ function buildGround(group) {
   group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, -Z, Z, 0.6), coral, { cast: true }));
   group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, -Z, Z, 0.6), coral, { cast: true }));
 
-  // Sand: height from sandHeight(x), darker and wetter toward the water.
-  {
-    const segX = 160, x0 = SAND.x0, x1 = 130;
-    const g = new THREE.PlaneGeometry(x1 - x0, Z * 2, segX, 1);
-    g.rotateX(-Math.PI / 2);
-    g.translate((x0 + x1) / 2, 0, 0);
-    const pos = g.attributes.position, uv = g.attributes.uv;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      pos.setY(i, sandHeight(x));
-      uv.setXY(i, x / 5, pos.getZ(i) / 5);
-    }
-    g.computeVertexNormals();
-    const sand = new THREE.MeshStandardMaterial({ map: sandTex, roughness: 0.96 });
-    // Wet band toward the water: darker and glossy, mirroring the golden sky and sun.
-    const wet0 = (SAND.waterline - 3).toFixed(1), wet1 = (SAND.waterline + 1.5).toFixed(1);
-    sand.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying float vOdWorldX;\nvarying float vOdWorldZ;')
-        .replace('#include <project_vertex>', '#include <project_vertex>\nvOdWorldX = (modelMatrix * vec4(transformed, 1.0)).x;\nvOdWorldZ = (modelMatrix * vec4(transformed, 1.0)).z;');
-      shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vOdWorldX;\nvarying float vOdWorldZ;')
-        .replace('#include <color_fragment>', `#include <color_fragment>
-          // wet/dry line: sharp, slightly wavy (last swash reach)
-          float odWl = ${wet0} + 0.6 * sin(vOdWorldZ * 0.21) + 0.35 * sin(vOdWorldZ * 0.83 + 1.3);
-          float odWet = smoothstep(odWl - 0.15, odWl + 0.15, vOdWorldX) * (0.75 + 0.25 * smoothstep(odWl, ${wet1}, vOdWorldX));
-          diffuseColor.rgb *= mix(1.0, 0.42, odWet);`)
-        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-          roughnessFactor = mix(roughnessFactor, 0.8, odWet);`)
-        // grain shadowing: dry sand looking into a low sun shows mostly the shaded
-        // sides of grains (dim, cool); looking down-sun it brightens (opposition hotspot)
-        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
-          #ifdef USE_FOG
-          {
-            vec3 odVd = normalize(vFogOffset);
-            float odG = dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz));
-            float odGraze = 1.0 - abs(odVd.y);
-            float odInto = smoothstep(-0.2, 0.9, odG) * smoothstep(0.05, 0.75, odGraze) * (1.0 - odWet);
-            float odAway = smoothstep(0.2, -1.0, odG) * odGraze;
-            // (rough sand under a grazing sun is strongly retro-reflective: seen down-sun the
-            // lit grain faces fill the view and the beach glows warm, not sky-grey)
-            reflectedLight.directDiffuse *= mix(1.0, 0.06, odInto) * (1.0 + 2.0 * odAway);
-            reflectedLight.indirectDiffuse *= mix(1.0, 0.55, odInto);
-            // down-sun the sand is lit grain faces: warm, the lilac sky fill is mostly hidden
-            reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(0.78, 0.66, 0.52), odAway);
-            reflectedLight.directSpecular *= (1.0 - 0.95 * odInto) * (1.0 - smoothstep(0.0, 0.2, odWet));   // the wet film's sun glint is drawn below
-            // backlit dry sand is lit by the sky: neutral-cool grey, warmer toward the damp shore
-            float odL = dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722));
-            float odShore = smoothstep(${(SAND.waterline - 22).toFixed(1)}, ${(SAND.waterline - 4).toFixed(1)}, vOdWorldX);
-            vec3 odCool = odL * vec3(0.80, 0.90, 1.08) * dot(diffuseColor.rgb, vec3(0.333)) / max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.02);
-            reflectedLight.indirectDiffuse = mix(reflectedLight.indirectDiffuse, odCool, 0.75 * odInto * (1.0 - odShore));
-            reflectedLight.indirectSpecular *= 1.0 - 0.8 * odInto * (1.0 - odShore);
-          }
-          #endif`)
-        // thin water film: mirror of the (uncompressed) sunrise sky from the shared model
-        .replace('#include <opaque_fragment>', `
-          #ifdef USE_FOG
-          {
-            vec3 odI = normalize(vFogOffset);
-            float odNv = max(-odI.y, 0.02);
-            vec3 odR = reflect(odI, vec3(0.0, 1.0, 0.0));
-            float odF = 0.02 + 0.98 * pow(1.0 - odNv, 5.0);
-            // swash film right at the water's edge: a mirror strip
-            float odSwash = smoothstep(${(SHORE_X - 2.8).toFixed(2)}, ${(SHORE_X - 0.6).toFixed(2)}, vOdWorldX);
-            // a water film mirrors the sky over the whole wet band (blurred by the film's
-            // ripples), strongest at grazing angles
-            float odRefl = max(odWet * (0.1 + 0.32 * odF), 0.5 * odSwash);
-            // damp sand toward the shore picks up a faint sheen of the warm horizon
-            float odDamp = smoothstep(${(SAND.waterline - 14).toFixed(1)}, ${wet0}, vOdWorldX);
-            odRefl = max(odRefl, odDamp * odF * 0.08);
-            // film ripples tilt toward the viewer: it mirrors higher, darker sky
-            vec3 odRb = normalize(vec3(odR.x, odR.y + 0.15, odR.z));
-            // (the film's ripples smear the sun's aureole; the sun itself is the glint below)
-            // (a thin film over dark sand: the mirror is dimmer than open water)
-            outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.65, 0.0)) * 0.5, odRefl);
-            // sun glint on the water film: anisotropic (narrow across, long toward the
-            // viewer) like a streak of reflections off wet ripples, saturated gold
-            vec3 odV = -odI;
-            vec3 odH = normalize(OD_SUN + odV);
-            vec2 odFw = normalize(odI.xz + 1e-5);
-            vec2 odRt = vec2(-odFw.y, odFw.x);
-            float odSx = dot(odH.xz, odRt) / odH.y, odSz = dot(odH.xz, odFw) / odH.y;
-            vec3 odWp = cameraPosition + vFogOffset;
-            float odRip = 0.65 + 0.35 * sin(odWp.x * 7.0 + 2.0 * sin(odWp.z * 1.3));
-            // a compact bright patch directly under the sun (film ripple slopes ~2 deg)
-            float odGl = odRip * exp(-(odSx * odSx + odSz * odSz) / (2.0 * 0.03 * 0.03));
-            float odFh = 0.02 + 0.98 * pow(1.0 - max(dot(odH, odV), 0.0), 5.0);
-            vec3 odSp = directLight.color * vec3(1.0, 0.62, 0.26) * odFh * odGl * 14.0 * max(odWet, odSwash);
-            float odSl = dot(odSp, vec3(0.2126, 0.7152, 0.0722));
-            outgoingLight += odSp / (1.0 + odSl / 2.5);
-          }
-          #endif
-          #include <opaque_fragment>`);
-    };
-    sand.customProgramCacheKey = () => 'sand-wet-v11';
-    group.add(mesh(g, sand));
-  }
+  // (sand, swash and the lifeguard tower: beach.js)
 }
 
 // Soft blob contact shadows (baked AO stand-in): transparent black gradient decals.
@@ -413,77 +313,11 @@ function buildBackground(group) {
   }
 }
 
-function buildTower(group) {
-  const t = new THREE.Group();
-  const base = sandHeight(TOWER.x);
-  const wood = new THREE.MeshStandardMaterial({ color: 0xece6da, roughness: 0.85 });
-  const pink = new THREE.MeshStandardMaterial({ color: 0xe8aab8, roughness: 0.7 });
-  const teal = new THREE.MeshStandardMaterial({ color: 0x3fb8b0, roughness: 0.7 });
-  const yellow = new THREE.MeshStandardMaterial({ color: 0xf5d547, roughness: 0.7 });
-  const d = TOWER.deckHeight;
-  const shadowOnly = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-  for (const [x, z] of [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, d, 0.22), wood);
-    leg.position.set(x, d / 2, z);
-    leg.userData.noCast = true;
-    t.add(leg);
-    // shadow-only proxy: a 22 cm post is under a shadow texel wide at grazing sun and
-    // its shadow aliased into dashes; cast from a slightly fatter invisible post
-    const proxy = new THREE.Mesh(new THREE.BoxGeometry(0.36, d, 0.36), shadowOnly);
-    proxy.position.copy(leg.position);
-    proxy.userData.shadowOnly = true;
-    t.add(proxy);
-  }
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.2, 4.0), teal);
-  deck.position.y = d - 0.1;
-  const cabin = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2.3, 24), pink);
-  cabin.position.set(0.5, d + 1.15, 0);
-  // canopy underside: painted tongue-and-groove slats, lit by the sand below
-  const slatTex = (() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 256;
-    const g = c.getContext('2d');
-    for (let i = 0; i < 16; i++) {
-      const v = 214 + ((i * 37) % 11) - 5;
-      g.fillStyle = `rgb(${v},${v - 6},${v - 16})`;
-      g.fillRect(0, i * 16, 256, 16);
-      g.fillStyle = 'rgba(60,45,30,0.55)';
-      g.fillRect(0, i * 16 + 14, 256, 2);
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 8;
-    return t;
-  })();
-  const under = new THREE.MeshStandardMaterial({ map: slatTex, color: 0xf2ece0, roughness: 0.8, side: THREE.DoubleSide });
-  under.onBeforeCompile = (s) => {
-    s.fragmentShader = s.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
-      reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.55, 0.40, 0.28);`);
-  };
-  under.customProgramCacheKey = () => 'tower-under-v1';
-  const roof = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 0.45, 24), [yellow, yellow, under]);
-  roof.position.set(0.5, d + 2.5, 0);
-  // ramp on the west side
-  const len = 6.5;
-  const ramp = new THREE.Mesh(new THREE.BoxGeometry(len, 0.12, 1.2), wood);
-  const ang = Math.atan2(d, len);
-  ramp.position.set(-2.3 - Math.cos(ang) * len / 2, d / 2, -1.2);
-  ramp.rotation.z = ang;
-  t.add(deck, cabin, roof, ramp);
-  t.traverse((o) => {
-    if (o.isMesh) { o.castShadow = !o.userData.noCast; o.receiveShadow = !o.userData.shadowOnly; }
-  });
-  t.position.set(TOWER.x, base, TOWER.z);
-  group.add(t);
-  // (no contact blobs: the sun shadow already grounds the thin legs)
-}
-
 export function buildPlaceholders(scene) {
   const group = new THREE.Group();
   group.name = 'placeholders';
   buildGround(group);
   buildBackground(group);  // the deco row itself is built by hotels.js
-  buildTower(group);
   scene.add(group);
   return group;
 }

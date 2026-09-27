@@ -69,10 +69,33 @@ export const SHORE_X = (() => {
   return x;
 })();
 
-// Walkable ground height used by the camera (placeholder; refined by later systems).
+// The shore break: small sunrise waves spill here, a few metres off the shoreline.
+export const BREAK_X = SHORE_X + 2.5;
+// Highest swash reach (the wet/dry line sits just above it).
+export const SWASH_MAX = 7.0;
+export const WET_LINE_X = BREAK_X - SWASH_MAX - 0.6;
+
+// Low mounds and wind undulations on the dry beach (m). Zero at the park wall, in the
+// swash zone and far along the shore (where the low-res sand takes over).
+export const SAND_DETAIL_Z = 220;
+export function sandDetail(x, z) {
+  const fade = smooth(SAND.x0 + 0.6, SAND.x0 + 4, x) * (1 - smooth(WET_LINE_X - 6, WET_LINE_X - 1, x))
+    * (1 - smooth(SAND_DETAIL_Z - 40, SAND_DETAIL_Z, Math.abs(z)));
+  if (fade <= 0) return 0;
+  const h = 0.05 * Math.sin(x * 0.21 + Math.sin(z * 0.05) * 1.7) * Math.sin(z * 0.13 + x * 0.04)
+    + 0.03 * Math.sin(x * 0.61 + z * 0.23 + 1.3) * Math.sin(z * 0.37 - x * 0.19)
+    + 0.012 * Math.sin(x * 1.7 + z * 0.9) * Math.sin(z * 1.3 - x * 0.7 + 2.1);
+  return h * fade;
+}
+function smooth(a, b, v) {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+// Walkable ground height used by the camera (beach.js adds the tower deck and stairs).
 export function groundHeight(x, z) {
   if (x < SIDEWALK_W.x1) return CURB_HEIGHT;
   if (x < LANES.x1) return roadHeight(x);
   if (x < SAND.x0) return CURB_HEIGHT;
-  return Math.max(sandHeight(x), SEA_LEVEL);
+  return Math.max(sandHeight(x) + sandDetail(x, z), SEA_LEVEL);
 }

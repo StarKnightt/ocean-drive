@@ -1,11 +1,12 @@
-// Water surface to the real horizon: analytic sky reflection (same model as the
-// sky dome), Fresnel, dark steel-blue body with a subtle shallow turquoise, and a
-// sun-glitter column from a microfacet lobe whose roughness grows with pixel
-// footprint (sparkles close by, a continuous gold column toward the horizon).
-// The dedicated ocean system will add real swell geometry and swash.
+// Water surface to the real horizon. A camera-centred polar grid (dense at the feet,
+// rings growing geometrically to 25 km) carries Gerstner swell near the camera and the
+// shore-break crests of the shared surf clock; the fragment shader adds sub-pixel chop,
+// analytic sunrise-sky reflection with Fresnel, the sun-glitter path, depth-graded
+// turquoise shallows over the sand, backlit wave faces, whitewater and sparse whitecaps.
 import * as THREE from 'three';
 import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
-import { OCEAN, SAND, SHORE_X } from './layout.js';
+import { SAND, SHORE_X, SEA_LEVEL, BREAK_X } from './layout.js';
+import { SURF_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
 
 function waveTable() {
@@ -23,109 +24,259 @@ function waveTable() {
   return waves;
 }
 
+// long gentle swell, resolved as geometry near the camera
+const SWELL = [
+  { L: 17, a: 0.09, ang: Math.PI + 0.12, ph: 0.4 },
+  { L: 11, a: 0.055, ang: Math.PI - 0.25, ph: 2.1 },
+  { L: 7, a: 0.03, ang: Math.PI + 0.45, ph: 4.0 },
+];
 
-export function createOcean(scene) {
+// beach profile in GLSL (mirror of layout.sandHeight on the beach)
+const SAND_GLSL = /* glsl */ `
+float odSandY(float x) {
+  float x1 = ${(SAND.waterline - 4).toFixed(2)};
+  if (x < x1) { float t = (x - ${SAND.x0.toFixed(2)}) / (x1 - ${SAND.x0.toFixed(2)}); return 0.55 - (0.55 - ${(SEA_LEVEL + 0.1).toFixed(3)}) * t; }
+  float t = (x - x1) / 26.0;
+  return ${(SEA_LEVEL + 0.1).toFixed(3)} - 1.6 * min(1.0, t) * min(1.0, t) - 0.2 * max(0.0, t - 1.0);
+}`;
+
+function swellGLSL() {
+  return /* glsl */ `
+  // Gerstner swell: displacement (xyz) and slope (d h / d x, d h / d z)
+  vec3 odSwell(vec2 p, float t, float amp, out vec2 slope) {
+    vec3 d = vec3(0.0); slope = vec2(0.0);
+    ${SWELL.map((s) => {
+      const k = (2 * Math.PI) / s.L, w = Math.sqrt(9.81 * k), dx = Math.cos(s.ang), dz = Math.sin(s.ang);
+      return `{ float ph = dot(p, vec2(${dx.toFixed(4)}, ${dz.toFixed(4)})) * ${k.toFixed(4)} - t * ${w.toFixed(4)} + ${s.ph.toFixed(2)};
+      float a = ${s.a.toFixed(3)} * amp;
+      d += vec3(${dx.toFixed(4)} * -0.6 * a * sin(ph), a * cos(ph), ${dz.toFixed(4)} * -0.6 * a * sin(ph));
+      slope += vec2(${dx.toFixed(4)}, ${dz.toFixed(4)}) * (-a * ${k.toFixed(4)} * sin(ph)); }`;
+    }).join('\n    ')}
+    return d;
+  }`;
+}
+
+function polarGrid(rings = 170, segs = 256, r0 = 0.25, r1 = 25000) {
+  const q = Math.pow(r1 / r0, 1 / (rings - 1));
+  const pos = new Float32Array((rings * segs + 1) * 3);
+  let o = 3; // vertex 0 = centre
+  for (let i = 0; i < rings; i++) {
+    const r = r0 * Math.pow(q, i);
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2;
+      pos[o++] = Math.cos(a) * r; pos[o++] = 0; pos[o++] = Math.sin(a) * r;
+    }
+  }
+  const idx = [];
+  for (let j = 0; j < segs; j++) idx.push(0, 1 + ((j + 1) % segs), 1 + j);
+  for (let i = 0; i < rings - 1; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = 1 + i * segs + j, b = 1 + i * segs + ((j + 1) % segs);
+      const c = a + segs, d = b + segs;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+export function createOcean(scene, surf) {
   const waves = waveTable();
   const waveGLSL = waves.map((w) => `
     { float wg = smoothstep(fp * 2.0, fp * 6.0, ${w.L.toFixed(3)});
       float ph = dot(p, vec2(${w.dx.toFixed(4)}, ${w.dz.toFixed(4)})) * ${w.k.toFixed(4)} - t * ${w.w.toFixed(4)} + ${w.ph.toFixed(3)};
-      s += vec2(${w.dx.toFixed(4)}, ${w.dz.toFixed(4)}) * (${w.s.toFixed(4)} * cos(ph) * wg);
-      lost += (1.0 - wg) * ${(w.s * w.s * 0.5).toFixed(6)}; }`).join('');
+      s += vec2(${w.dx.toFixed(4)}, ${w.dz.toFixed(4)}) * (${w.s.toFixed(4)} * cos(ph) * wg * chopAmp);
+      lost += (1.0 - wg) * ${(w.s * w.s * 0.5).toFixed(6)} * chopAmp; }`).join('');
 
   const material = new THREE.ShaderMaterial({
     name: 'Ocean',
     fog: true,
     transparent: true,
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 } }]),
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uCam: { value: new THREE.Vector2() } }]),
     vertexShader: /* glsl */ `
       #include <fog_pars_vertex>
+      uniform float uTime;
+      uniform vec2 uCam;
       varying vec3 vWorld;
+      varying vec2 vBase;
+      varying float vCrest;
+      varying float vWhite;
+      ${SURF_GLSL}
+      ${swellGLSL()}
       void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorld = wp.xyz;
-        vec4 mvPosition = viewMatrix * wp;
+        vec2 p = position.xz + uCam;
+        float r = length(position.xz);
+        float shore = smoothstep(${(SHORE_X - 1.0).toFixed(2)}, ${(SHORE_X + 12.0).toFixed(2)}, p.x);
+        float amp = shore * (1.0 - smoothstep(120.0, 500.0, r));
+        vec2 sl;
+        vec3 d = amp > 0.0 ? odSwell(p, uTime, amp, sl) : vec3(0.0);
+        float white = 0.0;
+        float crest = 0.0;
+        if (r < 400.0 && p.x > ${(SHORE_X - 2.0).toFixed(2)} && p.x < ${(BREAK_X + 40.0).toFixed(2)})
+          crest = surfCrest(p.x, p.y, uTime, white) * smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 2.0).toFixed(2)}, p.x);
+        vec3 wp = vec3(p.x + d.x, ${SEA_LEVEL.toFixed(3)} + d.y + crest, p.y + d.z);
+        vWorld = wp;
+        vBase = p;
+        vCrest = crest;
+        vWhite = white;
+        vec4 mvPosition = viewMatrix * vec4(wp, 1.0);
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */ `
       uniform float uTime;
       varying vec3 vWorld;
+      varying vec2 vBase;
+      varying float vCrest;
+      varying float vWhite;
       #ifdef USE_FOG
         varying vec3 vFogOffset;
         uniform float fogDensity;
       #endif
       ${SKY_FULL_GLSL}
       ${FOG_FN_GLSL}
+      ${SURF_GLSL}
+      ${SAND_GLSL}
+      ${swellGLSL()}
+
+      // foam lace: white bubble filaments around dark holes, drifting
+      float odFoam(vec2 p, float t) {
+        // thin white filaments along the bubble-cell borders, open water in the cells
+        float a = sqrt(odWorley(p * 1.8 + vec2(t * 0.15, 0.0)));
+        float b = sqrt(odWorley(p * 4.6 - vec2(0.0, t * 0.1) + 3.1));
+        float dens = odNoise(p * 0.6 + t * 0.05);
+        float lace = smoothstep(0.68 - 0.08 * dens, 0.76, a) * 0.8 + smoothstep(0.66 - 0.08 * dens, 0.74, b) * 0.5;
+        // foam gathers in streaky patches, not an even net
+        float fPatch = smoothstep(0.3, 0.7, odNoise(p * vec2(0.45, 0.2) + vec2(0.0, t * 0.03)));
+        return clamp(lace * (0.35 + 0.65 * fPatch) + 0.25 * fPatch * smoothstep(0.55, 0.7, a), 0.0, 1.0);
+      }
 
       void main() {
         vec3 toCam = cameraPosition - vWorld;
         float dist = length(toCam);
         vec3 V = toCam / dist;
-        // pixel footprint (m); geometric mean of across/along-view size keeps sparkle detail
         float fp = dist * 0.0018 / sqrt(max(abs(V.y), 0.02));
-        vec2 p = vWorld.xz;
+        vec2 p = vBase;
         float t = uTime;
+        if (p.x < ${(SHORE_X - 1.5).toFixed(2)}) discard;
+
+        float groundY = odSandY(p.x);
+        float depth = vWorld.y - groundY;
+        if (depth < -0.02) discard;
+        float shore = smoothstep(${(SHORE_X - 1.0).toFixed(2)}, ${(SHORE_X + 12.0).toFixed(2)}, p.x);
+        float chopAmp = mix(0.45, 1.0, smoothstep(0.0, 1.5, depth));
+
+        // normal: swell (analytic) + crest (finite difference) + sub-pixel chop
+        vec2 swSl;
+        float swAmp = shore * (1.0 - smoothstep(120.0, 500.0, length(p - cameraPosition.xz)));
+        if (swAmp > 0.0) odSwell(p, t, swAmp, swSl); else swSl = vec2(0.0);
+        vec2 crSl = vec2(0.0);
+        if (p.x < ${(BREAK_X + 40.0).toFixed(2)} && dist < 400.0) {
+          float w1, w2;
+          float e = max(0.15, fp);
+          float hx = surfCrest(p.x + e, p.y, t, w1), hz = surfCrest(p.x, p.y + e, t, w2);
+          crSl = vec2(hx - vCrest, hz - vCrest) / e;
+        }
         vec2 s = vec2(0.0);
         float lost = 0.0;
         ${waveGLSL}
+        s += swSl + crSl;
         vec3 n = normalize(vec3(-s.x, 1.0, -s.y));
         float nv = max(dot(n, V), 0.002);
 
-        // Sub-pixel waves: at grazing view the visible facets are the ones tilted toward
-        // the viewer (slope-weighted, back faces hidden), so the averaged reflection comes
-        // from sky ~2 sigma higher - bluer and darker - with less Fresnel. Two slope samples
-        // of that distribution instead of one mean direction.
         float sig = sqrt(lost + 0.0004);
         vec3 R = reflect(-V, n);
-        float gz = 1.0 - smoothstep(0.02, 0.35, V.y);           // only matters near grazing
+        float gz = 1.0 - smoothstep(0.02, 0.35, V.y);
         vec3 Ra = vec3(R.x, abs(R.y) + (1.2 + 1.6 * gz) * sig + 0.004, R.z);
         vec3 Rb = vec3(R.x, abs(R.y) + (2.2 + 2.8 * gz) * sig + 0.004, R.z);
         vec3 sky = 0.5 * (odSky(normalize(Ra), 2.0) + odSky(normalize(Rb), 2.0));
         float F = 0.02 + 0.98 * pow(1.0 - clamp(nv + (1.0 + 1.2 * gz) * sig, 0.0, 1.0), 5.0);
 
-        float shallow = 1.0 - smoothstep(${(SAND.waterline + 2).toFixed(1)}, ${(SAND.waterline + 45).toFixed(1)}, vWorld.x);
-        vec3 body = mix(vec3(0.012, 0.020, 0.030), vec3(0.030, 0.055, 0.055), shallow);
+        // water body: turquoise over the pale sand shallows, steel-blue offshore
+        vec3 turq = vec3(0.022, 0.075, 0.066);
+        vec3 deep = vec3(0.010, 0.020, 0.032);
+        vec3 body = mix(turq, deep, smoothstep(0.6, 7.0, depth));
         vec3 col = body * (1.0 - F) + sky * F;
+
+        // backlit wave faces: sun through the thin crest, green-turquoise
+        float toSun = max(dot(-V, OD_SUN), 0.0);
+        float face = clamp(dot(normalize(n.xz + 1e-5), normalize(V.xz + 1e-5)), 0.0, 1.0) * length(n.xz) * 3.0;
+        float thick = clamp(vCrest / 0.35, 0.0, 1.0);
+        col += OD_SUNCOL * OD_SUN_I * vec3(0.10, 0.62, 0.48) * 0.035 * thick * clamp(face, 0.0, 1.0) * (0.25 + toSun * toSun);
 
         // sun glitter: Beckmann lobe, roughness = sub-pixel wave slopes
         vec3 L = OD_SUN;
         vec3 H = normalize(L + V);
         float nh = max(dot(n, H), 1e-4);
-        float m2 = 2.0 * (0.0003 + 0.22 * lost + 0.003 * pow(1.0 - nv, 8.0));  // narrow path; the rest is resolved/twinkling facets
+        float m2 = 2.0 * (0.0003 + 0.22 * lost + 0.003 * pow(1.0 - nv, 8.0));
         float nh2 = nh * nh;
         float D = min(exp(-(1.0 - nh2) / (nh2 * m2)) / (3.14159 * m2 * nh2 * nh2), 3000.0);
         float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
         vec3 spec = OD_SUNCOL * OD_SUN_I * D * Fh / (4.0 * nv) * smoothstep(-0.06, 0.06, dot(n, L));
-        spec *= vec3(1.0, 0.74, 0.38);           // glints read gold after tone mapping
-        float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
-        // unresolved facets: the streak breaks into many tiny twinkling glints
+        spec *= vec3(1.0, 0.74, 0.38);
         float gl = odNoise(p / max(fp * 1.6, 0.02) * vec2(1.0, 0.35) + vec2(t * 1.7, -t * 0.6));
         float gw = smoothstep(0.0, 0.0012, lost);
         spec *= mix(1.0, smoothstep(0.58, 0.9, gl) * 5.0, gw);
-        sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
-        spec /= 1.0 + sl / mix(1.8, 4.0, gw);    // soft shoulder: gold, graded, never a flat white slab
-        float alpha = smoothstep(${SHORE_X.toFixed(2)}, ${(SHORE_X + 1.5).toFixed(2)}, vWorld.x);
-        col += spec * alpha;
+        float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
+        spec /= 1.0 + sl / mix(1.8, 4.0, gw);
+
+        // ---- foam ----
+        float foamAmt = 0.0;
+        float lace = fp < 0.25 ? odFoam(p, t) : 0.35;
+        // whitewater bore running in ahead of the swash, and dissolving patches behind
+        vec3 fr = surfFront(p.y, t);
+        if (fr.x < 1e3) {
+          float behind = p.x - fr.x;
+          float roller = fr.y * exp(-max(behind, 0.0) / 0.35) * step(-0.05, behind);
+          float bore = fr.y * exp(-max(behind, 0.0) / (0.8 + 1.0 * fr.z)) * step(-0.05, behind);
+          foamAmt = max(foamAmt, max(roller * 0.95, bore * lace));
+          foamAmt = max(foamAmt, 0.5 * (1.0 - fr.y) * lace * step(0.0, behind) * exp(-behind / 4.0));
+        }
+        // lingering foam streaks over the surf zone
+        float zone = smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 1.0).toFixed(2)}, p.x) * (1.0 - smoothstep(${(BREAK_X + 2.0).toFixed(2)}, ${(BREAK_X + 9.0).toFixed(2)}, p.x));
+        float streak = smoothstep(0.55, 0.8, odNoise(vec2(p.x * 0.6, p.y * 0.18 + t * 0.03)));
+        foamAmt = max(foamAmt, zone * streak * lace * 0.55);
+        // crest lip / roller whitewater
+        foamAmt = max(foamAmt, vWhite * mix(0.7, 1.0, lace));
+        // thin intersection line where the water meets the sand
+        foamAmt = max(foamAmt, (1.0 - smoothstep(0.0, 0.04, depth)) * lace * 0.8);
+        // sparse whitecaps far out
+        float far = smoothstep(${(SHORE_X + 60.0).toFixed(1)}, ${(SHORE_X + 120.0).toFixed(1)}, p.x);
+        float cap = smoothstep(0.86, 0.93, odNoise(p * 0.045 + vec2(t * 0.02, 0.0))) * smoothstep(0.5, 0.75, odNoise(p * 0.5 - t * 0.1));
+        foamAmt = max(foamAmt, far * cap * 0.8 * (1.0 - smoothstep(200.0, 1500.0, dist)));
+
+        // lit foam: sun on bubbly (all-facing) foam + sky fill; very shallow sun, so modest
+        vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
+        vec3 foamCol = vec3(0.92, 0.93, 0.9) * (OD_SUNCOL * OD_SUN_I * 0.318 * (0.22 + 0.35 * toSun) + skyUp * 1.1);
+        col = mix(col, foamCol, foamAmt);
+        spec *= 1.0 - foamAmt;
+
+        // shallow water is clear: the wet sand shows through the last few centimetres
+        float alpha = smoothstep(-0.02, 0.05, depth) * mix(0.55, 1.0, smoothstep(0.05, 0.9, depth));
+        alpha = max(alpha, foamAmt * smoothstep(-0.02, 0.02, depth));
+        col += spec;
 
         #ifdef USE_FOG
-          col = odApplyFog(col, vFogOffset, fogDensity * 0.18);  // clean marine air over the water
+          col = odApplyFog(col, vFogOffset, fogDensity * 0.18);
         #endif
-        // very shallow edge fades into the sand instead of a hard line
         gl_FragColor = vec4(col, alpha);
       }`,
   });
+  Object.assign(material.uniforms, surf.uniforms);
 
-  const g = new THREE.PlaneGeometry(22000, 44000);
-  g.rotateX(-Math.PI / 2);
-  g.translate(OCEAN.x0 + 11000, OCEAN.y, 0);
-  const mesh = new THREE.Mesh(g, material);
+  const mesh = new THREE.Mesh(polarGrid(), material);
   mesh.name = 'ocean';
-  mesh.receiveShadow = false;
   mesh.frustumCulled = false;
+  mesh.renderOrder = 3;
   scene.add(mesh);
 
   return {
     mesh,
-    update(time) { material.uniforms.uTime.value = time; },
+    update(time, camera) {
+      material.uniforms.uTime.value = time;
+      if (camera) material.uniforms.uCam.value.set(camera.position.x, camera.position.z);
+    },
   };
 }

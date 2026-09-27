@@ -75,7 +75,7 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
   let muted = false, vol = volume, auto = autoSteps;
   let nextWave = 0, nextGull = 0, nextCar = 0, spatialAcc = 0;
   const L = { x: 0, y: EYE, z: 0, fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 };
-  const carCbs = new Set();
+  const carCbs = new Set(), waveCbs = new Set();
   const walk = { x: null, z: null, acc: 0, still: 0 };
 
   function tick() {
@@ -84,7 +84,11 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
     const ahead = now + (typeof document !== 'undefined' && document.hidden ? 1.5 : 0.35);
     parts.music.tick(now, ahead);
     if (nextWave < now) nextWave = now + 0.1;
-    while (nextWave < ahead) { parts.waves.breakAt(nextWave, L); nextWave += rr(6, 10); }
+    while (nextWave < ahead) {
+      const w = parts.waves.breakAt(nextWave, L);
+      waveCbs.forEach((cb) => cb({ ...w, now }));   // w.t is on the audio clock
+      nextWave += rr(6, 10);
+    }
     if (nextGull < now) nextGull = now + rr(1, 4);
     while (nextGull < ahead) { parts.gulls.callAt(nextGull, L); nextGull += rr(5, 20); }
     if (now >= nextCar) { parts.cars.spawn(); nextCar = now + rr(40, 70); }
@@ -144,6 +148,9 @@ export function createAudio({ volume = 0.8, autoSteps = true } = {}) {
 
     // Car hook for visuals: cb(car) fires when a car starts its pass; car.z is live.
     onCarPass(cb) { carCbs.add(cb); return () => carCbs.delete(cb); },
+    // Wave hook for visuals: cb({ t, now, k, size, runup, z }) per scheduled break;
+    // t - now = seconds until the wave starts (crash at t + 2.15k)
+    onWave(cb) { waveCbs.add(cb); return () => waveCbs.delete(cb); },
     onCarEnd(cb) { return parts ? parts.cars.onEnd(cb) : () => {}; },
     getCars() { return parts ? parts.cars.list() : []; },
     spawnCar(opts) { return parts ? parts.cars.spawn(opts) : null; },

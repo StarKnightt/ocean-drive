@@ -150,10 +150,11 @@ let SHARED = null;
 function shared() {
   if (SHARED) return SHARED;
   const chrome = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.07, envMapIntensity: 1.3, side: THREE.DoubleSide });
-  groundReflect(chrome, 'chrome');
+  groundReflect(chrome, 'chrome', CAR_MAX_RADIANCE);
   const hubMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f4, metalness: 1, roughness: 0.16, envMapIntensity: 1.0, side: THREE.DoubleSide });
-  groundReflect(hubMat, 'hub');
+  groundReflect(hubMat, 'hub', CAR_MAX_RADIANCE);
   const rubber = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
+  clampRadiance(rubber, 'rubber');
   const canvasTop = new THREE.MeshStandardMaterial({ color: 0xb49a70, roughness: 0.95 });
   const ivory = new THREE.MeshStandardMaterial({ color: 0xf1ead8, roughness: 0.35 });
   const plate = new THREE.MeshStandardMaterial({ color: 0xf0ecdc, roughness: 0.5, metalness: 0.2 });
@@ -163,6 +164,7 @@ function shared() {
   const glass = new THREE.MeshPhysicalMaterial({ color: 0xcfe4e0, roughness: 0.02, metalness: 0, transparent: true, opacity: 0.38, envMapIntensity: 2.5, depthWrite: false, side: THREE.DoubleSide });
   const red = new THREE.MeshStandardMaterial({ color: 0xa3161a, roughness: 0.3, emissive: 0x3a0404 });
   const lens = new THREE.MeshStandardMaterial({ color: 0xe8e6de, roughness: 0.25, metalness: 0.1, envMapIntensity: 0.6 });
+  clampRadiance(lens, 'lens');
   const blob = new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 
   // chrome parts merged
@@ -259,13 +261,27 @@ function seat(obj, x, z, rotY) {
 
 // the cube env has no ground: the lower half of the reflection is the dark street,
 // which gives the paint and chrome a crisp horizon line
-function groundReflect(mat, key) {
+function groundReflect(mat, key, maxRadiance = 0) {
   mat.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
         'return envMapColor.rgb * envMapIntensity * mix(vec3(0.13, 0.12, 0.115), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+    if (maxRadiance) clampChunk(s, maxRadiance);
   };
-  mat.customProgramCacheKey = () => 'car-refl-' + key;
+  mat.customProgramCacheKey = () => 'car-refl-' + key + maxRadiance;
+}
+
+// keep small bright parts (chrome, whitewalls, lenses) under the bloom threshold (4.0):
+// their sun/sky glints otherwise bloom into glowing orbs
+const CAR_MAX_RADIANCE = 3.0;
+function clampChunk(s, m) {
+  s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
+    `outgoingLight = min(outgoingLight, vec3(${m.toFixed(2)}));
+#include <opaque_fragment>`);
+}
+function clampRadiance(mat, key) {
+  mat.onBeforeCompile = (s) => clampChunk(s, CAR_MAX_RADIANCE);
+  mat.customProgramCacheKey = () => 'car-clamp-' + key;
 }
 
 function makeCar({ paint, flatten, cast }) {

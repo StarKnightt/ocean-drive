@@ -7,6 +7,8 @@ import { buildPalms } from './world/palms.js';
 import { buildStreet } from './world/street.js';
 import { buildCars } from './world/car.js';
 import { createOcean } from './world/ocean.js';
+import { createSurf } from './world/surf.js';
+import { buildBeach } from './world/beach.js';
 import { FlyCam } from './player/flycam.js';
 import { EYE_HEIGHT, CURB_HEIGHT, groundHeight } from './world/layout.js';
 import { createAudio } from './audio/index.js'; // SOUND agent: synthesized spatial audio
@@ -37,7 +39,9 @@ buildHotels(scene);
 const palms = buildPalms(scene);
 buildStreet(scene);
 const cars = buildCars(scene);
-const ocean = createOcean(scene);
+const surf = createSurf({ frozen: SHOT, anchorTime: FROZEN_TIME });
+const beach = buildBeach(scene, surf);
+const ocean = createOcean(scene, surf);
 const post = createPost(renderer, scene, camera,
   params.has('bloom') ? { bloomStrength: parseFloat(params.get('bloom')) } : undefined);
 
@@ -58,6 +62,8 @@ if (!SHOT) {
 const audio = createAudio();
 window.__audio = audio;
 if (!SHOT) overlay.addEventListener('click', () => audio.start());
+// visuals follow the audio's wave schedule (audio clock -> render clock)
+audio.onWave((w) => surf.pushAudioWave({ visualT0: elapsed + (w.t - w.now), k: w.k, size: w.size, runup: w.runup, z: w.z }));
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -68,7 +74,8 @@ window.addEventListener('resize', () => {
 
 // Harness hooks
 let fps = 0;
-window.__groundHeight = groundHeight;
+window.__groundHeight = (x, z) => beach.groundAt(x, z);
+window.__surf = surf;
 window.__scene = scene;
 window.__setCam = (x, y, z, heading, pitch) => {
   controls.set(x, y, z, heading, pitch);
@@ -96,7 +103,9 @@ function frame(t) {
   if (!SHOT) controls.update(dt);
   if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
   sky.update(camera);
-  ocean.update(elapsed);
+  surf.update(elapsed);
+  ocean.update(elapsed, camera);
+  beach.update(elapsed, camera);
   palms.update(elapsed);
   cars.update(dt, SHOT ? null : audio.getCars());
 
