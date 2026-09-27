@@ -4,6 +4,8 @@ import { createPost } from './renderer/post.js';
 import { buildPlaceholders } from './world/placeholders.js';
 import { buildHotels } from './world/hotels.js';
 import { buildPalms } from './world/palms.js';
+import { buildStreet } from './world/street.js';
+import { buildCars } from './world/car.js';
 import { createOcean } from './world/ocean.js';
 import { FlyCam } from './player/flycam.js';
 import { EYE_HEIGHT, CURB_HEIGHT, groundHeight } from './world/layout.js';
@@ -33,6 +35,8 @@ const sky = createSky(renderer, scene);
 buildPlaceholders(scene);
 buildHotels(scene);
 const palms = buildPalms(scene);
+buildStreet(scene);
+const cars = buildCars(scene);
 const ocean = createOcean(scene);
 const post = createPost(renderer, scene, camera,
   params.has('bloom') ? { bloomStrength: parseFloat(params.get('bloom')) } : undefined);
@@ -94,6 +98,7 @@ function frame(t) {
   sky.update(camera);
   ocean.update(elapsed);
   palms.update(elapsed);
+  cars.update(dt, SHOT ? null : audio.getCars());
 
   renderer.info.reset();
   if (params.has('nopost')) renderer.render(scene, camera);

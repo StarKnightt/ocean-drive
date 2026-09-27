@@ -79,25 +79,7 @@ function buildGround(group) {
     size: 512, seed: 41, colorA: [214, 204, 188], colorB: [236, 228, 214], baseCells: 6, speckle: 0.12,
   });
 
-  // Hotel-side ground (under/behind the buildings), sidewalks, curbs.
-  group.add(mesh(mergeGeometries([
-    slab(-400, SIDEWALK_W.x1, -0.3, CURB_HEIGHT, -Z, Z, 3),
-    slab(SIDEWALK_E.x0, SIDEWALK_E.x1, -0.3, CURB_HEIGHT, -Z, Z, 3),
-  ]), concrete));
-
-  // Road: parking lane + travel lanes.
-  group.add(mesh(slab(PARKING.x0, LANES.x1, -0.4, 0, -Z, Z, 9), asphalt));
-
-  // Markings: double yellow centre line, white parking-lane line, bay ticks.
-  const yellow = new THREE.MeshStandardMaterial({ color: 0xd9a92e, roughness: 0.7 });
-  const white = new THREE.MeshStandardMaterial({ color: 0xe8e4da, roughness: 0.7 });
-  group.add(mesh(mergeGeometries([
-    slab(LANES.centerX - 0.2, LANES.centerX - 0.1, 0, 0.006, -Z, Z),
-    slab(LANES.centerX + 0.1, LANES.centerX + 0.2, 0, 0.006, -Z, Z),
-  ]), yellow));
-  const ticks = [slab(PARKING.x1 - 0.06, PARKING.x1 + 0.06, 0, 0.006, -Z, Z)];
-  for (let z = -300; z <= 300; z += 6.5) ticks.push(slab(PARKING.x0 + 0.3, PARKING.x1, 0, 0.006, z - 0.05, z + 0.05));
-  group.add(mesh(mergeGeometries(ticks), white));
+  // (street, curbs and sidewalks: street.js)
 
   // Park lawn.
   group.add(mesh(slab(PARK.x0, PARK.wallX, -0.3, CURB_HEIGHT, -Z, Z, 7), grass));
@@ -426,27 +408,6 @@ function buildBackground(group) {
   }
 }
 
-function buildCar(group) {
-  const car = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color: 0x8c4a44, roughness: 0.4, metalness: 0.25 });
-  const tyre = new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.9 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.7, 4.9), paint);
-  body.position.y = 0.65;
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.4, 1.8), new THREE.MeshStandardMaterial({ color: 0xe9dfcf, roughness: 0.7 }));
-  seat.position.set(0, 1.1, 0.4);
-  car.add(body, seat);
-  const wg = new THREE.CylinderGeometry(0.34, 0.34, 0.25, 16).rotateZ(Math.PI / 2);
-  for (const [x, z] of [[-0.85, 1.5], [0.85, 1.5], [-0.85, -1.5], [0.85, -1.5]]) {
-    const w = new THREE.Mesh(wg, tyre);
-    w.position.set(x, 0.34, z);
-    car.add(w);
-  }
-  car.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
-  car.position.set(CAR.x, 0, CAR.z);
-  group.add(car);
-  blobs(group, 'rect', [{ x: CAR.x, y: 0, z: CAR.z, sx: 2.9, sz: 7.0 }]);
-}
-
 function buildTower(group) {
   const t = new THREE.Group();
   const base = sandHeight(TOWER.x);
@@ -517,7 +478,6 @@ export function buildPlaceholders(scene) {
   group.name = 'placeholders';
   buildGround(group);
   buildBackground(group);  // the deco row itself is built by hotels.js
-  buildCar(group);
   buildTower(group);
   scene.add(group);
   return group;

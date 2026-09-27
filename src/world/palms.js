@@ -7,7 +7,7 @@
 // shadows show the gaps between them. Wind sways crowns and frond tips in the vertex
 // shader (frozen in ?shot mode through the time passed to update()).
 import * as THREE from 'three';
-import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT } from './layout.js';
+import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, roadHeight } from './layout.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 
 // ---------------------------------------------------------------------------
@@ -614,7 +614,7 @@ function groundMesh(trees) {
   trees.forEach((t, i) => {
     const size = t.ground ? 2.4 + (t.seed % 7) * 0.15 : 1.4;
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.ground ? t.seed % 6 : 0);
-    m4.compose(new THREE.Vector3(t.x, t.row === 'hotel' ? 0.004 : CURB_HEIGHT + 0.004, t.z), q, s.set(size, 1, size));
+    m4.compose(new THREE.Vector3(t.x, t.row === 'hotel' ? roadHeight(t.x) + 0.006 : CURB_HEIGHT + 0.004, t.z), q, s.set(size, 1, size));
     im.setMatrixAt(i, m4);
   });
   im.receiveShadow = true;
@@ -664,7 +664,7 @@ export function buildPalms(scene) {
   for (const t of PALM_TREES) {
     const rnd = mulberry32(t.seed);
     const ti = t.species === 'royal' ? 6 : t.species === 'sabal' ? 7 : t.variant;
-    const base = new THREE.Vector3(t.x, t.row === 'hotel' ? 0 : CURB_HEIGHT, t.z);
+    const base = new THREE.Vector3(t.x, t.row === 'hotel' ? roadHeight(t.x) : CURB_HEIGHT, t.z);
     q.setFromAxisAngle(Y, t.rotY);
     const sc = t.scale * (t.species === 'sabal' ? 0.95 : 1);
     // per-tree height stretch (capped ~21 m) and lean shear

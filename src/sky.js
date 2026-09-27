@@ -164,7 +164,8 @@ vec4 odClouds(vec3 d, float detail) {
   float low = smoothstep(0.30, 0.03, d.y);
   float th = 0.53 - 0.04 * low;
   float nn = n + (fine - 0.5) * 0.07;
-  float dens = smoothstep(th, th + 0.04, nn) * low;
+  // soft, feathered puff edges (no hard sticker outlines near the horizon)
+  float dens = smoothstep(th - 0.03 - 0.03 * low, th + 0.09, nn) * low;
   dens *= smoothstep(0.0, 0.02, d.y);                    // melt into horizon haze
   float thick = smoothstep(th + 0.03, th + 0.13, nn);
   float lit = clamp((n - n2) * 14.0 + 0.5, 0.0, 1.0);    // sun-facing side of the puff
@@ -179,7 +180,7 @@ vec4 odClouds(vec3 d, float detail) {
   // Away from the sun: sunlit pink-peach tops over shaded lavender-grey bases.
   // Away from the sun: peach-orange sun-facing sides, lavender-grey shaded bodies and
   // darker undersides.
-  vec3 cA = mix(vec3(0.36, 0.31, 0.40), vec3(1.05, 0.56, 0.34), smoothstep(0.3, 0.85, lit) * (0.6 + 0.4 * thin));
+  vec3 cA = mix(vec3(0.44, 0.36, 0.40), vec3(1.1, 0.62, 0.3), smoothstep(0.2, 0.8, lit) * (0.65 + 0.35 * thin));
   cA *= 1.0 - 0.35 * under;
   // Backlit, near the sun: thick bodies slate-purple with soft internal gradients;
   // only the sun-facing edge forward-scatters, orange-gold, in a rim of varying width.

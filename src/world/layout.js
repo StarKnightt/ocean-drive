@@ -26,6 +26,16 @@ export const SEA_LEVEL = -1.0;
 export const OCEAN = { x0: 86, y: SEA_LEVEL };
 
 export const CAR = { x: -22.75, z: 8 };
+export const CROSSWALK_Z = -40;
+
+// Road surface height: crowned (cambered) at the centre line, draining to both gutters.
+export const ROAD_CROWN = 0.09;
+export function roadHeight(x) {
+  const c = LANES.centerX;
+  const w = x < c ? c - PARKING.x0 : LANES.x1 - c;
+  const t = Math.min(1, Math.abs(x - c) / w);
+  return ROAD_CROWN * (1 - t * t);
+}
 export const TOWER = { x: 45, z: 5, deckHeight: 2.7 };
 
 export const EYE_HEIGHT = 1.7;
@@ -62,7 +72,7 @@ export const SHORE_X = (() => {
 // Walkable ground height used by the camera (placeholder; refined by later systems).
 export function groundHeight(x, z) {
   if (x < SIDEWALK_W.x1) return CURB_HEIGHT;
-  if (x < LANES.x1) return 0;
+  if (x < LANES.x1) return roadHeight(x);
   if (x < SAND.x0) return CURB_HEIGHT;
   return Math.max(sandHeight(x), SEA_LEVEL);
 }

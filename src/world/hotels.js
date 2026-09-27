@@ -1653,6 +1653,13 @@ function paintMaterial() {
           sunFace = dot(normalize(wn.xz + 1e-5), normalize(OD_SUN.xz));
           // (plus light off the sunlit fronts and pavement across the street)
           reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.55, 1.6, 1.72), smoothstep(0.1, -0.3, sunFace) * vert);
+          // sunlit fronts: as warm and saturated as the lit sand (a 7 deg sun through ~30
+          // air masses is amber, and the pale paint must not tone-map to washed cream)
+          {
+            float odSf = smoothstep(0.2, 0.85, sunFace) * vert;
+            reflectedLight.directDiffuse *= mix(vec3(1.0), vec3(1.0, 0.83, 0.64), odSf);
+            reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.0, 0.9, 0.78), odSf);
+          }
           #endif
           // light bounced off the sunlit sidewalk and street onto the lower facade
           reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.10, 0.075, 0.055) * exp(-hb / 2.5) * vert * (0.3 + 0.7 * smoothstep(-0.3, 0.5, sunFace));
