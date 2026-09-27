@@ -30,6 +30,7 @@ const SUN_DIR = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.Vector3
 const CULL = 150;                // m: figures further than this are hidden
 const TERRACE_Y = CURB_HEIGHT + 0.45;
 const FOG = 1 / 200;
+const SHADOW_GAIN = 1.6;      // direct-light share -> shadow darkness, matched to the palm shadows
 const promenadeX = (z) => PARK.promenadeX + 2.6 * Math.sin(z / 19) + 1.2 * Math.sin(z / 7.3);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -711,9 +712,11 @@ function shadowMaterial(per) {
         // darken by what the sun adds here (nothing where the ground is already in shadow),
         // softer further from the caster (penumbra), fading into the haze
         vec3 odD = reflectedLight.directDiffuse, odI = reflectedLight.indirectDiffuse;
-        vec3 odRatio = odI / max(odD + odI, vec3(1e-5));
+        // (the scene's ground materials read darker in shade than this lambert ratio: gain)
+        vec3 odRatio = 1.0 - clamp(odD / max(odD + odI, vec3(1e-5)) * ${f5(SHADOW_GAIN)}, 0.0, 0.85);
         float odK = uStrength * mix(1.0, 0.62, smoothstep(0.2, 1.8, vOdH)) * exp(-odT * ${f5(FOG)});
-        gl_FragColor = vec4(mix(vec3(1.0), odRatio, odK), 1.0);`);
+        gl_FragColor = vec4(mix(vec3(1.0), odRatio, odK), 1.0);
+        if (uStrength > 5.0) gl_FragColor = vec4(vec3(1.0 - odRatio.g) * (uStrength - 5.0), 1.0);`);
   };
   m.customProgramCacheKey = () => 'people-shadow-v1';
   return m;
@@ -1113,7 +1116,7 @@ export function buildPeople(scene, { beach, hotels, getCars = () => [], walker =
   // beach walker: slow stroll on the wet sand, feet in the swash at the seaward bends
   {
     const F = makeFigure(scene, R.walker);
-    const path = loopPath((z) => 88.6 + 1.7 * Math.sin(z / 16) + 0.5 * Math.sin(z / 5.1 + 1), (z) => 87.7 + 1.4 * Math.sin(z / 13 + 2), -40, 50, 0.4);
+    const path = loopPath((z) => 90.1 + 1.2 * Math.sin(z / 16) + 0.4 * Math.sin(z / 5.1 + 1), (z) => 89.5 + 1.0 * Math.sin(z / 13 + 2), -40, 50, 0.4);
     const carry = (Fi, P) => { P.shR = 6 * D2R; P.elR = 22 * D2R; Fi.bones[B.FORE_R].rotation.x = -P.elR; Fi.bones[B.ARM_R].rotation.x = -P.shR - (P.pelvisX + P.spineX + P.chestX); };
     const p = pathPerson(F, path, { speed: 0.95, strideK: 1, turnSpeed: 0.6, style: { amp: 0.8, arm: 0.8, armR: 0.25, look: 8, seed: 2 }, carry, s0: 20 });
     p.name = 'walker';
