@@ -23,11 +23,18 @@ const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') === '1';
 const FROZEN_TIME = 12.0;
 
-const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-// render scale: the tier's base scale, stepped down / up by the dynamic resolution below
-const baseDpr = () => Math.min(window.devicePixelRatio, QUALITY.maxDpr);
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: false });
+// render scale: the tier's base scale, stepped down / up by the dynamic resolution below.
+// The base pixel ratio respects both the tier's DPR cap and its pixel budget, so a 4K or
+// high-DPI screen renders about as many pixels as a 1080p one.
+const baseDpr = () => Math.max(0.5, Math.min(window.devicePixelRatio, QUALITY.maxDpr,
+  Math.sqrt(QUALITY.maxPixels / (window.innerWidth * window.innerHeight))));
 let renderScale = QUALITY.renderScale;
-renderer.setPixelRatio(baseDpr() * renderScale);
+// the first frames start at half resolution and ramp up, so the first (heaviest) GPU
+// submissions stay small
+let startScale = SHOT ? 1 : 0.5;
+const pixelRatio = () => baseDpr() * renderScale * startScale;
+renderer.setPixelRatio(pixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const TONE = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutral: THREE.NeutralToneMapping };
@@ -39,12 +46,43 @@ renderer.shadowMap.autoUpdate = false; // static casters; set needsUpdate when s
 renderer.info.autoReset = false;
 document.body.appendChild(renderer.domElement);
 
+// A lost WebGL context (the driver reset after a GPU timeout, or memory pressure): stop
+// drawing, say so, and reload once at a lighter tier. ?gpureset marks that reload, so a
+// second loss shows a manual button instead of looping.
+const LIGHTER = { high: 'medium', medium: 'low', low: 'low' };
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  renderer.setAnimationLoop(null);
+  window.__contextLost = true;
+  const again = params.has('gpureset');
+  const next = new URL(location.href);
+  next.searchParams.set('quality', LIGHTER[QUALITY.tier]);
+  next.searchParams.set('gpureset', '1');
+  next.searchParams.delete('ultra');
+  const box = document.createElement('div');
+  box.id = 'gpu-reset';
+  box.innerHTML = again
+    ? '<p>The graphics driver reset again.</p><p class="sub">This machine may need a lighter setting.</p><button type="button">Reload at low quality</button>'
+    : '<p>The graphics driver reset — reloading at a lighter quality…</p>';
+  document.body.appendChild(box);
+  document.getElementById('loader')?.remove();
+  document.body.classList.remove('loading');
+  document.getElementById('overlay')?.classList.add('hidden');
+  if (again) {
+    next.searchParams.set('quality', 'low');
+    box.querySelector('button').addEventListener('click', () => location.replace(next));
+  } else if (!SHOT) setTimeout(() => location.replace(next), 1800);
+}, false);
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 30000);
 
 // LOADER hook: report a build phase to the loading screen (index.html) and, outside ?shot mode,
 // yield one painted frame so it can repaint between the synchronous build steps.
+const bootTimes = window.__bootTimes = [];
+const bootMark = (label) => bootTimes.push([label, Math.round(performance.now())]);
 const loadStep = (fraction, label) => {
+  bootMark(label);
   window.__loadProgress?.(fraction, label);
   if (SHOT) return;
   return new Promise((r) => {
@@ -220,7 +258,7 @@ audio.onWave((w) => surf.pushAudioWave({ visualT0: elapsed + (w.t - w.now), k: w
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(baseDpr() * renderScale);   // devicePixelRatio can change (zoom, other screen)
+  renderer.setPixelRatio(pixelRatio());   // devicePixelRatio can change (zoom, other screen)
   renderer.setSize(window.innerWidth, window.innerHeight);
   post.setPixelRatio(renderer.getPixelRatio());
   post.setSize(window.innerWidth, window.innerHeight);
@@ -273,6 +311,7 @@ function dynamicResolution(rawDt) {
     }
   }
 }
+window.__loseContext = () => renderer.forceContextLoss();   // test hook: context-loss recovery
 window.__dynres = () => ({ scale: renderScale, pixelRatio: renderer.getPixelRatio(), on: DYN.on });
 
 // Harness hooks
@@ -291,6 +330,28 @@ window.__renderInfo = () => ({
   textures: renderer.info.memory.textures,
   fps: Math.round(fps * 10) / 10,
 });
+// rough VRAM estimate (MB): framebuffer + post targets + shadow map + scene textures
+window.__gpuBudget = () => {
+  const px = renderer.domElement.width * renderer.domElement.height;
+  const mb = (b) => +(b / 1048576).toFixed(1);
+  const samples = QUALITY.msaa || 1;
+  const post = px * 8 * samples + px * 8 * (samples > 1 ? 2 : 1)   // MSAA half-float + resolve + ping-pong
+    + (QUALITY.bloom ? px * 8 * 0.67 : 0);                          // bloom mip chain (~2/3 of full res, x2)
+  const sm = sky.sun.shadow.mapSize, shadow = sm.x * sm.y * 4;
+  let tex = 0;
+  const seen = new Set();
+  scene.traverse((o) => {
+    for (const m of [].concat(o.material ?? [])) {
+      for (const v of Object.values(m)) {
+        if (!v?.isTexture || seen.has(v)) continue;
+        seen.add(v);
+        const im = v.image, w = im?.width ?? 0, h = im?.height ?? 0, d = im?.depth ?? 1;
+        tex += w * h * d * 4 * (v.generateMipmaps !== false && !v.isDataTexture ? 1.33 : 1);
+      }
+    }
+  });
+  return { canvasMP: +(px / 1e6).toFixed(2), postMB: mb(post + px * 4), shadowMB: mb(shadow), texturesMB: mb(tex), totalMB: mb(post + px * 4 + shadow + tex) };
+};
 window.__sceneReady = false;
 
 const timer = new THREE.Timer();
@@ -331,11 +392,44 @@ function frame(t) {
     hud.textContent = `${i.fps} fps · ${i.calls} calls · ${(i.triangles / 1000).toFixed(0)}k tris · ` +
       `x ${p.x.toFixed(1)} y ${p.y.toFixed(1)} z ${p.z.toFixed(1)} · ${QUALITY.tier} ×${renderer.getPixelRatio().toFixed(2)}`;
   }
+  if (startScale < 1 && frames % 8 === 0) { startScale = Math.min(1, startScale + 0.125); onResize(); }
+  if (frames <= 3 || frames === 10) bootMark('frame ' + frames);
   if (frames === 10) window.__sceneReady = true;
 }
 
 renderer.shadowMap.needsUpdate = true;
 await loadStep(0.8, 'Mixing the morning light…'); // LOADER: shader compile phase
+// compile the variants the frame actually uses: the scene renders into the composer's
+// linear half-float target (no tone mapping), not the canvas
+const direct = params.has('nopost');
+renderer.setRenderTarget(direct ? null : post.composer.readBuffer);
 await renderer.compileAsync(scene, camera);
+renderer.setRenderTarget(null);
+bootMark('compiled');
+// Warm-up in small steps so no single task (or GPU submission) runs for seconds:
+// upload the textures a few at a time, then one tiny-resolution render that builds
+// the shadow-depth programs, uploads the geometry and fills the shadow map.
+{
+  const textures = new Set();
+  scene.traverse((o) => {
+    for (const m of [].concat(o.material ?? [])) for (const v of Object.values(m)) if (v?.isTexture) textures.add(v);
+  });
+  let t = performance.now();
+  for (const tex of textures) {
+    renderer.initTexture(tex);
+    if (!SHOT && performance.now() - t > 40) { await loadStep(0.86, 'Almost there…'); t = performance.now(); }
+  }
+  bootMark('textures');
+  await loadStep(0.9, 'Almost there…');
+  const pr = renderer.getPixelRatio();
+  const tiny = Math.min(pr, 160 / window.innerWidth);
+  renderer.setPixelRatio(tiny);
+  post.setPixelRatio(tiny);
+  if (direct) renderer.render(scene, camera); else post.render(elapsed);
+  renderer.setPixelRatio(pr);
+  post.setPixelRatio(pr);
+  renderer.shadowMap.needsUpdate = true;
+  bootMark('warm render');
+}
 window.__loadProgress?.(0.94, 'Almost there…'); // LOADER
 renderer.setAnimationLoop(frame);

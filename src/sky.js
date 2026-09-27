@@ -333,17 +333,9 @@ function installSmoothShadows(shadowCam, mapSize) {
   const f = (v) => v.toFixed(5);
   const texM = [(shadowCam.right - shadowCam.left) / mapSize.x, (shadowCam.top - shadowCam.bottom) / mapSize.y];
   const range = shadowCam.far - shadowCam.near;
-  const taps = QUALITY.shadowTaps, tapC = (taps - 1) / 2;   // taps x taps bilinear grid
-  const code = /* glsl */ `
-				const vec2 odTexM = vec2( ${f(texM[0])}, ${f(texM[1])} );
-				const float odRange = ${f(range)};
-				float zr = shadowCoord.z;
-				// minimum filter: 1.5 texels, or ~1 screen pixel of ground (1 / gl_FragCoord.w
-				// = view depth) so thin shadows don't alias at grazing angles
-				float minM = max( 1.5 * max( odTexM.x, odTexM.y ), 1.2 * 0.0015 / gl_FragCoord.w );
-				// blocker search ring no wider than thin casters, so none are skipped
-				vec2 sr = max( minM, 0.08 ) / odTexM * texelSize;
-				float bSum = 0.0, dSum = 0.0;
+  const taps = QUALITY.shadowTaps, tapC = (taps - 1) / 2;   // taps x taps bilinear grid  // receiver-to-blocker distance (m): integral of blocker occupancy over depth offset.
+  // full: 3x3 ring x 6 depths (54 samples); lite: centre + 4 diagonals x 4 depths (20)
+  const blockerSearch = QUALITY.shadowFilter === 'full' ? /* glsl */ `
 				for ( int i = -1; i <= 1; i ++ ) {
 					for ( int j = -1; j <= 1; j ++ ) {
 						vec2 uv = shadowCoord.xy + vec2( float( i ), float( j ) ) * sr;
@@ -354,10 +346,29 @@ function installSmoothShadows(shadowCam, mapSize) {
 						float b4 = 1.0 - texture( shadowMap, vec3( uv, zr - 10.0 / odRange ) );
 						float b5 = 1.0 - texture( shadowMap, vec3( uv, zr - 25.0 / odRange ) );
 						bSum += b0;
-						// receiver-to-blocker distance (m): integral of blocker occupancy over depth offset
 						dSum += 0.25 * ( b0 + b1 ) + 0.5 * ( b1 + b2 ) + 1.25 * ( b2 + b3 ) + 3.0 * ( b3 + b4 ) + 7.5 * ( b4 + b5 ) + 20.0 * b5;
 					}
-				}
+				}` : /* glsl */ `
+				for ( int k = 0; k < 5; k ++ ) {
+					vec2 uv = shadowCoord.xy + ( k == 4 ? vec2( 0.0 ) : vec2( k < 2 ? - 0.7 : 0.7, ( k & 1 ) == 0 ? - 0.7 : 0.7 ) ) * sr;
+					float b0 = 1.0 - texture( shadowMap, vec3( uv, zr ) );
+					float b1 = 1.0 - texture( shadowMap, vec3( uv, zr - 1.5 / odRange ) );
+					float b2 = 1.0 - texture( shadowMap, vec3( uv, zr - 5.0 / odRange ) );
+					float b3 = 1.0 - texture( shadowMap, vec3( uv, zr - 25.0 / odRange ) );
+					bSum += b0;
+					dSum += 0.75 * ( b0 + b1 ) + 1.75 * ( b1 + b2 ) + 10.0 * ( b2 + b3 ) + 20.0 * b3;
+				}`;
+  const code = /* glsl */ `
+				const vec2 odTexM = vec2( ${f(texM[0])}, ${f(texM[1])} );
+				const float odRange = ${f(range)};
+				float zr = shadowCoord.z;
+				// minimum filter: 1.5 texels, or ~1 screen pixel of ground (1 / gl_FragCoord.w
+				// = view depth) so thin shadows don't alias at grazing angles
+				float minM = max( 1.5 * max( odTexM.x, odTexM.y ), 1.2 * 0.0015 / gl_FragCoord.w );
+				// blocker search ring no wider than thin casters, so none are skipped
+				vec2 sr = max( minM, 0.08 ) / odTexM * texelSize;
+				float bSum = 0.0, dSum = 0.0;
+				${blockerSearch}
 				if ( bSum < 0.001 ) {
 					shadow = 1.0;
 				} else {
@@ -398,7 +409,7 @@ export function createSky(renderer, scene) {
 
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
   sun.castShadow = true;
-  // 8192-wide sun map at 'high' on capable GPUs (4096 on modest ones), smaller per tier
+  // 4096-wide sun map at 'high' (8192 with ?ultra), smaller per tier
   const [smW, smH] = QUALITY.shadowMap;
   const fits = renderer.capabilities.maxTextureSize >= smW;
   sun.shadow.mapSize.set(fits ? smW : smW / 2, fits ? smH : smH / 2);

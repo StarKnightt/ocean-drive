@@ -47,22 +47,26 @@ function detect() {
   return { tier, gpu, why: { phone, tablet, software, discrete, integrated, cores, mem, minSide, dpr: devicePixelRatio } };
 }
 
+// maxPixels caps the rendered pixel count (not just the DPR): a 4K / high-DPI screen at the
+// 'high' DPR cap was ~8 MP per frame with MSAA half-float targets, enough to push a single
+// GPU frame past the Windows driver timeout. shadowFilter 'lite' = 20 blocker + 25 PCF
+// samples per pixel; 'full' = 54 + 64 (?ultra only).
 const TIERS = {
   high: {
-    maxDpr: 1.5, renderScale: 1, msaa: 4, fxaa: false, bloom: true,
-    shadowMap: [8192, 2048], shadowTaps: 8, cloudOctaves: 5,
+    maxDpr: 1.5, maxPixels: 2.1e6, renderScale: 1, msaa: 4, fxaa: false, bloom: true,
+    shadowMap: [4096, 1024], shadowTaps: 5, shadowFilter: 'lite', cloudOctaves: 5,
     oceanGrid: { rings: 400, segs: 320 }, sandRows: 440, sandDetail: 1024, printFade: [35, 60],
     wrack: 9000, farFoliage: 1, signAtlas: 1, hotelFar: Infinity, shadowStep: 0.5, audioVoices: 'full',
   },
   medium: {
-    maxDpr: 1.25, renderScale: 1, msaa: 2, fxaa: false, bloom: true,
-    shadowMap: [4096, 1024], shadowTaps: 6, cloudOctaves: 4,
+    maxDpr: 1.25, maxPixels: 1.3e6, renderScale: 1, msaa: 2, fxaa: false, bloom: true,
+    shadowMap: [4096, 1024], shadowTaps: 5, shadowFilter: 'lite', cloudOctaves: 4,
     oceanGrid: { rings: 300, segs: 256 }, sandRows: 360, sandDetail: 1024, printFade: [26, 45],
     wrack: 6000, farFoliage: 0.75, signAtlas: 1, hotelFar: Infinity, shadowStep: 1, audioVoices: 'full',
   },
   low: {
-    maxDpr: 1, renderScale: 0.85, msaa: 0, fxaa: true, bloom: false,
-    shadowMap: [2048, 1024], shadowTaps: 4, cloudOctaves: 3,
+    maxDpr: 1, maxPixels: 0.8e6, renderScale: 0.85, msaa: 0, fxaa: true, bloom: false,
+    shadowMap: [2048, 1024], shadowTaps: 4, shadowFilter: 'lite', cloudOctaves: 3,
     oceanGrid: { rings: 220, segs: 176 }, sandRows: 260, sandDetail: 512, printFade: [16, 28],
     wrack: 3000, farFoliage: 0.5, signAtlas: 0.5, hotelFar: 560, shadowStep: 2.5, audioVoices: 'reduced',
   },
@@ -73,8 +77,9 @@ const forced = params.get('shot') === '1' ? 'high' : params.get('quality');
 const tier = TIERS[forced] ? forced : d.tier;
 
 export const QUALITY = { tier, detected: d.tier, gpu: d.gpu, why: d.why, ...TIERS[tier] };
-// the old ?lowshadow switch and small desktop machines keep today's 4096 fallback at 'high'
-if (tier === 'high' && (params.has('lowshadow') || d.why.cores <= 4 || d.why.mem <= 4 || d.gpu.maxTex < 8192)) {
-  QUALITY.shadowMap = [4096, 1024];
+// ?ultra: the original 'high' look (8192 sun map, full contact-hardening filter), for
+// strong desktop GPUs; the pixel budget still applies
+if (tier === 'high' && params.has('ultra') && !params.has('lowshadow') && d.gpu.maxTex >= 8192) {
+  Object.assign(QUALITY, { shadowMap: [8192, 2048], shadowTaps: 8, shadowFilter: 'full' });
 }
 window.__quality = QUALITY;

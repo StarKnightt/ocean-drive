@@ -114,6 +114,8 @@ export function createPost(renderer, scene, camera, { bloomStrength = 0.16, samp
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples });
   const composer = new EffectComposer(renderer, rt);
+  // only the scene pass needs MSAA; the ping-pong target is written by full-screen passes
+  composer.renderTarget2.samples = 0;
 
   composer.addPass(new RenderPass(scene, camera));
 
