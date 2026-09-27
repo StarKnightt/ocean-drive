@@ -26,7 +26,7 @@ export const SEA_LEVEL = -1.0;
 export const OCEAN = { x0: 86, y: SEA_LEVEL };
 
 export const CAR = { x: -22.75, z: 8 };
-export const CROSSWALK_Z = -40;
+export const CROSSWALK_Z = -10;
 
 // Road surface height: crowned (cambered) at the centre line, draining to both gutters.
 export const ROAD_CROWN = 0.09;

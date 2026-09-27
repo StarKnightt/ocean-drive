@@ -247,7 +247,7 @@ const AWNING_COLS = [0x2e7fa8, 0x2f8f7f, 0xd24a74, 0x3d7d4e, 0xe0a33a, 0x7a4f9a,
 
 // Invented names only.
 const NAMES = [
-  'CORALINE', 'SEAGROVE', 'BELLA MAR', 'PALMIRA', 'AZURINE', 'ORIANA', 'MARINELLA', 'SOLANA',
+  'CORALINE', 'SEAGROVE', 'BELLA MAR', 'PALMIRA', 'MARISOL', 'ORIANA', 'MARINELLA', 'SOLANA',
   'DUNEHAVEN', 'VISTAMAR', 'LA PERLITA', 'HALLORAN', 'ROSALIND', 'FAIRHOLM', 'CALYPSO', 'WYNDMERE',
   'MARBELLE', 'ISLA VERDE', 'COQUINA', 'PALOMA', 'LUNA MAR', 'ASHBY', 'HELIOS', 'SEAFOAM',
   'BRIARCLIFF', 'MONTCLAIRE', 'ALDEMAR', 'NEREIDA', 'SUNHAVEN', 'CORAL BAY', 'MAREVISTA', 'LINDEN',
@@ -397,7 +397,7 @@ function makeSpec(rnd, z0, z1, o = {}) {
     canopy: o.canopy ?? pick(rnd, ['full', 'entrance', 'entrance', 'awning', 'none']),
     porch: o.porch ?? rnd() < 0.8,
     patio: o.patio ?? pick(rnd, ['umbrella', 'tent', 'awning', 'canopy', 'umbrella', 'porch']),
-    umbrellaCol: o.umbrellaCol ?? pick(rnd, UMBRELLA_COLS), canopyCol: o.canopyCol ?? pick(rnd, [0x3f9a5e, 0x3d9ad6, 0xd9668c, 0x2f8f7f]), canopyAlt: o.canopyAlt,
+    umbrellaCol: o.umbrellaCol ?? pick(rnd, UMBRELLA_COLS), canopyCol: o.canopyCol ?? pick(rnd, [0x3f9a5e, 0x3d9ad6, 0xd9668c, 0x2f8f7f]), canopyAlt: o.canopyAlt, signTop: o.signTop, signBottom: o.signBottom,
     rail: o.rail ?? pick(rnd, ['wall', 'pipe', 'wall', 'pipe']),
     portholes: o.portholes ?? rnd() < 0.45, glassBlock: rnd() < 0.5, medallions: o.medallions ?? rnd() < 0.45,
     fountain: o.fountain ?? rnd() < 0.55,          // "frozen fountain" relief over the entrance
@@ -844,10 +844,10 @@ function buildHotel(S, B, ctx, atlas) {
     paint.color(col);
     const pw = { o: [fx + pd, 0, 0], N: [1, 0, 0], holes: [], color: col };
     // letters down the face of the building (readable from the street), a porthole above
-    const letterTop = Math.min(yt - 0.7, top + 0.2);
+    const letterTop = Math.min(yt - 0.7, top + 0.2, S.signTop ?? Infinity);
     if (yt - letterTop > 1.8) windowRecord(ctx, pw, -zc, (yt + letterTop) / 2 + 0.1, Math.min(0.62, cw * 0.4), 0, { round: true, depth: 0.3, interior: [0, rnd(), rnd(), rnd()], collar: isWhite(col) ? accent : COL.white });
     let vs = name ? atlas.vertical(name, signStyle) : null;
-    const lh = vs ? Math.min(1.3, cw * 0.78, (letterTop - (yb + 1.6)) / vs.n) : 0;
+    const lh = vs ? Math.min(1.3, cw * 0.78, (letterTop - (S.signBottom ?? yb + 1.6)) / vs.n) : 0;
     if (lh < 0.4) vs = null;
     const signBottom = vs ? letterTop - lh * vs.n : letterTop;
     if (S.glassBlock && signBottom - yb > 3.5) windowRecord(ctx, pw, -zc, (yb + 0.5 + signBottom - 0.5) / 2, 0.7, signBottom - yb - 1.0, { kind: 'block', depth: 0.1 });
@@ -2062,7 +2062,7 @@ function streetPlan() {
     [-50.8, -35.6, { floors: 4, style: 'fin', r0: 0, r1: 0, scheme: { body: COL.mint, trim: COL.white, accent: COL.teal }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'window', name: 'SEAGROVE', canopy: 'full', patio: 'umbrella', umbrellaCol: 0xd9477a, portholes: true, roof: 'tank' }],
     [-33.8, -15.2, { floors: 5, style: 'ziggurat', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.aqua, accent: COL.pinkDeep }, band: { col: 0xb4dedb, mode: 1 }, winLayout: 'ribbon', eyebrow: 'full', name: 'BELLA MAR', canopy: 'full', patio: 'tent', setback: 0.8, eyeCol: 'trim', fountain: true, roof: 'tank' }],
     [-13.6, 2.2, { floors: 3, style: 'pylon', r0: 0, r1: 0, scheme: { body: COL.pink, trim: COL.white, accent: COL.coral }, band: { col: COL.white, mode: 2 }, winLayout: 'punched', eyebrow: 'window', name: 'PALMIRA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0x3f8a5a, porch: true, setback: 0, portholes: true, fountain: true, medallions: true, parapetStep: true, finial: true }],
-    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'AZURINE', canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
+    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARISOL', signTop: 10.4, signBottom: 5.4, canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
     [26.4, 40.2, { floors: 3, style: 'corner', r0: 0, r1: 3.2, scheme: { body: COL.lavender, trim: COL.white, accent: COL.lilac }, band: { col: COL.white, mode: 2 }, winLayout: 'ribbon', eyebrow: 'full', name: 'ORIANA', canopy: 'full', patio: 'porch', noSidewalk: true, portholes: true, parapetStep: true, rail: 'pipe' }],
     [41.8, 56.0, { floors: 7, style: 'tower', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.sky, accent: COL.coral }, band: { col: 0xb5d0e6, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARINELLA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0xf1efe9, setback: 1.2, roof: 'tank' }],
     [57.6, 70, { floors: 2, style: 'plain', r0: 0, r1: 3.0, scheme: { body: COL.lemon, trim: COL.white, accent: COL.aqua }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'full', name: 'SOLANA', canopy: 'full', patio: 'awning', awningColor: 0x3d7d4e, parapetStep: true, roof: 'sign', fins: true, exposed: [false, true] }],
@@ -2393,9 +2393,10 @@ export function buildHotels(scene) {
         reflectedLight.indirectDiffuse *= 1.3;`);
     };
     leafMat.customProgramCacheKey = () => 'hotel-potpalm-v2';
-    place(new THREE.InstancedMesh(pottedPalmGeometry(), leafMat, ctx.palms.length),
+    // bushy clipped shrubs in the terrace planters and pots
+    place(new THREE.InstancedMesh(shrubGeometry().scale(1.1, 1.0, 1.1).translate(0, 0.42, 0), leafMat, ctx.palms.length),
       ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x4f7a2e, 0x5b8636, 0x46702a, 0x668a3a][Math.floor(rp() * 4)] })),
-      (p) => new THREE.Vector3(p.s, p.s, p.s));
+      (p) => new THREE.Vector3(p.s * 0.8, p.s * 0.7, p.s * 0.8));
   }
   if (ctx.bulbs.length) {
     const bulbMat = new THREE.MeshStandardMaterial({ color: 0xfff1d8, emissive: 0xffc27a, emissiveIntensity: 0.9, roughness: 0.3 });

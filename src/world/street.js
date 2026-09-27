@@ -11,7 +11,7 @@ import { mulberry32, fbmField } from '../textures/noise.js';
 
 const Z = WORLD_Z;
 const CURB_W = 0.15;
-const GUTTER_W = 0.45;
+const GUTTER_W = 0.3;
 const CW = { z0: CROSSWALK_Z - 2, z1: CROSSWALK_Z + 2 };
 const RAMP = { z0: CROSSWALK_Z - 1.5, z1: CROSSWALK_Z + 1.5, run: 1.3 };
 const LANE_C = [LANES.centerX - 1.75, LANES.centerX + 1.75];
@@ -79,21 +79,20 @@ function asphaltTextures() {
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const i = y * S + x;
-      let v = 128 + (f[(y >> 2) * 256 + (x >> 2)] - 0.5) * 26;
+      let v = 152 + (f[(y >> 2) * 256 + (x >> 2)] - 0.5) * 18;
       const r = rnd();
       let h = f[(y >> 2) * 256 + (x >> 2)] * 0.3;
-      if (r < 0.06) { v += 30 + rnd() * 30; h += 0.6; }          // pale limestone aggregate
-      else if (r < 0.1) { v -= 28 + rnd() * 20; h -= 0.3; }      // pits / dark binder
-      else v += (rnd() - 0.5) * 16;
+      if (r < 0.05) { v += 10 + rnd() * 12; h += 0.4; }          // fine pale aggregate
+      else if (r < 0.09) { v -= 12 + rnd() * 10; h -= 0.25; }    // pits / binder
+      else v += (rnd() - 0.5) * 10;
       H[i] = h;
-      img.data[i * 4] = v; img.data[i * 4 + 1] = v - 1; img.data[i * 4 + 2] = v - 4; img.data[i * 4 + 3] = 255;
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v + 2; img.data[i * 4 + 3] = 255;
     }
   }
   c.putImageData(img, 0, 0);
-  for (let k = 0; k < 16; k++) crack(c, rnd, S, rnd() * S, rnd() * S, 20 + rnd() * 50, rnd() * 6.28, 1.5 + rnd(), 'rgba(55,53,50,0.6)');
   const map = tex(cv);
   map.repeat.set(1, 1);
-  const normalMap = normalTex(H, S, 3.0);
+  const normalMap = normalTex(H, S, 1.6);
 
   // macro
   const M = 512, mr = mulberry32(72);
@@ -102,7 +101,7 @@ function asphaltTextures() {
   xB.fillStyle = '#000'; xB.fillRect(0, 0, M, M);
   const fm = fbmField(M, { seed: 9, baseCells: 6, octaves: 5 });
   const id = xR.getImageData(0, 0, M, M);
-  for (let i = 0; i < M * M; i++) { const v = 128 + (fm[i] - 0.5) * 70; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; }
+  for (let i = 0; i < M * M; i++) { const v = 128 + (fm[i] - 0.5) * 45; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; }
   xR.putImageData(id, 0, 0);
   // repair patches (utility cuts): darker newer asphalt or lighter old, crisp sealed seams
   for (let k = 0; k < 14; k++) {
@@ -115,7 +114,6 @@ function asphaltTextures() {
     }
   }
   // long transverse / longitudinal cracks with sealant
-  for (let k = 0; k < 10; k++) crack(xR, mr, M, mr() * M, mr() * M, 30 + mr() * 50, mr() < 0.5 ? 0 : Math.PI / 2, 1.2, 'rgb(55,55,55)');
   // glossy worn spots (catch the low sun)
   for (let k = 0; k < 60; k++) {
     const x = mr() * M, y = mr() * M, r = 4 + mr() * 14;
@@ -172,9 +170,15 @@ function roadMesh() {
         float odOil = odM.b * (odPark * smoothstep(${(PARKING.x0 + 0.5).toFixed(2)}, ${(PARKING.x0 + 1.2).toFixed(2)}, odX) + 0.45 * (odG(odX, ${LANE_C[0].toFixed(2)}, 0.45) + odG(odX, ${LANE_C[1].toFixed(2)}, 0.45)));
         // gutter grime along the curbs
         float odGut = odG(odX, ${(PARKING.x0 + GUTTER_W).toFixed(2)}, 0.35) + odG(odX, ${(LANES.x1 - GUTTER_W).toFixed(2)}, 0.35);
-        diffuseColor.rgb *= (0.72 + 0.56 * odM.r) * (1.0 - 0.12 * odTr) * (1.0 - 0.5 * odOil) * (1.0 - 0.15 * odGut);`)
+        // a dark dirt line where the asphalt meets the gutter strip
+        float odDirt = odG(odX, ${(PARKING.x0 + GUTTER_W + 0.03).toFixed(2)}, 0.06) + odG(odX, ${(LANES.x1 - GUTTER_W - 0.03).toFixed(2)}, 0.06);
+        // wide glossy tar-sealed seams along the lane joints, and transverse ones now and then
+        float odSeam = odG(odX + 0.04 * sin(vOdW.z * 0.9), ${(PARKING.x1 + 0.35).toFixed(2)}, 0.045) + odG(odX + 0.05 * sin(vOdW.z * 0.7 + 2.0), ${(LANES.centerX + 0.45).toFixed(2)}, 0.05)
+          + odG(fract(vOdW.z / 37.0) * 37.0 + 0.1 * sin(odX * 1.3), 18.0, 0.05);
+        odSeam = min(odSeam, 1.0);
+        diffuseColor.rgb *= (0.8 + 0.4 * odM.r) * (1.0 - 0.1 * odTr) * (1.0 - 0.45 * odOil) * (1.0 - 0.1 * odGut) * (1.0 - 0.45 * odDirt) * (1.0 - 0.5 * odSeam);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(0.93 + (odM.g - 0.5) * 0.6 - 0.18 * odTr - 0.5 * odOil, 0.3, 1.0);`)
+        roughnessFactor = clamp(0.93 + (odM.g - 0.5) * 0.6 - 0.18 * odTr - 0.5 * odOil - 0.6 * odSeam, 0.25, 1.0);`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         #ifdef USE_FOG
         {
@@ -182,29 +186,31 @@ function roadMesh() {
           // road is brighter than Lambert and the shadows on it read crisp and contrasty
           vec3 odVd = normalize(vFogOffset);
           float odAway = smoothstep(0.2, -1.0, dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - abs(odVd.y));
-          reflectedLight.directDiffuse *= 1.7 + 1.4 * odAway;
-          reflectedLight.indirectDiffuse *= 0.7;
+          reflectedLight.directDiffuse *= 2.4 + 0.8 * odAway;
+          // neutral grey skylight fill (the lilac sky on warm-lit grey read mauve)
+          vec3 odI = reflectedLight.indirectDiffuse;
+          reflectedLight.indirectDiffuse = mix(odI, vec3(dot(odI, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.97, 0.98, 1.0), 0.6) * 0.72;
         }
         #endif`);
   };
-  mat.customProgramCacheKey = () => 'street-asphalt-v1';
+  mat.customProgramCacheKey = () => 'street-asphalt-v2';
   const m = new THREE.Mesh(g, mat);
   m.receiveShadow = true;
   return m;
 }
 
 // ---------------------------------------------------------------------------
-// Worn road paint: one merged mesh, vertex colours, chipped alpha (alpha-tested).
+// Worn road paint: one merged mesh, vertex colours, faint grime (solid lines: alpha
+// chips aliased into stepped dashes at distance).
 function markings() {
   const S = 256, rnd = mulberry32(81);
   const [cv, c] = canvas(S);
   const f = fbmField(S, { seed: 12, baseCells: 10, octaves: 4 });
   const img = c.createImageData(S, S);
   for (let i = 0; i < S * S; i++) {
-    const chip = f[i] + (rnd() - 0.5) * 0.25;
-    const v = 200 + f[i] * 55;
+    const v = 205 + f[i] * 45 + (rnd() - 0.5) * 12;   // worn: faint grime variation only
     img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v - 6;
-    img.data[i * 4 + 3] = chip > 0.2 ? 255 : 0;   // mostly intact, chipped in spots
+    img.data[i * 4 + 3] = 255;
   }
   c.putImageData(img, 0, 0);
   const map = tex(cv);
@@ -219,19 +225,15 @@ function markings() {
       if (i < segX) { const a = b + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     }
   };
-  const YEL = 0xd8a232, WHT = 0xe6e2d8;
+  const YEL = 0xf2c418, WHT = 0xf0ede4;
   const cx = LANES.centerX;
   // double yellow centre line (interrupted by the crosswalk)
   for (const [z0, z1] of [[-Z, CW.z0 - 0.6], [CW.z1 + 0.6, Z]]) {
-    quad(cx - 0.22, cx - 0.1, z0, z1, YEL, 0.9);
-    quad(cx + 0.1, cx + 0.22, z0, z1, YEL, 0.9);
+    quad(cx - 0.21, cx - 0.08, z0, z1, YEL, 1);
+    quad(cx + 0.08, cx + 0.21, z0, z1, YEL, 1);
   }
   // parking lane edge line and bay ticks
   for (const [z0, z1] of [[-Z, CW.z0 - 6], [CW.z1 + 3, Z]]) quad(PARKING.x1 - 0.05, PARKING.x1 + 0.05, z0, z1, WHT, 0.9);
-  for (let z = -300; z <= 300; z += 6.5) {
-    if (z > CW.z0 - 7 && z < CW.z1 + 3) continue;
-    quad(PARKING.x0 + GUTTER_W + 0.1, PARKING.x1, z - 0.05, z + 0.05, WHT, 0.85, 2);
-  }
   // east edge line
   quad(LANES.x1 - GUTTER_W - 0.2, LANES.x1 - GUTTER_W - 0.1, -Z, Z, WHT, 0.8);
   // continental crosswalk: bars parallel to traffic, framed by two ladder rails
@@ -247,16 +249,16 @@ function markings() {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
-  const mat = new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.75, alphaTest: 0.5, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const mat = new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.75, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   mat.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
       #ifdef USE_FOG
       { vec3 odVd = normalize(vFogOffset);
         float odAway = smoothstep(0.2, -1.0, dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - abs(odVd.y));
-        reflectedLight.directDiffuse *= 1.5 + 1.0 * odAway; reflectedLight.indirectDiffuse *= 0.8; }
+        reflectedLight.directDiffuse *= 2.2 + 0.6 * odAway; reflectedLight.indirectDiffuse *= 0.8; }
       #endif`);
   };
-  mat.customProgramCacheKey = () => 'street-paint-v1';
+  mat.customProgramCacheKey = () => 'street-paint-v2';
   const m = new THREE.Mesh(g, mat);
   m.receiveShadow = true;
   return m;
@@ -273,8 +275,8 @@ function concreteTextures() {
     for (let x = 0; x < S; x++) {
       const i = y * S + x, n = f[(y >> 2) * 256 + (x >> 2)];
       const broom = Math.sin(y * 1.9 + Math.sin(x * 0.05) * 3) * 2.5;
-      const v = 204 + (n - 0.5) * 34 + (rnd() - 0.5) * 10 + broom;
-      img.data[i * 4] = v + 6; img.data[i * 4 + 1] = v - 3; img.data[i * 4 + 2] = v - 14; img.data[i * 4 + 3] = 255;
+      const v = 200 + (n - 0.5) * 24 + (rnd() - 0.5) * 8 + broom;
+      img.data[i * 4] = v + 14; img.data[i * 4 + 1] = v - 6; img.data[i * 4 + 2] = v - 22; img.data[i * 4 + 3] = 255;
     }
   }
   c.putImageData(img, 0, 0);
@@ -286,18 +288,18 @@ function concreteTextures() {
     if (rnd() < 0.6) { c.fillStyle = 'rgba(60,50,40,0.3)'; c.fillRect(sx * 512 + 3, sy * 512 + 3, 3, 506); }
   }
   // stains and gum
-  for (let k = 0; k < 30; k++) {
-    const x = rnd() * S, y = rnd() * S, r = 10 + rnd() * 70;
+  for (let k = 0; k < 8; k++) {
+    const x = rnd() * S, y = rnd() * S, r = 20 + rnd() * 60;
     const g = c.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, `rgba(95,80,65,${0.08 + rnd() * 0.14})`); g.addColorStop(1, 'rgba(95,80,65,0)');
     c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
   }
-  for (let k = 0; k < 90; k++) {
-    c.fillStyle = `rgba(${60 + rnd() * 40},${58 + rnd() * 35},${55 + rnd() * 30},0.8)`;
-    c.beginPath(); c.arc(rnd() * S, rnd() * S, 2 + rnd() * 4, 0, 6.28); c.fill();
+  for (let k = 0; k < 14; k++) {
+    c.fillStyle = `rgba(${90 + rnd() * 30},${86 + rnd() * 25},${80 + rnd() * 20},0.6)`;
+    c.beginPath(); c.arc(rnd() * S, rnd() * S, 1 + rnd() * 1.5, 0, 6.28); c.fill();
   }
   // expansion joints, chipped
-  c.strokeStyle = 'rgba(80,70,60,0.8)'; c.lineWidth = 3;
+  c.strokeStyle = 'rgba(70,58,48,0.9)'; c.lineWidth = 4;
   for (const p of [0, 512, 1024]) {
     c.beginPath(); c.moveTo(p, 0); c.lineTo(p, S); c.stroke();
     c.beginPath(); c.moveTo(0, p); c.lineTo(S, p); c.stroke();
@@ -382,9 +384,18 @@ function sidewalks() {
           vec4 pv = texture2D(odPavers, vOdW.xz / 1.2);
           float edge = step(abs(vOdW.x + 27.4), 0.08);
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(pv.rgb, vec3(0.55, 0.5, 0.45), edge), on);
-        }`);
+        }`)
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+        #ifdef USE_FOG
+        { vec3 odVd = normalize(vFogOffset);
+          float odAway = smoothstep(0.2, -1.0, dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - abs(odVd.y));
+          // rough concrete under a grazing sun: stronger back-scatter, crisp shadow bands
+          reflectedLight.directDiffuse *= 2.2 + 0.6 * odAway;
+          vec3 odI = reflectedLight.indirectDiffuse;
+          reflectedLight.indirectDiffuse = mix(odI, vec3(dot(odI, vec3(0.2126, 0.7152, 0.0722))), 0.5) * 0.8; }
+        #endif`);
   };
-  mat.customProgramCacheKey = () => 'street-sidewalk-v1';
+  mat.customProgramCacheKey = () => 'street-sidewalk-v2';
   const m = new THREE.Mesh(mergeGeometries(parts), mat);
   m.receiveShadow = true;
 
@@ -414,7 +425,7 @@ function curbs(concrete) {
   const pos = [], col = [], uv = [], idx = [];
   const color = new THREE.Color();
   const CON = new THREE.Color(0xd6cbbb), GUT = new THREE.Color(0xc9beae);
-  const YEL = new THREE.Color(0xd8b24a), RED = new THREE.Color(0xb2503f);
+  const YEL = new THREE.Color(0xf0c21c), RED = new THREE.Color(0xc23a2c);
   const rnd = mulberry32(101);
   // profile (s = +1: hotel curb whose face looks +x; -1 park curb), [dx from face, y]
   const prof = (s, face) => {
@@ -431,7 +442,7 @@ function curbs(concrete) {
     for (let i = 0; i < P.length; i++) {
       const [x, y, k] = P[i];
       color.copy(k === 'g' ? GUT : CON);
-      if (k === 'c' && paint) color.lerp(paint, 0.55 + rnd() * 0.15);
+      if (k === 'c' && paint && i > 1) color.lerp(paint, rnd() < 0.12 ? 0.35 : 0.92);   // chipped here and there
       for (const z of [z0, z1]) { pos.push(x, y, z); col.push(color.r, color.g, color.b); uv.push(z / 3, i * 0.05); }
       if (i < P.length - 1) {
         const a = b + i * 2;
@@ -451,7 +462,7 @@ function curbs(concrete) {
         continue;
       }
       const near = Math.abs(z - CROSSWALK_Z) < 12;
-      const paint = near ? RED : (Math.floor(z / 21) % 5 === 0 ? YEL : null);
+      const paint = near ? RED : YEL;
       run(s, face, z, z1, paint);
     }
     // gutter pan through the ramp opening
@@ -538,7 +549,7 @@ function bikeRackGeo() {
 }
 function benchGeo() {
   // faces +x: slats seat and back, cast-iron end frames
-  const W = 0xa06c44, I = 0x2c302e, parts = [];
+  const W = 0x7c6a58, I = 0x3a3d3b, parts = [];
   for (let i = 0; i < 4; i++) parts.push(box(0.09, 0.035, 1.8, -0.12 + i * 0.11, 0.44, 0, W));
   for (let i = 0; i < 3; i++) parts.push(colored(new THREE.BoxGeometry(0.03, 0.09, 1.8).rotateZ(0.2).translate(-0.28 - i * 0.02, 0.6 + i * 0.12, 0), W));
   for (const z of [-0.8, 0.8]) {
@@ -560,6 +571,21 @@ function manholeGeo() {
   for (let r = 0.08; r < 0.32; r += 0.07) parts.push(colored(new THREE.TorusGeometry(r, 0.008, 3, 24).rotateX(Math.PI / 2).translate(0, 0.013, 0), 0x5c5a54));
   return mergeGeometries(parts);
 }
+function newsBoxGeo(hex) {
+  return mergeGeometries([
+    box(0.46, 0.35, 0.4, 0, 0, 0, 0x2c2e30),
+    box(0.5, 0.62, 0.44, 0, 0.35, 0, hex),
+    box(0.36, 0.26, 0.02, 0, 0.62, 0.225, 0x9aa6ae),   // window
+    box(0.52, 0.04, 0.46, 0, 0.97, 0, 0x2c2e30),
+  ]);
+}
+function valetGeo() {
+  return mergeGeometries([
+    box(0.55, 1.0, 0.42, 0, 0, 0, 0x4a3524),
+    colored(new THREE.BoxGeometry(0.62, 0.05, 0.5).rotateX(-0.25).translate(0, 1.05, 0), 0x2c2016),
+    box(0.57, 0.08, 0.44, 0, 0.0, 0, 0x1e1a16),
+  ]);
+}
 function signPostGeo(h) {
   return mergeGeometries([cyl(0.035, 0.035, h, 8, 0, 0x8d908c), cyl(0.05, 0.05, 0.05, 8, h, 0x8d908c)]);
 }
@@ -574,12 +600,13 @@ function furniture() {
   const L = [];
   const lamp = lampGeo(), pay = payStationGeo(), trash = trashGeo(), hyd = hydrantGeo(), rack = bikeRackGeo(), bench = benchGeo();
   const drainW = drainGeo(1), drainE = drainGeo(-1), manhole = manholeGeo();
+  const newsB = newsBoxGeo(0x2f64a8), newsR = newsBoxGeo(0xb3372e), valet = valetGeo();
   const H = CURB_HEIGHT;
   const hx = SIDEWALK_W.x1 - 0.55, px = SIDEWALK_E.x0 + 0.55;
   for (let z = -290; z <= 290; z += 32) {
     for (const [x, zz] of [[px, z], [hx, z + 16]]) {
       let q = zz;
-      while (palmNear(x, q, 1.6)) q += 1.2;
+      while (palmNear(x, q, 3.2)) q += 1.2;
       if (Math.abs(q - CROSSWALK_Z) < 3) q += 4;
       place(L, lamp, x, H, q);
       if (rnd() < 0.55) place(L, trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1));
@@ -592,6 +619,12 @@ function furniture() {
     place(L, pay, hx + 0.05, H, q, -Math.PI / 2);
   }
   for (const z of [-58, -19, 27, 61]) place(L, rack, SIDEWALK_W.x1 - 1.1, H, z);
+  // hotel-side bins, a valet stand at an entrance, news boxes, an extra pay kiosk
+  for (const z of [16, 4, -21, -47]) { let q = z; while (palmNear(hx, q, 1.2)) q += 1; place(L, trash, hx - 0.1, H, q); }
+  place(L, valet, -26.9, H, 25.5, Math.PI / 2);
+  place(L, newsB, SIDEWALK_W.x1 - 1.3, H, 13.2, -Math.PI / 2);
+  place(L, newsR, SIDEWALK_W.x1 - 1.3, H, 13.8, -Math.PI / 2);
+  place(L, pay, hx + 0.05, H, 20.5, -Math.PI / 2);
   // hydrants
   for (const [x, z] of [[hx + 0.15, -33], [hx + 0.15, 22], [px - 0.15, -8], [px - 0.15, 46], [hx + 0.15, -110], [px - 0.15, 120]]) place(L, hyd, x, H, z);
   // benches in the park facing the sea, just east of the promenade
@@ -644,6 +677,11 @@ function signs(posts, regs) {
   c.strokeStyle = '#222'; c.lineWidth = 6; c.stroke();
   c.fillStyle = '#222'; c.beginPath(); c.arc(384, 330, 14, 0, 6.28); c.fill();
   c.lineWidth = 12; c.beginPath(); c.moveTo(384, 346); c.lineTo(380, 400); c.lineTo(360, 450); c.moveTo(380, 400); c.lineTo(404, 448); c.moveTo(356, 372); c.lineTo(408, 380); c.stroke();
+  // valet sign (512..768 x 256..512)
+  c.fillStyle = '#20302a'; c.fillRect(512, 256, 256, 256);
+  c.strokeStyle = '#d9c28a'; c.lineWidth = 6; c.strokeRect(522, 266, 236, 236);
+  c.fillStyle = '#efe6cc'; c.font = 'bold 58px Georgia, serif'; c.textAlign = 'center';
+  c.fillText('VALET', 640, 360); c.font = 'bold 34px Georgia, serif'; c.fillText('PARKING', 640, 420);
   const map = tex(cv);
   const quad = (w, h, u0, v0, u1, v1) => {
     // double-sided with readable text on both faces
@@ -665,6 +703,8 @@ function signs(posts, regs) {
     L.push(quad(0.6, 0.6, 0.25, 0.5, 0.5, 0).rotateY(x < LANES.centerX ? Math.PI / 2 : -Math.PI / 2).translate(x, H + 2.2, z));
   }
   for (const [x, z] of regs) L.push(quad(0.45, 0.45, 0, 0.5, 0.25, 0).rotateY(Math.PI / 2).translate(x, H + 2.1, z));
+  // valet A-frame sign on the sidewalk
+  for (const s of [-1, 1]) L.push(quad(0.55, 0.8, 0.5, 0.5, 0.75, 0).rotateX(s * 0.18).rotateY(Math.PI / 2 * (s > 0 ? 1 : -1)).translate(-25.4 + s * 0.07, H + 0.4, 24.3));
   const m = new THREE.Mesh(mergeGeometries(L), new THREE.MeshStandardMaterial({ map, roughness: 0.5, metalness: 0.1 }));
   m.castShadow = m.receiveShadow = true;
   return m;

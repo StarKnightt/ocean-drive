@@ -7,7 +7,7 @@
 // shadows show the gaps between them. Wind sways crowns and frond tips in the vertex
 // shader (frozen in ?shot mode through the time passed to update()).
 import * as THREE from 'three';
-import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, roadHeight } from './layout.js';
+import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT } from './layout.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 
 // ---------------------------------------------------------------------------
@@ -28,12 +28,14 @@ function plan() {
     else if (r < 0.08) species = 'royal';
     const variant = o.variant ?? (species !== 'coconut' ? 0
       : row === 'park' ? pick([0, 1, 2, 2, 3, 3, 4, 1])
-        : pick([0, 1, 1, 3, 3, 4, 4, 2, 0, 1, 3, 2]));
+        : pick([0, 1, 1, 3, 3, 4, 4, 5, 0, 1, 3, 5, 4]));
     // lean direction and amount vary a lot: mostly toward the ocean (+x) but anything
     // from near vertical (shear cancels the variant's lean) to steep
     const spread = row === 'park' ? 1.3 : 1.2;
     const rotY = o.rotY ?? ((rnd() - 0.5) * 2 * spread + (rnd() < (row === 'park' ? 0.3 : 0.12) ? Math.PI : 0));
-    const k = o.k ?? (rnd() < 0.25 ? -0.1 - rnd() * 0.05 : (rnd() - 0.3) * 0.18);
+    // street-side palms mostly near upright (0-12 deg, a few ~20), stronger leans in the park
+    const street = row !== 'park';
+    const k = o.k ?? (street ? (rnd() < 0.1 ? 0.08 : -0.08 - rnd() * 0.06) : rnd() < 0.25 ? -0.1 - rnd() * 0.05 : (rnd() - 0.3) * 0.18);
     // height: 6-20 m so crowns layer, some above the hotel roofs
     const hs = o.hs ?? (0.78 + rnd() * 0.5);
     trees.push({ x, z, row, ground, species: o.species ?? species, variant, rotY, k, hs, scale: 0.88 + rnd() * 0.26, seed: Math.floor(rnd() * 1e9) });
@@ -55,7 +57,8 @@ function plan() {
     }
   };
   // hotel side: planting islands in the parking lane
-  row(SIDEWALK_W.x1 + 0.9, 'hotel', 0, (z) => Math.abs(z - CAR.z) < 4.5);
+  // hotel side: sidewalk tree grates just behind the curb
+  row(SIDEWALK_W.x1 - 0.9, 'hotel', 0, () => false);
   // park edge along the park-side sidewalk
   row(SIDEWALK_E.x1 + 0.9, 'edge', 1, () => false);
   // Lummus Park: dense scattered clusters, clear of the winding promenade
@@ -337,7 +340,7 @@ function coconutGeometry() {
     stalk([Math.cos(a) * 0.15, -0.05, Math.sin(a) * 0.15], [cx, cy + 0.15, cz], 0.035, 0xa8884e);
     const n = 3 + Math.floor(rnd() * 3), yel = rnd() < 0.25;
     for (let i = 0; i < n; i++) {
-      const aa = rnd() * Math.PI * 2, rr = 0.14 + rnd() * 0.12;
+      const aa = (i / n) * Math.PI * 2 + rnd() * 0.4, rr = 0.2 + rnd() * 0.1;
       const g = new THREE.SphereGeometry(0.13 + rnd() * 0.03, 9, 7);
       g.scale(1, 1.15, 1);
       g.translate(cx + Math.cos(aa) * rr, cy - rnd() * 0.18, cz + Math.sin(aa) * rr);
@@ -614,7 +617,7 @@ function groundMesh(trees) {
   trees.forEach((t, i) => {
     const size = t.ground ? 2.4 + (t.seed % 7) * 0.15 : 1.4;
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.ground ? t.seed % 6 : 0);
-    m4.compose(new THREE.Vector3(t.x, t.row === 'hotel' ? roadHeight(t.x) + 0.006 : CURB_HEIGHT + 0.004, t.z), q, s.set(size, 1, size));
+    m4.compose(new THREE.Vector3(t.x, CURB_HEIGHT + 0.004, t.z), q, s.set(size, 1, size));
     im.setMatrixAt(i, m4);
   });
   im.receiveShadow = true;
@@ -664,7 +667,7 @@ export function buildPalms(scene) {
   for (const t of PALM_TREES) {
     const rnd = mulberry32(t.seed);
     const ti = t.species === 'royal' ? 6 : t.species === 'sabal' ? 7 : t.variant;
-    const base = new THREE.Vector3(t.x, t.row === 'hotel' ? roadHeight(t.x) : CURB_HEIGHT, t.z);
+    const base = new THREE.Vector3(t.x, CURB_HEIGHT, t.z);
     q.setFromAxisAngle(Y, t.rotY);
     const sc = t.scale * (t.species === 'sabal' ? 0.95 : 1);
     // per-tree height stretch (capped ~21 m) and lean shear

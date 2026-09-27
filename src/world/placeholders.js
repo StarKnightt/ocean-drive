@@ -324,7 +324,7 @@ function buildBackground(group) {
           float f = fract(vOdP.y / fh), fl = floor(vOdP.y / fh);
           float bx = fract(along / bay + sd * 7.0), bi = floor(along / bay + sd * 7.0);
           float hb = fract(sin(dot(vec2(bi, fl), vec2(12.9898, 78.233)) + sd * 91.0) * 43758.5);
-          vec3 glass = vec3(0.24, 0.27, 0.32) * (0.85 + 0.3 * hb);
+          vec3 glass = vec3(0.13, 0.15, 0.19) * (0.85 + 0.3 * hb);
           vec3 col = diffuseColor.rgb;
           float ground = step(4.0, vOdP.y);
           if (kind < 0.5) {
@@ -340,7 +340,7 @@ function buildBackground(group) {
           } else if (kind < 1.5) {
             // punched windows, a few curtained
             float wx = step(0.18, bx) * (1.0 - step(0.82, bx));
-            float wy = smoothstep(0.3, 0.32, f) * (1.0 - smoothstep(0.84, 0.86, f));
+            float wy = smoothstep(0.24, 0.26, f) * (1.0 - smoothstep(0.84, 0.86, f));
             float win = wx * wy * ground;
             col = mix(col, glass * (hb > 0.85 ? 2.8 : 1.0), win);
             odGlass = win;
@@ -353,11 +353,16 @@ function buildBackground(group) {
           }
           diffuseColor.rgb = mix(diffuseColor.rgb, col, odV * step(kind, 2.5));
           odGlass *= odV * step(kind, 2.5);
+          #ifdef USE_FOG
+          // sun-facing walls take the warm low sun (amber, not flat grey)
+          float odSunF = max(dot(normalize(odN.xz + 1e-5), normalize(OD_SUN.xz)), 0.0) * odV;
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(1.12, 0.86, 0.64), odSunF);
+          #endif
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(roughnessFactor, 0.2, odGlass);`);
   };
-  bgMat.customProgramCacheKey = () => 'bg-towers-v2';
+  bgMat.customProgramCacheKey = () => 'bg-towers-v3';
   const bm = new THREE.InstancedMesh(unit, bgMat, bg.length);
   const aBg = new Float32Array(bg.length * 4);
   const bgCols = [0xf0ece4, 0xe9e3d8, 0xf2ede4, 0xe6e8e6, 0xeee6da, 0xe8ecee, 0xe4e6e2];
