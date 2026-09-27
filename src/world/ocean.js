@@ -212,10 +212,10 @@ export function createOcean(scene, surf) {
         // water body: turquoise over the pale sand shallows, steel-blue offshore
         // body: a hint of turquoise only in the very shallow water, silver-blue beyond
         // clear green-turquoise over the pale sand (absorption leaves green), slate offshore
-        vec3 turq = vec3(0.035, 0.115, 0.095);
-        vec3 mid = vec3(0.022, 0.055, 0.058);
-        vec3 deep = vec3(0.016, 0.024, 0.034);
-        vec3 body = mix(mix(turq, mid, smoothstep(0.3, 1.8, depth)), deep, smoothstep(1.6, 4.5, depth));
+        // a subtle turquoise only over the very shallow sand, grey-blue beyond
+        vec3 turq = vec3(0.03, 0.08, 0.072);
+        vec3 deep = vec3(0.018, 0.026, 0.036);
+        vec3 body = mix(turq, deep, smoothstep(0.15, 0.9, depth));
         vec3 col = body * (1.0 - F) + sky * F;
 
         // backlit wave faces: sun through the thin crest, green-turquoise
@@ -223,7 +223,7 @@ export function createOcean(scene, surf) {
         float face = clamp(dot(normalize(n.xz + 1e-5), normalize(V.xz + 1e-5)), 0.0, 1.0) * length(n.xz) * 3.0;
         float thick = clamp(vCrest / 0.35, 0.0, 1.0);
         // grey-silver / gold through the crest, only the thinnest lip a faint green
-        vec3 thru = mix(vec3(0.34, 0.33, 0.29), vec3(0.24, 0.36, 0.30), smoothstep(0.6, 0.15, thick));
+        vec3 thru = mix(vec3(0.36, 0.33, 0.27), vec3(0.3, 0.33, 0.29), smoothstep(0.6, 0.15, thick));
         col += OD_SUNCOL * OD_SUN_I * thru * 0.03 * thick * clamp(face, 0.0, 1.0) * (0.25 + toSun * toSun);
 
         // sun glitter: Beckmann lobe, roughness = sub-pixel wave slopes
@@ -240,14 +240,15 @@ export function createOcean(scene, surf) {
         float gl = odNoise(p / max(fp * 0.6, 0.01) * vec2(1.0, 0.45) + vec2(t * 1.7, -t * 0.6)) * odNoise(p / max(fp * 0.35, 0.006) + vec2(-t * 1.1, t * 0.9) + 5.0) * 1.6;
         float gw = smoothstep(0.0, 0.0012, lost);
         // always broken into sparkles: resolved facets near by, twinkling glints far out
-        float gl2 = odNoise(p * 47.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 113.0 - vec2(t * 1.1, 0.0));
-        spec *= mix(smoothstep(0.3, 0.55, gl2) * 6.0, smoothstep(0.6, 0.9, gl) * 5.5, gw);
+        float gl2 = odNoise(p * vec2(4.5, 11.0) + vec2(t * 1.3, t * 0.4)) * odNoise(p * vec2(9.0, 19.0) - vec2(t * 0.9, 0.0) + 3.0) * 1.8;
+        spec *= mix(0.12 + 3.2 * smoothstep(0.3, 0.7, gl2), 0.2 + 3.0 * smoothstep(0.35, 0.8, gl), gw);
+        spec *= mix(vec3(1.0), vec3(1.0, 0.85, 0.7), smoothstep(40.0, 600.0, dist));
         float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
         spec /= 1.0 + sl / mix(1.8, 4.0, gw);
 
         // ---- foam ----
         float foamAmt = 0.0;
-        float lace = fp < 0.25 ? odFoam(p, t) : 0.35;
+        float lace = fp < 0.25 ? odFoam(p, t) : 0.55;
         // whitewater bore running in ahead of the swash, and dissolving patches behind
         vec3 fr = surfFront(p.y, t);
         if (fr.x < 1e3) {
@@ -255,15 +256,15 @@ export function createOcean(scene, surf) {
           float roller = fr.y * exp(-max(behind, 0.0) / 0.35) * step(-0.05, behind);
           float bore = fr.y * exp(-max(behind, 0.0) / (0.8 + 1.0 * fr.z)) * step(-0.05, behind);
           foamAmt = max(foamAmt, max(roller * 0.95, bore * lace));
-          foamAmt = max(foamAmt, 0.5 * (1.0 - fr.y) * lace * step(0.0, behind) * exp(-behind / 4.0));
+          foamAmt = max(foamAmt, 0.35 * (1.0 - fr.y) * smoothstep(0.3, 0.7, lace) * step(0.0, behind) * exp(-behind / 3.0));
         }
         // lingering foam streaks over the surf zone
         float zone = smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 1.0).toFixed(2)}, p.x) * (1.0 - smoothstep(${(BREAK_X + 2.0).toFixed(2)}, ${(BREAK_X + 9.0).toFixed(2)}, p.x));
         vec2 sw = p * 0.32 + vec2(odNoise(p * 0.21 + 4.0), odNoise(p * 0.21 + 9.0)) * 2.4;
         float streak = smoothstep(0.55, 0.8, odNoise(sw + vec2(0.0, t * 0.03)));
-        foamAmt = max(foamAmt, zone * streak * lace * 0.55);
+        foamAmt = max(foamAmt, zone * streak * smoothstep(0.35, 0.7, lace) * 0.3);
         // crest lip / roller whitewater
-        foamAmt = max(foamAmt, whiteF * mix(0.7, 1.0, lace));
+        foamAmt = max(foamAmt, smoothstep(0.12, 0.5, whiteF) * mix(0.75, 1.0, lace));
         // thin intersection line where the water meets the sand
         foamAmt = max(foamAmt, (1.0 - smoothstep(0.0, 0.04, depth)) * lace * 0.8);
         // sparse whitecaps far out

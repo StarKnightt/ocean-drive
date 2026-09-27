@@ -208,14 +208,16 @@ function sandMaterial(detailTex, surf) {
         float odGlass = smoothstep(${f(SHORE_X - 2.4)}, ${f(SHORE_X - 1.0)}, odX + 0.4 * sin(odZ * 0.37));
         float odRake = smoothstep(${f(SAND.x0 + 0.5)}, ${f(SAND.x0 + 1.0)}, odX) * (1.0 - smoothstep(${f(SAND.x0 + 12)}, ${f(SAND.x0 + 14)}, odX));
         // relief strength: trodden dry sand > raked > damp > swash-smoothed wet sand
-        float odBusy = smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4) * (0.12 + 0.88 * odPaths(vOdW.xz));
+        float odBusy = smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4) * (0.3 + 0.7 * odPaths(vOdW.xz)) + 0.15;
         float odW = mix(1.0, 0.35, odRake) * (1.0 - 0.3 * odDamp) * (1.0 - 0.75 * odWet);
         float odPrintK = (0.25 + 0.75 * odBusy) * (1.0 - odRake * 0.8) * (1.0 - odWet);
         diffuseColor.rgb *= 0.8 + 0.4 * (odDa.a * 0.5 + odDb.a * 0.5);
         // sargassum wrack line: a continuous red-brown band above the swash, clumpy
         float odWx = ${f(WET_LINE_X - 0.9)} + 0.5 * sin(odZ * 0.047) + 0.25 * sin(odZ * 0.19 + 1.0);
-        float odWd = abs(odX - odWx) / (0.45 + 0.3 * surfN(vec2(odZ * 0.08, 3.0)));
-        float odWr = (1.0 - smoothstep(0.55, 1.0, odWd)) * (0.55 + 0.45 * smoothstep(0.3, 0.6, surfN(vec2(odX * 1.4, odZ * 0.45)) * 0.7 + surfN(vec2(odZ * 2.3, odX * 3.1)) * 0.5));
+        float odWd = abs(odX - odWx - 0.35 * (surfN(vec2(odZ * 0.5, 1.0)) - 0.5)) / (0.1 + 0.22 * surfN(vec2(odZ * 0.13, 3.0)));
+        float odFib = max(smoothstep(0.6, 0.85, surfN(vec2(odX * 11.0 + odZ * 4.0, odZ * 17.0 - odX * 6.0))),
+                          smoothstep(0.6, 0.85, surfN(vec2(odX * 13.0 - odZ * 5.0, odZ * 15.0 + odX * 7.0) + 4.0)));
+        float odWr = (1.0 - smoothstep(0.45, 1.0, odWd)) * smoothstep(0.3, 0.55, surfN(vec2(odZ * 0.3, 7.0))) * (0.25 + 0.75 * odFib);
         vec3 odWc = mix(vec3(0.17, 0.13, 0.06), vec3(0.42, 0.32, 0.14), surfN(vec2(odZ * 5.0, odX * 5.0)));
         diffuseColor.rgb = mix(diffuseColor.rgb, odWc, odWr);
         // tire tracks of the lifeguard truck
@@ -249,12 +251,14 @@ function sandMaterial(detailTex, surf) {
             odS += vec2(odLumps(vOdW.xz + vec2(le, 0.0)) - l0, odLumps(vOdW.xz + vec2(0.0, le)) - l0) / le * (1.0 - 0.7 * odWet) * (1.0 - 0.5 * odRake);
           }
           float odDist = length(vOdW - cameraPosition);
-          float odNear = (1.0 - smoothstep(25.0, 45.0, odDist)) * odPrintK;
+          float odNear = (1.0 - smoothstep(35.0, 60.0, odDist)) * odPrintK;
+          float odDent = 0.0;
           if (odNear > 0.01) {
             vec2 p = vOdW.xz;
             float e = 0.012;
             float h0 = sdH(p, odBusy), hx = sdH(p + vec2(e, 0.0), odBusy), hz = sdH(p + vec2(0.0, e), odBusy);
             odS += vec2(hx - h0, hz - h0) / e * odNear;
+            odDent = clamp(-h0 / 0.012, -0.4, 1.0) * odNear;
             // footprint shadows: march toward the sun
             vec2 ld = normalize(SD_SUN.xz);
             float occ = 0.0;
@@ -269,6 +273,10 @@ function sandMaterial(detailTex, surf) {
           float odFlat = max(dot(odNg, SD_SUN), 0.04);
           float odRel = clamp(max(dot(odNd, SD_SUN), 0.0) / odFlat, 0.0, 1.08);
           reflectedLight.directDiffuse *= mix(1.0, odRel * mix(1.0, odLit, 0.92), min(1.0, odW + odNear));
+          float odSkyRel = clamp(0.55 + 0.45 * odRel * mix(1.0, odLit, 0.5), 0.45, 1.15);
+          reflectedLight.indirectDiffuse *= mix(1.0, odSkyRel, 0.7 * min(1.0, odW + odNear));
+          reflectedLight.directDiffuse *= 1.0 - 0.22 * odDent;
+          reflectedLight.indirectDiffuse *= 1.0 - 0.22 * odDent;
         }
         #ifdef USE_FOG
         {
@@ -305,7 +313,7 @@ function sandMaterial(detailTex, surf) {
           // broad, soft gold glow (the wet grains scatter the sun into a patch)
           float odGl = exp(-(odSx * odSx / (2.0 * 0.03 * 0.03) + odSz * odSz / (2.0 * 0.06 * 0.06)));
           float odSpk = smoothstep(0.55, 0.8, surfN(vOdW.xz * 41.0) * surfN(vOdW.xz * 97.0 + 3.0) * 1.9);
-          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * odSpk * 1.6 * odGlass * smoothstep(0.5, 0.95, odGlass);
+          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * 0.3 * mix(0.3, 1.0, surfN(vOdW.xz * vec2(5.0, 12.0))) * odGlass * smoothstep(0.5, 0.95, odGlass);
           outgoingLight += odSp / (1.0 + dot(odSp, vec3(0.2126, 0.7152, 0.0722)) / 1.5);
         }
         #endif
@@ -396,7 +404,7 @@ function swashSheet(surf) {
         // glint of the low sun on the sheet
         vec3 H = normalize(OD_SUN + V);
         float nh = max(dot(n, H), 0.0);
-        float spec = pow(nh, 900.0) * 30.0 * smoothstep(0.6, 0.85, odNoise(p * 43.0 + t * 1.5) * odNoise(p * 97.0 - t) * 1.8) * smoothstep(0.1, 0.5, s);
+        float spec = pow(nh, 400.0) * 5.0 * smoothstep(0.1, 0.5, s);
         vec3 col = sky * F * 0.8 + vec3(0.012, 0.02, 0.02) * (1.0 - F);
         float alpha = clamp(0.12 + 0.25 * smoothstep(0.0, 0.08, depth) + F * 0.6, 0.0, 0.9);
         // foam: bright lace at the leading edge, bubble trails behind, fading as it drains
@@ -918,25 +926,26 @@ function duneVegetation(scene, rnd, colliders) {
 }
 
 function wrackClumps(scene, rnd) {
-  const g = new THREE.IcosahedronGeometry(0.06, 1);
+  const g = new THREE.CylinderGeometry(0.007, 0.007, 1, 4, 4).rotateZ(Math.PI / 2);
   const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * (0.8 + rnd() * 0.5), p.getY(i) * 0.35, p.getZ(i) * (0.8 + rnd() * 0.5));
+  for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i), p.getY(i) * 0.6 + Math.sin(p.getX(i) * 9.0) * 0.012, p.getZ(i) + Math.sin(p.getX(i) * 6.0 + 1.0) * 0.03);
   g.computeVertexNormals();
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
-  const N = 2600;
+  const N = 9000;
   const im = new THREE.InstancedMesh(g, mat, N);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
   for (let i = 0; i < N; i++) {
-    const z = (rnd() - 0.5) * 400;
+    // strands tangled in clusters along the line, with bare gaps between clusters
+    let z;
+    do z = (rnd() - 0.5) * 400; while (Math.sin(z * 0.09) + 0.6 * Math.sin(z * 0.23 + 2.0) < -0.5);
     const wx = WET_LINE_X - 0.9 + 0.5 * Math.sin(z * 0.047) + 0.25 * Math.sin(z * 0.19 + 1);
-    // most on the wrack band, some strays scattered down toward the swash
-    const x = i % 9 === 0 ? wx + rnd() * (WET_LINE_X + 1.0 - wx) : wx + (rnd() - 0.5) * 0.9;
-    const s = 0.5 + rnd() * rnd() * 1.6;
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28);
-    m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) - 0.004, z), q, new THREE.Vector3(s * (1.2 + rnd()), s * (0.3 + rnd() * 0.35), s * (1 + rnd() * 0.6)));
+    const x = wx + (rnd() - 0.5) * (0.25 + 0.35 * rnd());
+    const len = 0.06 + rnd() * rnd() * 0.24;
+    q.setFromEuler(new THREE.Euler(0, rnd() * 6.28, (rnd() - 0.5) * 0.2));
+    m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) + 0.004, z), q, new THREE.Vector3(len, 0.6 + rnd() * 0.8, 1));
     im.setMatrixAt(i, m4);
     const gold = rnd();
-    im.setColorAt(i, c.setRGB(0.26 + gold * 0.22, 0.2 + gold * 0.15, 0.08 + gold * 0.05, THREE.SRGBColorSpace));
+    im.setColorAt(i, c.setRGB(0.4 + gold * 0.25, 0.3 + gold * 0.16, 0.13 + gold * 0.06, THREE.SRGBColorSpace));
   }
   im.receiveShadow = true;
   im.castShadow = true;

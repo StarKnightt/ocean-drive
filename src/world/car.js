@@ -341,39 +341,153 @@ function makeCar({ paint, flatten, cast }) {
   return { car, wheels };
 }
 
-// Plain modern sedan (muted paint, tinted glass cabin, body-colour roof and pillars).
+// Modern parked cars (sedan / SUV / hatchback): a lofted body like the hero car, with a
+// shaped hood, cabin and deck, wheel arches, a tinted glass greenhouse with painted
+// pillars and roof, mirrors, door shut lines and lamps. Geometry is shared per type.
+const MODERN = {
+  sedan: { L: 4.7, W: 0.9, wb: 1.4, r: 0.33, belt: 0.98, nose: 0.76, deck: 0.99, tail: 0.9, zA: 0.95, zRf: 0.28, zRr: -0.95, zR: -1.5, top: 1.45, Wt: 0.66, doors: [0.9, -0.2, -1.2] },
+  suv: { L: 4.75, W: 0.95, wb: 1.45, r: 0.38, belt: 1.12, nose: 0.98, deck: 1.1, tail: 1.02, zA: 1.3, zRf: 0.68, zRr: -1.95, zR: -2.22, top: 1.76, Wt: 0.75, doors: [1.25, 0.05, -1.2] },
+  hatch: { L: 4.1, W: 0.87, wb: 1.25, r: 0.31, belt: 0.95, nose: 0.72, deck: 0.95, tail: 0.9, zA: 0.85, zRf: 0.2, zRr: -1.45, zR: -1.8, top: 1.44, Wt: 0.64, doors: [0.8, -0.45] },
+};
+const MODERN_GEO = {};
+const stripUv = (g) => { g = g.index ? g.toNonIndexed() : g; for (const a of ['uv', 'uv1']) if (g.attributes[a]) g.deleteAttribute(a); return g; };
+// loft half-profiles (x >= 0, bottom centre -> top centre) mirrored into closed rings
+function loftGeometry(zs, section, caps) {
+  const rings = zs.map((z) => {
+    const P = section(z), ring = [];
+    for (let i = P.length - 1; i > 0; i--) ring.push([-P[i][0], P[i][1]]);
+    for (const q of P) ring.push(q);
+    return ring;
+  });
+  const n = rings[0].length, pos = [], idx = [];
+  zs.forEach((z, k) => { for (const [x, y] of rings[k]) pos.push(x, y, z); });
+  for (let k = 0; k < zs.length - 1; k++) for (let i = 0; i < n - 1; i++) {
+    const a = k * n + i, b = a + n;
+    idx.push(a, a + 1, b, a + 1, b + 1, b);
+  }
+  if (caps) for (const [k, flip] of [[0, true], [zs.length - 1, false]]) {
+    const c = pos.length / 3, ring = rings[k];
+    pos.push(0, ring.reduce((t, q) => t + q[1], 0) / ring.length, zs[k]);
+    for (let i = 0; i < n - 1; i++) { const a = k * n + i; if (flip) idx.push(c, a + 1, a); else idx.push(c, a, a + 1); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+function modernGeometry(type) {
+  if (MODERN_GEO[type]) return MODERN_GEO[type];
+  const T = MODERN[type], H = T.L / 2, R = T.r + 0.07;
+  const halfW = (z) => T.W - 0.16 * Math.max(0, (Math.abs(z) - (H - 0.7)) / 0.7) ** 2;
+  const archY = (z) => {
+    let y = 0.3;
+    for (const wz of [T.wb, -T.wb]) { const d = z - wz; if (Math.abs(d) < R) y = Math.max(y, T.r + Math.sqrt(R * R - d * d) * 0.95); }
+    return y;
+  };
+  const deckTop = (z) => {
+    if (z > T.zA) return T.belt - (T.belt - T.nose) * Math.pow((z - T.zA) / (H - T.zA), 1.7);
+    if (z < T.zR) return T.deck - (T.deck - T.tail) * Math.pow((T.zR - z) / (T.zR + H), 3);
+    return T.belt;
+  };
+  const roofY = (z) => {
+    if (z >= T.zRf) return T.belt + (T.top - T.belt) * Math.max(0, (T.zA - z) / (T.zA - T.zRf));
+    if (z <= T.zRr) return T.belt + (T.top - T.belt) * Math.max(0, (z - T.zR) / (T.zRr - T.zR));
+    return T.top + 0.015 * Math.sin(Math.PI * (z - T.zRr) / (T.zRf - T.zRr));
+  };
+  const zs = [];
+  for (let z = -H; z <= H + 1e-6; z += 0.05) zs.push(+z.toFixed(3));
+  const body = loftGeometry(zs, (z) => {
+    const W = halfW(z), ay = archY(z), well = ay > 0.31, t = deckTop(z);
+    return [[0, 0.24], [W - 0.34, well ? ay : 0.24], [W - 0.06, well ? ay : 0.3], [W - 0.01, Math.max(0.5, well ? ay + 0.02 : 0.5)],
+      [W, 0.64], [W - 0.03, Math.min(t - 0.06, 0.84)], [W - 0.1, t - 0.01], [W * 0.55, t + 0.025], [0, t + 0.03]];
+  }, true);
+  // greenhouse: tinted glass all round, narrowing toward the roof (tumblehome)
+  const gz = [];
+  for (let z = T.zR; z <= T.zA + 1e-6; z += 0.05) gz.push(+z.toFixed(3));
+  const glass = loftGeometry(gz, (z) => {
+    const y = Math.max(roofY(z), T.belt + 0.002), k = (y - T.belt) / (T.top - T.belt);
+    const xb = halfW(z) - 0.1, xt = xb + (T.Wt - xb) * k;
+    return [[0, T.belt - 0.01], [xb, T.belt - 0.01], [xt, y - 0.02], [xt * 0.5, y + 0.005], [0, y + 0.008]];
+  }, false);
+  // painted roof panel, A and C pillars, mirrors
+  const rz = [];
+  for (let z = T.zRr - 0.02; z <= T.zRf + 0.02 + 1e-6; z += 0.05) rz.push(+z.toFixed(3));
+  const paint = [body, loftGeometry(rz, (z) => {
+    const y = roofY(z);
+    return [[0, y - 0.03], [T.Wt + 0.012, y - 0.03], [T.Wt - 0.03, y + 0.012], [0, y + 0.024]];
+  }, true)];
+  for (const s of [-1, 1]) {
+    const xb = halfW(T.zA) - 0.09, xr = halfW(T.zR) - 0.09;
+    paint.push(tube([[s * xb, T.belt, T.zA], [s * (T.Wt + 0.01), roofY(T.zRf) - 0.02, T.zRf]], 0.042, 6));
+    const c0 = type === 'sedan' ? T.zR + 0.25 : T.zR + 0.05;
+    paint.push(tube([[s * xr, T.belt, c0], [s * (T.Wt + 0.01), roofY(T.zRr) - 0.02, T.zRr + (type === 'sedan' ? 0.1 : 0.05)]], type === 'suv' ? 0.06 : 0.075, 6));
+    paint.push(new RoundedBoxGeometry(0.2, 0.12, 0.09, 2, 0.03).translate(s * (halfW(T.zA) + 0.05), T.belt + 0.1, T.zA - 0.2));
+  }
+  // dark trim: B pillar blackout, belt seal, arch liners, shut lines, grille, bumpers, underbody
+  const trim = [];
+  const pillars = type === 'suv' ? [T.doors[1], T.doors[2] - 0.05] : [T.doors[1]];
+  for (const s of [-1, 1]) {
+    for (const z of pillars) trim.push(tube([[s * (halfW(z) - 0.095), T.belt, z], [s * (T.Wt + 0.005), roofY(z) - 0.03, z]], 0.035, 4));
+    trim.push(tube([[s * (halfW(T.zA) - 0.09), T.belt + 0.004, T.zA], [s * (halfW(0) - 0.09), T.belt + 0.004, 0], [s * (halfW(T.zR) - 0.09), T.belt + 0.004, T.zR]], 0.012, 16));
+    for (const z of T.doors) {
+      const pts = [];
+      for (let y = 0.34; y <= T.belt - 0.03; y += 0.06) pts.push([s * (halfW(z) + 0.003), y, z]);
+      trim.push(tube(pts, 0.006, 10));
+    }
+    for (const wz of [T.wb, -T.wb]) trim.push(new THREE.CylinderGeometry(R - 0.02, R - 0.02, 0.32, 16, 1, true).rotateZ(Math.PI / 2).translate(s * (halfW(wz) - 0.18), T.r, wz));
+  }
+  { const zh = T.zA + 0.12, pts = []; for (let x = -halfW(zh) + 0.1; x <= halfW(zh) - 0.1 + 1e-6; x += 0.12) pts.push([x, deckTop(zh) + 0.03, zh]); trim.push(tube(pts, 0.006, 12)); }
+  trim.push(new THREE.BoxGeometry(T.W * 1.1, 0.16, 0.05).translate(0, 0.52, H + 0.005));
+  trim.push(new RoundedBoxGeometry(T.W * 1.9, 0.14, 0.12, 2, 0.04).translate(0, 0.32, H - 0.03));
+  trim.push(new RoundedBoxGeometry(T.W * 1.9, 0.14, 0.12, 2, 0.04).translate(0, 0.34, -H + 0.03));
+  trim.push(new THREE.BoxGeometry(T.W * 1.7, 0.16, T.L - 1.0).translate(0, 0.22, 0));
+  const lens = [-1, 1].map((s) => new RoundedBoxGeometry(0.34, 0.09, 0.08, 2, 0.03).translate(s * (halfW(H - 0.05) - 0.24), deckTop(H - 0.05) - 0.1, H - 0.03));
+  const red = [-1, 1].map((s) => new RoundedBoxGeometry(0.3, 0.1, 0.06, 2, 0.02).translate(s * (halfW(-H + 0.05) - 0.22), deckTop(-H + 0.05) - 0.08, -H + 0.02));
+  MODERN_GEO[type] = {
+    T, paint: mergeGeometries(paint.map(stripUv)), glass: stripUv(glass), trim: mergeGeometries(trim.map(stripUv)),
+    lens: mergeGeometries(lens.map(stripUv)), red: mergeGeometries(red.map(stripUv)),
+  };
+  return MODERN_GEO[type];
+}
 let SEDAN = null;
 function sedanParts() {
   if (SEDAN) return SEDAN;
-  const body = mergeGeometries([
-    new RoundedBoxGeometry(1.8, 0.62, 4.6, 4, 0.16).translate(0, 0.62, 0),
-    new RoundedBoxGeometry(1.74, 0.2, 1.3, 3, 0.08).translate(0, 0.9, 1.45),     // hood rise
-    new RoundedBoxGeometry(1.5, 0.08, 2.1, 3, 0.03).translate(0, 1.43, -0.25),   // roof
-    ...[-0.76, 0.76].flatMap((x) => [[x, 0.62], [x, -1.08]].map(([px, pz]) => new THREE.BoxGeometry(0.06, 0.52, 0.08).translate(px, 1.17, pz))),
-  ].map((g) => { g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('uv'); return g; }));
-  const cabinGeo = new RoundedBoxGeometry(1.56, 0.52, 2.3, 3, 0.1).translate(0, 1.16, -0.25);
-  const tyreGeo = new THREE.CylinderGeometry(0.33, 0.33, 0.22, 24).rotateZ(Math.PI / 2);
-  const rimGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.225, 16).rotateZ(Math.PI / 2);
-  const glass = new THREE.MeshStandardMaterial({ color: 0x1b2328, roughness: 0.08, metalness: 0.4, envMapIntensity: 1.5 });
-  SEDAN = { body, cabinGeo, tyreGeo, rimGeo, glass };
+  const tyreGeo = new THREE.CylinderGeometry(1, 1, 0.22, 24).rotateZ(Math.PI / 2);
+  const rimGeo = new THREE.CylinderGeometry(0.62, 0.62, 0.226, 16).rotateZ(Math.PI / 2);
+  // dark tinted glass: mostly a mirror of the sky, the street a dark lower half
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x10161b, roughness: 0.04, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.6, side: THREE.DoubleSide });
+  groundReflect(glass, 'modern-glass');
+  const alloy = new THREE.MeshStandardMaterial({ color: 0x6a6d70, metalness: 0.7, roughness: 0.45 });
+  SEDAN = { tyreGeo, rimGeo, glass, alloy };
   return SEDAN;
 }
-function makeSedan(paint, env) {
-  const S = shared(), P = sedanParts();
+function modernPaint(color, env, key) {
+  const m = new THREE.MeshPhysicalMaterial({ color: color ?? 0xffffff, vertexColors: color === null, roughness: 0.32, metalness: 0.35, clearcoat: 1, clearcoatRoughness: 0.05, envMap: env, envMapIntensity: 1.4 });
+  groundReflect(m, key);
+  return m;
+}
+function makeSedan(paint, env, type = 'sedan') {
+  const S = shared(), P = sedanParts(), G = modernGeometry(type);
   P.glass.envMap = env;
+  P.alloy.envMap = env;
   const g = new THREE.Group();
-  const pm = new THREE.MeshPhysicalMaterial({ color: paint, roughness: 0.35, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.08, envMap: env, envMapIntensity: 1.4 });
-  groundReflect(pm, 'sedan');
-  g.add(new THREE.Mesh(P.body, pm), new THREE.Mesh(P.cabinGeo, P.glass));
-  for (const z of [1.4, -1.4]) for (const s of [-1, 1]) {
-    const t = new THREE.Mesh(P.tyreGeo, S.dark); t.position.set(s * 0.78, 0.33, z);
-    const r = new THREE.Mesh(P.rimGeo, S.chrome); r.position.copy(t.position);
+  g.add(new THREE.Mesh(G.paint, modernPaint(paint, env, 'sedan')), new THREE.Mesh(G.glass, P.glass),
+    new THREE.Mesh(G.trim, S.dark), new THREE.Mesh(G.lens, S.lens), new THREE.Mesh(G.red, S.red));
+  for (const z of [G.T.wb, -G.T.wb]) for (const s of [-1, 1]) {
+    const t = new THREE.Mesh(P.tyreGeo, S.dark);
+    t.position.set(s * (G.T.W - 0.16), G.T.r, z);
+    t.scale.set(1, G.T.r, G.T.r);
+    const r = new THREE.Mesh(P.rimGeo, P.alloy);
+    r.position.copy(t.position);
+    r.scale.copy(t.scale);
     g.add(t, r);
   }
   g.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
-  const blob = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 5.4).rotateX(-Math.PI / 2), S.blob);
+  const blob = new THREE.Mesh(new THREE.PlaneGeometry(2.2, G.T.L + 0.6).rotateX(-Math.PI / 2), S.blob);
   blob.position.y = 0.012;
   blob.renderOrder = 1;
+  blob.castShadow = false;
   g.add(blob);
   return g;
 }
@@ -384,16 +498,8 @@ function parkedFleet(scene, taken) {
   const S = shared(), P = sedanParts();
   const rnd = (() => { let a = 7331; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
   const cols = [0x9ea3a8, 0x3b4450, 0xb4b6b4, 0x6b6f73, 0x7a5a56, 0x5e7080, 0x9c937f, 0x2a2d31, 0x4d5a4c, 0x8f9ba3, 0x6e4a3e, 0xa8a090];
-  // body types: sedan, SUV, hatchback (body, cabin, wheelbase, tyre radius)
-  const strip0 = (g) => { g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); return g; };
-  const types = [
-    { body: P.body, cabin: P.cabinGeo, wz: 1.4, tr: 1 },
-    { body: mergeGeometries([new RoundedBoxGeometry(1.9, 0.78, 4.7, 4, 0.18).translate(0, 0.76, 0), new RoundedBoxGeometry(1.76, 0.08, 2.9, 3, 0.03).translate(0, 1.78, -0.35)].map(strip0)),
-      cabin: new RoundedBoxGeometry(1.74, 0.64, 3.0, 3, 0.12).translate(0, 1.44, -0.35), wz: 1.5, tr: 1.12 },
-    { body: mergeGeometries([new RoundedBoxGeometry(1.74, 0.6, 3.9, 4, 0.18).translate(0, 0.6, 0), new RoundedBoxGeometry(1.5, 0.08, 1.9, 3, 0.03).translate(0, 1.4, -0.55)].map(strip0)),
-      cabin: new RoundedBoxGeometry(1.54, 0.54, 2.2, 3, 0.14).translate(0, 1.12, -0.5), wz: 1.25, tr: 0.95 },
-  ];
-  const parts = { body: [], glass: [], tyre: [], rim: [], blob: [] };
+  const types = ['sedan', 'sedan', 'suv', 'hatch'].map(modernGeometry);
+  const parts = { body: [], glass: [], trim: [], lens: [], red: [], tyre: [], rim: [], blob: [] };
   const colliders = [];
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
   const add = (list, geo, m, col) => {
@@ -413,21 +519,24 @@ function parkedFleet(scene, taken) {
     q.setFromEuler(new THREE.Euler(0, (rnd() - 0.5) * 0.04, 0));
     m4.compose(new THREE.Vector3(x, roadHeight(x), z), q, sc.set(1, 1, len));
     const col = cols[Math.floor(rnd() * cols.length)];
-    const ty = types[rnd() < 0.45 ? 0 : rnd() < 0.55 ? 1 : 2];
-    add(parts.body, ty.body, m4, col);
-    add(parts.glass, ty.cabin, m4);
+    const ty = types[Math.floor(rnd() * types.length)], T = ty.T;
+    add(parts.body, ty.paint, m4, col);
+    add(parts.glass, ty.glass, m4);
+    add(parts.trim, ty.trim, m4);
+    add(parts.lens, ty.lens, m4);
+    add(parts.red, ty.red, m4);
     add(parts.blob, blobGeo, m4);
-    for (const wz of [ty.wz, -ty.wz]) for (const sx of [-1, 1]) {
-      const w = new THREE.Matrix4().compose(new THREE.Vector3(sx * 0.78, 0.33 * ty.tr, wz), new THREE.Quaternion(), new THREE.Vector3(1, ty.tr, ty.tr)).premultiply(m4);
+    for (const wz of [T.wb, -T.wb]) for (const sx of [-1, 1]) {
+      const w = new THREE.Matrix4().compose(new THREE.Vector3(sx * (T.W - 0.16), T.r, wz), new THREE.Quaternion(), new THREE.Vector3(1, T.r, T.r)).premultiply(m4);
       add(parts.tyre, P.tyreGeo, w);
       add(parts.rim, P.rimGeo, w);
     }
-    colliders.push({ min: { x: x - 0.95, y: 0, z: z - 2.4 * len }, max: { x: x + 0.95, y: 1.5, z: z + 2.4 * len } });
+    colliders.push({ min: { x: x - 0.95, y: 0, z: z - 2.4 * len }, max: { x: x + 0.95, y: T.top, z: z + 2.4 * len } });
   }
   if (!colliders.length) return colliders;
   const strip = (g) => { g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); if (g.attributes.uv1) g.deleteAttribute('uv1'); return g; };
-  const paint = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.1, envMap: scene.environment, envMapIntensity: 1.3 });
-  groundReflect(paint, 'fleet');
+  const paint = modernPaint(null, scene.environment, 'fleet');
+  P.glass.envMap = scene.environment;
   const mk = (list, mat, shadow = true, keepUv = false) => {
     const m = new THREE.Mesh(mergeGeometries(keepUv ? list : list.map(strip)), mat);
     m.castShadow = m.receiveShadow = shadow;
@@ -436,8 +545,11 @@ function parkedFleet(scene, taken) {
   };
   mk(parts.body, paint);
   mk(parts.glass, P.glass);
+  mk(parts.trim, S.dark);
+  mk(parts.lens, S.lens);
+  mk(parts.red, S.red);
   mk(parts.tyre, S.dark);
-  mk(parts.rim, S.chrome);
+  mk(parts.rim, P.alloy);
   const b = mk(parts.blob, S.blob, false, true);
   b.renderOrder = 1;
   return colliders;
@@ -451,8 +563,8 @@ export function buildCars(scene) {
   seat(hero.car, CAR.x, CAR.z, 0);
   const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
   // a few ordinary parked cars along the lane, gaps between, the hero spot kept clear
-  for (const [z, col] of [[-1.5, 0xa9adb1], [-24, 0x2e3a4e], [-31.5, 0x5b6570], [58, 0x5b5f63]]) {
-    const s = makeSedan(col, scene.environment);
+  for (const [z, col, type] of [[-1.5, 0xa9adb1, 'sedan'], [-24, 0x2e3a4e, 'suv'], [-31.5, 0x5b6570, 'hatch'], [58, 0x5b5f63, 'sedan']]) {
+    const s = makeSedan(col, scene.environment, type);
     seat(s, CAR.x + 0.05, z, 0);
     scene.add(s);
     colliders.push({ min: { x: CAR.x + 0.05 - 0.95, y: 0, z: z - 2.35 }, max: { x: CAR.x + 0.05 + 0.95, y: 1.5, z: z + 2.35 } });
