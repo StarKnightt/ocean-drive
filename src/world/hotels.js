@@ -220,7 +220,7 @@ const COL = {
   peach: 0xefd0bc, powder: 0xc6dbe8,
   teal: 0x4fa79f, aqua: 0x7cc7c4, coral: 0xe0938d, rose: 0xe09aae, seagreen: 0x7fc2a3,
   butter: 0xefe0a4, lilac: 0xb3a2d4, sky: 0x86b6d6, salmon: 0xe6a58e, sand: 0xd9c9a8,
-  stoneGrey: 0xcfcec6, mintDeep: 0x6fb89a, pinkDeep: 0xe6a3b3,
+  stoneGrey: 0xcfcec6, mintDeep: 0x9cdfe8, pinkDeep: 0xe6a3b3,
 };
 const SCHEMES = [
   { body: COL.white, trim: COL.teal, accent: COL.rose },
@@ -2113,7 +2113,7 @@ function streetPlan() {
     [-50.8, -35.6, { floors: 4, style: 'fin', r0: 0, r1: 0, scheme: { body: COL.mint, trim: COL.white, accent: COL.teal }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'window', name: 'SEAGROVE', canopy: 'full', patio: 'umbrella', umbrellaCol: 0xd9477a, portholes: true, roof: 'tank' }],
     [-33.8, -15.2, { floors: 5, style: 'ziggurat', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.aqua, accent: COL.pinkDeep }, band: { col: 0xb4dedb, mode: 1 }, winLayout: 'ribbon', eyebrow: 'full', name: 'BELLA MAR', canopy: 'full', patio: 'tent', setback: 0.8, eyeCol: 'trim', fountain: true, roof: 'tank' }],
     [-13.6, 2.2, { floors: 3, style: 'pylon', r0: 0, r1: 0, scheme: { body: COL.pink, trim: COL.white, accent: COL.coral }, band: { col: COL.white, mode: 2 }, winLayout: 'punched', eyebrow: 'window', name: 'ORCHIDEA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0x3f8a5a, porch: true, setback: 0, portholes: true, fountain: true, medallions: true, parapetStep: true, finial: true }],
-    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARISOL', signTop: 10.4, signBottom: 5.4, canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
+    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xc0eef4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARISOL', signTop: 10.4, signBottom: 5.4, canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
     [26.4, 40.2, { floors: 3, style: 'corner', r0: 0, r1: 3.2, scheme: { body: COL.lavender, trim: COL.white, accent: COL.lilac }, band: { col: COL.white, mode: 2 }, winLayout: 'ribbon', eyebrow: 'full', name: 'ORIANA', canopy: 'full', patio: 'porch', noSidewalk: true, portholes: true, parapetStep: true, rail: 'pipe' }],
     [41.8, 56.0, { floors: 7, style: 'tower', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.sky, accent: COL.coral }, band: { col: 0xb5d0e6, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARINELLA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0xf1efe9, setback: 1.2, roof: 'tank' }],
     [57.6, 70, { floors: 2, style: 'plain', r0: 0, r1: 3.0, scheme: { body: COL.lemon, trim: COL.white, accent: COL.aqua }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'full', name: 'SOLANA', canopy: 'full', patio: 'awning', awningColor: 0x3d7d4e, parapetStep: true, roof: 'sign', fins: true, exposed: [false, true] }],

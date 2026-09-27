@@ -383,7 +383,16 @@ function makeSedan(paint, env) {
 function parkedFleet(scene, taken) {
   const S = shared(), P = sedanParts();
   const rnd = (() => { let a = 7331; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
-  const cols = [0x9ea3a8, 0xe4e2dc, 0x3b4450, 0xc8c6c0, 0x6b6f73, 0x7a5a56, 0x5e7080, 0x9c937f, 0x2a2d31, 0xb9b6ae, 0x8f9ba3];
+  const cols = [0x9ea3a8, 0x3b4450, 0xb4b6b4, 0x6b6f73, 0x7a5a56, 0x5e7080, 0x9c937f, 0x2a2d31, 0x4d5a4c, 0x8f9ba3, 0x6e4a3e, 0xa8a090];
+  // body types: sedan, SUV, hatchback (body, cabin, wheelbase, tyre radius)
+  const strip0 = (g) => { g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); return g; };
+  const types = [
+    { body: P.body, cabin: P.cabinGeo, wz: 1.4, tr: 1 },
+    { body: mergeGeometries([new RoundedBoxGeometry(1.9, 0.78, 4.7, 4, 0.18).translate(0, 0.76, 0), new RoundedBoxGeometry(1.76, 0.08, 2.9, 3, 0.03).translate(0, 1.78, -0.35)].map(strip0)),
+      cabin: new RoundedBoxGeometry(1.74, 0.64, 3.0, 3, 0.12).translate(0, 1.44, -0.35), wz: 1.5, tr: 1.12 },
+    { body: mergeGeometries([new RoundedBoxGeometry(1.74, 0.6, 3.9, 4, 0.18).translate(0, 0.6, 0), new RoundedBoxGeometry(1.5, 0.08, 1.9, 3, 0.03).translate(0, 1.4, -0.55)].map(strip0)),
+      cabin: new RoundedBoxGeometry(1.54, 0.54, 2.2, 3, 0.14).translate(0, 1.12, -0.5), wz: 1.25, tr: 0.95 },
+  ];
   const parts = { body: [], glass: [], tyre: [], rim: [], blob: [] };
   const colliders = [];
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
@@ -404,11 +413,12 @@ function parkedFleet(scene, taken) {
     q.setFromEuler(new THREE.Euler(0, (rnd() - 0.5) * 0.04, 0));
     m4.compose(new THREE.Vector3(x, roadHeight(x), z), q, sc.set(1, 1, len));
     const col = cols[Math.floor(rnd() * cols.length)];
-    add(parts.body, P.body, m4, col);
-    add(parts.glass, P.cabinGeo, m4);
+    const ty = types[rnd() < 0.45 ? 0 : rnd() < 0.55 ? 1 : 2];
+    add(parts.body, ty.body, m4, col);
+    add(parts.glass, ty.cabin, m4);
     add(parts.blob, blobGeo, m4);
-    for (const wz of [1.4, -1.4]) for (const sx of [-1, 1]) {
-      const w = new THREE.Matrix4().makeTranslation(sx * 0.78, 0.33, wz).premultiply(m4);
+    for (const wz of [ty.wz, -ty.wz]) for (const sx of [-1, 1]) {
+      const w = new THREE.Matrix4().compose(new THREE.Vector3(sx * 0.78, 0.33 * ty.tr, wz), new THREE.Quaternion(), new THREE.Vector3(1, ty.tr, ty.tr)).premultiply(m4);
       add(parts.tyre, P.tyreGeo, w);
       add(parts.rim, P.rimGeo, w);
     }
@@ -441,7 +451,7 @@ export function buildCars(scene) {
   seat(hero.car, CAR.x, CAR.z, 0);
   const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
   // a few ordinary parked cars along the lane, gaps between, the hero spot kept clear
-  for (const [z, col] of [[-1.5, 0xa9adb1], [-24, 0x2e3a4e], [-31.5, 0xd8d7d2], [58, 0x5b5f63]]) {
+  for (const [z, col] of [[-1.5, 0xa9adb1], [-24, 0x2e3a4e], [-31.5, 0x5b6570], [58, 0x5b5f63]]) {
     const s = makeSedan(col, scene.environment);
     seat(s, CAR.x + 0.05, z, 0);
     scene.add(s);

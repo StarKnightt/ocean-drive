@@ -184,11 +184,15 @@ export function createOcean(scene, surf) {
         float swAmp = shore * (1.0 - smoothstep(120.0, 500.0, length(p - cameraPosition.xz)));
         if (swAmp > 0.0) odSwell(p, t, swAmp, swSl); else swSl = vec2(0.0);
         vec2 crSl = vec2(0.0);
+        // whitewater evaluated per pixel (per vertex it smears into grid-aligned dots)
+        float whiteF = 0.0;
         if (p.x < ${(BREAK_X + 40.0).toFixed(2)} && dist < 400.0) {
           float w1, w2;
-          float e = max(0.15, fp);
+          float e = max(0.35, fp * 1.5);
           float hx = surfCrest(p.x + e, p.y, t, w1), hz = surfCrest(p.x, p.y + e, t, w2);
           crSl = vec2(hx - vCrest, hz - vCrest) / e;
+          crSl *= min(1.0, 0.6 / (length(crSl) + 1e-4));   // no needle-steep facets flashing the sky
+          whiteF = 0.5 * (w1 + w2);
         }
         vec2 s = vec2(0.0);
         float lost = 0.0;
@@ -207,9 +211,11 @@ export function createOcean(scene, surf) {
 
         // water body: turquoise over the pale sand shallows, steel-blue offshore
         // body: a hint of turquoise only in the very shallow water, silver-blue beyond
-        vec3 turq = vec3(0.042, 0.058, 0.056);
+        // clear green-turquoise over the pale sand (absorption leaves green), slate offshore
+        vec3 turq = vec3(0.035, 0.115, 0.095);
+        vec3 mid = vec3(0.022, 0.055, 0.058);
         vec3 deep = vec3(0.016, 0.024, 0.034);
-        vec3 body = mix(turq, deep, smoothstep(0.15, 1.2, depth));
+        vec3 body = mix(mix(turq, mid, smoothstep(0.3, 1.8, depth)), deep, smoothstep(1.6, 4.5, depth));
         vec3 col = body * (1.0 - F) + sky * F;
 
         // backlit wave faces: sun through the thin crest, green-turquoise
@@ -231,10 +237,10 @@ export function createOcean(scene, surf) {
         float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
         vec3 spec = OD_SUNCOL * OD_SUN_I * D * Fh / (4.0 * nv) * smoothstep(-0.06, 0.06, dot(n, L));
         spec *= vec3(1.0, 0.74, 0.38);
-        float gl = odNoise(p / max(fp * 1.6, 0.02) * vec2(1.0, 0.35) + vec2(t * 1.7, -t * 0.6));
+        float gl = odNoise(p / max(fp * 0.6, 0.01) * vec2(1.0, 0.45) + vec2(t * 1.7, -t * 0.6)) * odNoise(p / max(fp * 0.35, 0.006) + vec2(-t * 1.1, t * 0.9) + 5.0) * 1.6;
         float gw = smoothstep(0.0, 0.0012, lost);
         // always broken into sparkles: resolved facets near by, twinkling glints far out
-        float gl2 = odNoise(p * 31.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 73.0 - vec2(t * 1.1, 0.0));
+        float gl2 = odNoise(p * 47.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 113.0 - vec2(t * 1.1, 0.0));
         spec *= mix(smoothstep(0.3, 0.55, gl2) * 6.0, smoothstep(0.6, 0.9, gl) * 5.5, gw);
         float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
         spec /= 1.0 + sl / mix(1.8, 4.0, gw);
@@ -257,7 +263,7 @@ export function createOcean(scene, surf) {
         float streak = smoothstep(0.55, 0.8, odNoise(sw + vec2(0.0, t * 0.03)));
         foamAmt = max(foamAmt, zone * streak * lace * 0.55);
         // crest lip / roller whitewater
-        foamAmt = max(foamAmt, vWhite * mix(0.7, 1.0, lace));
+        foamAmt = max(foamAmt, whiteF * mix(0.7, 1.0, lace));
         // thin intersection line where the water meets the sand
         foamAmt = max(foamAmt, (1.0 - smoothstep(0.0, 0.04, depth)) * lace * 0.8);
         // sparse whitecaps far out

@@ -296,7 +296,7 @@ function sandMaterial(detailTex, surf) {
           float odF = 0.02 + 0.98 * pow(1.0 - odNv, 5.0);
           float odRefl = (odWet * (0.08 + 0.3 * odF) + odGlass * (0.3 + 0.5 * odF)) * (1.0 - 0.55 * smoothstep(0.4, 0.95, dot(normalize(odR.xz + 1e-5), normalize(OD_SUN.xz))));
           vec3 odRb = normalize(vec3(odR.x, odR.y * 0.6 + 0.01, odR.z));   // film ripples smear it toward the gold horizon
-          outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.65, 0.0)) * 0.6, min(odRefl, 0.85));
+          outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.8, 0.0)) * 0.6, min(odRefl, 0.85));
           vec3 odV = -odI;
           vec3 odH = normalize(OD_SUN + odV);
           vec2 odFw = normalize(odI.xz + 1e-5);
@@ -305,7 +305,7 @@ function sandMaterial(detailTex, surf) {
           // broad, soft gold glow (the wet grains scatter the sun into a patch)
           float odGl = exp(-(odSx * odSx / (2.0 * 0.03 * 0.03) + odSz * odSz / (2.0 * 0.06 * 0.06)));
           float odSpk = smoothstep(0.55, 0.8, surfN(vOdW.xz * 41.0) * surfN(vOdW.xz * 97.0 + 3.0) * 1.9);
-          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * odSpk * (0.4 * odWet + 1.6 * odGlass);
+          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * odSpk * 1.6 * odGlass * smoothstep(0.5, 0.95, odGlass);
           outgoingLight += odSp / (1.0 + dot(odSp, vec3(0.2126, 0.7152, 0.0722)) / 1.5);
         }
         #endif
@@ -384,10 +384,10 @@ function swashSheet(surf) {
         float depth = min(0.12, 0.012 + max(s, 0.0) * 0.022) * (0.35 + 0.65 * fresh);
         // flowing ripples: uprush toward the land, backwash seaward
         float dir = fresh > 0.999 ? -1.0 : 1.0;
-        vec2 q = p * vec2(1.6, 0.9) + vec2(dir * t * 1.8, 0.0);
+        vec2 q = p * 1.2 + vec2(odNoise(p * 0.7 + 1.0), odNoise(p * 0.7 + 5.0)) * 1.8 + vec2(dir * t * 1.2, 0.0);
         float e = 0.05;
         float h0 = odNoise(q * 2.0), hx = odNoise((q + vec2(e, 0.0)) * 2.0), hz = odNoise((q + vec2(0.0, e)) * 2.0);
-        vec3 n = normalize(vec3(-(hx - h0) / e * 0.05, 1.0, -(hz - h0) / e * 0.05));
+        vec3 n = normalize(vec3(-(hx - h0) / e * 0.03, 1.0, -(hz - h0) / e * 0.03));
         float nv = max(dot(n, V), 0.01);
         float F = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
         vec3 R = reflect(-V, n);
@@ -396,16 +396,17 @@ function swashSheet(surf) {
         // glint of the low sun on the sheet
         vec3 H = normalize(OD_SUN + V);
         float nh = max(dot(n, H), 0.0);
-        float spec = pow(nh, 900.0) * 30.0 * smoothstep(0.55, 0.85, odNoise(p * 14.0 + t * 1.5));
-        vec3 col = sky * F + vec3(0.018, 0.032, 0.028) * (1.0 - F);
+        float spec = pow(nh, 900.0) * 30.0 * smoothstep(0.6, 0.85, odNoise(p * 43.0 + t * 1.5) * odNoise(p * 97.0 - t) * 1.8) * smoothstep(0.1, 0.5, s);
+        vec3 col = sky * F * 0.8 + vec3(0.012, 0.02, 0.02) * (1.0 - F);
         float alpha = clamp(0.12 + 0.25 * smoothstep(0.0, 0.08, depth) + F * 0.6, 0.0, 0.9);
         // foam: bright lace at the leading edge, bubble trails behind, fading as it drains
         float lace = odFoam(p, t);
-        float edge = exp(-max(s, 0.0) / (0.1 + 0.12 * fresh)) * smoothstep(-0.02, 0.01, s);
+        float se = s + (odNoise(p * vec2(0.9, 2.3) + 3.0) - 0.5) * 0.3 + (odNoise(p * 6.0) - 0.5) * 0.08;
+        float edge = exp(-max(se, 0.0) / (0.12 + 0.2 * fresh)) * smoothstep(-0.1, 0.06, se);
         // lacy leading edge, thin bubble trails behind it
         vec2 tq = p * 1.4 + vec2(odNoise(p * 0.6 + 2.0), odNoise(p * 0.6 + 6.0)) * 2.2;
         float trail = smoothstep(0.62, 0.9, odNoise(tq));
-        float foam = max(edge * mix(0.45, 1.0, lace), max(lace, trail * 0.7) * exp(-max(s, 0.0) / 1.4) * 0.75);
+        float foam = max(edge * mix(0.15, 1.0, lace) * 0.9, max(lace, trail * 0.6) * exp(-max(s, 0.0) / 0.9) * 0.55);
         foam *= 0.35 + 0.65 * fresh;
         vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
         float foamL = dot(OD_SUNCOL * OD_SUN_I * 0.318 * 0.35 + skyUp * 1.1, vec3(0.2126, 0.7152, 0.0722));
@@ -414,7 +415,7 @@ function swashSheet(surf) {
         col += OD_SUNCOL * OD_SUN_I * vec3(1.0, 0.7, 0.4) * spec * (1.0 - foam) * 0.02;
         alpha = max(alpha * (1.0 - foam), foam);
         // a draining sheet thins out to nothing at its edge (the uprush keeps its foam line)
-        alpha *= mix(smoothstep(-0.02, 0.18, s), 1.0, fresh);
+        alpha *= mix(smoothstep(-0.02, 0.18, s), 1.0, fresh) * smoothstep(-0.1, 0.04, se);
         // hand over to the sea past the shoreline
         alpha *= 1.0 - smoothstep(SURF_SHORE_X + 0.4, SURF_SHORE_X + 1.6, p.x);
         #ifdef USE_FOG
@@ -492,7 +493,7 @@ function paintedMaterial({ wear = 1, ...extra } = {}) {
           diffuseColor.rgb = c;
         }`)
       // sides turned away from the low sun sit in soft sky shade, not front-lit colour
-      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n        reflectedLight.indirectDiffuse *= 0.7;');
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n        reflectedLight.indirectDiffuse *= 0.7;\n        reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.06, 0.052, 0.05);');
   };
   mat.customProgramCacheKey = () => 'beach-painted-v2-' + wear + (extra.side ?? '');
   return mat;
@@ -588,9 +589,11 @@ function buildTower(scene, colliders) {
   };
   const y0 = D, yA = D + 0.85, yB = D + 1.95, yC = D + cb.h;
   const eastWin = (cx) => cx > cb.x1 - rr - 0.05;
-  wallBand(y0, yA, () => PINK);
-  wallBand(yA, yB, (i) => (i % 2 ? WHITE : TEAL), (cx, cz) => eastWin(cx) && true);
-  wallBand(yB, yC, () => YEL);
+  // the landward (west) wall carries big, bold blocks that read even against the light
+  const westW = (cx) => cx < cb.x0 + 0.05;
+  wallBand(y0, yA, (i, cx) => (westW(cx) ? ORANGE : PINK));
+  wallBand(yA, yB, (i, cx, cz) => (westW(cx) ? (cz < 0 ? TEAL : PINK) : i % 2 ? WHITE : TEAL), (cx) => eastWin(cx));
+  wallBand(yB, yC, (i, cx) => (westW(cx) ? (Math.floor(i / 2) % 2 ? WHITE : NAVY) : YEL));
   // curved window band on the ocean front (glass), with a white sill and head
   wallBand(yA, yA + 0.12, () => WHITE, (cx) => !eastWin(cx));
   for (let i = 0; i < foot.length; i++) {

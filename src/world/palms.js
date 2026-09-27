@@ -114,16 +114,22 @@ const LEAF_N = 7;         // leaflets per tile and side
 function frondAtlas() {
   const [cv, c] = canvas(768, 512);
   const rnd = mulberry32(91);
+  // leaflets are drawn on a taller scratch canvas and blurred, so the alpha edge is a
+  // smooth ramp (magnified up close it stays a clean curve, not texel steps), then the
+  // middle 512 rows are copied in (no blurred-away rows at the tile edges)
+  const [lc, l2] = canvas(256, 768);
+  {
+  const c = l2;
   c.save();
-  c.beginPath(); c.rect(0, 0, 256, 512); c.clip();
+  c.translate(0, 128);
   // many long narrow leaflets with sky between them; tips of varying length separate
-  for (let k = -14; k < 24; k++) {
+  for (let k = -16; k < 26; k++) {
     const y0 = k * (512 / LEAF_N) + (rnd() - 0.5) * 8, y1 = y0 + LEAF_SLANT * 512 + (rnd() - 0.5) * 40;
     const L = 190 + rnd() * 64, w0 = 66 + rnd() * 12;   // ~4 cm blades, ~75% coverage
     const pts = [], back = [];
     for (let i = 0; i <= 16; i++) {
       const t = i / 16;
-      const x = 6 + (L - 6) * t, y = y0 + (y1 - y0) * t + Math.sin(t * 3.1) * 14;
+      const x = 6 + (L - 6) * t, y = y0 + (y1 - y0) * t + Math.sin(t * 3.1) * 14 + t * t * 22;
       const w = w0 * Math.min(1, t / 0.08 + 0.35) * Math.pow(1 - t, 0.65) * 0.5;
       pts.push([x, y - w]); back.push([x, y + w]);
     }
@@ -141,6 +147,11 @@ function frondAtlas() {
     c.beginPath(); c.moveTo(6, y0); c.lineTo(L * 0.9, y0 + (y1 - y0) * 0.9); c.stroke();
   }
   c.restore();
+  }
+  const [bc, b2] = canvas(256, 768);
+  b2.filter = 'blur(1.6px)';
+  b2.drawImage(lc, 0, 0);
+  c.drawImage(bc, 0, 128, 256, 512, 0, 0, 256, 512);
   c.fillStyle = '#c9cc9a'; c.fillRect(0, 0, 7, 512);   // leaflet bases along the rachis
   // sabal fan: segments joined to ~half radius, split tapering tips beyond
   const segs = 36, sh = 512 / segs;
@@ -678,7 +689,7 @@ export function buildPalms(scene) {
     trunkInst.push({ g: ti, m: tm, c: col.setScalar(0.94 + rnd() * 0.12).clone() });
     const top = new THREE.Vector3(...trunks[ti].top).applyMatrix4(tm);
     const bleach = rnd();
-    const fresh = new THREE.Color().setRGB(0.1, 0.2, 0.038).lerp(new THREE.Color(0.16, 0.25, 0.045), bleach * 0.8);   // mid-deep olive; the warm sun makes the gold
+    const fresh = new THREE.Color().setRGB(0.1, 0.2, 0.038).lerp(new THREE.Color(0.2, 0.26, 0.05), bleach).multiplyScalar(0.85 + 0.3 * rnd());   // mid-deep olive; the warm sun makes the gold
     const addFrond = (g, az, pitch, s, c, roll = 0) => {
       qa.setFromAxisAngle(Y, t.rotY + az);
       qb.setFromAxisAngle(Zax, pitch);

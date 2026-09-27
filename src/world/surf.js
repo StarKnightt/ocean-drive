@@ -198,8 +198,10 @@ float surfCrest(float x, float z, float t, out float white) {
   float rp = max(back, face);
   h += (0.12 + 0.3 * seg) * grow * rp;
   float brk = seg * grow * smoothstep(SURF_BREAK_X + 12.0, SURF_BREAK_X + 5.0, x);
-  float wn = surfN(vec2(z * 2.1, x * 1.7 - t * 2.0)) * 0.5 + surfN(vec2(z * 6.0, x * 5.0)) * 0.5;
-  white = max(white, brk * (smoothstep(0.75, 0.98, rp) + 0.8 * exp(-f / 0.12) * smoothstep(0.35, 0.6, wn)) * (0.6 + 0.4 * wn));
+  vec2 wq2 = vec2(z * 0.9, x * 1.1 - t * 1.4);
+  wq2 += vec2(surfN(wq2 * 0.43 + 2.0), surfN(wq2 * 0.39 + 6.0)) * 3.0;
+  float wn = surfN(wq2) * 0.6 + surfN(wq2 * 2.3 + 4.0) * 0.4;
+  white = max(white, brk * (smoothstep(0.8, 0.98, rp) + 0.6 * exp(-f / 0.12)) * smoothstep(0.35, 0.75, wn));
   return h;
 }
 `;

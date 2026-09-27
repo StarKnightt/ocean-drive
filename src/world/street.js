@@ -392,7 +392,7 @@ function sidewalks() {
           // rough concrete under a grazing sun: stronger back-scatter, crisp shadow bands
           reflectedLight.directDiffuse *= 2.2 + 0.6 * odAway;
           vec3 odI = reflectedLight.indirectDiffuse;
-          reflectedLight.indirectDiffuse = mix(odI, vec3(dot(odI, vec3(0.2126, 0.7152, 0.0722))), 0.5) * 0.8; }
+          reflectedLight.indirectDiffuse = mix(odI, vec3(dot(odI, vec3(0.2126, 0.7152, 0.0722))), 0.2) * 0.8; }
         #endif`);
   };
   mat.customProgramCacheKey = () => 'street-sidewalk-v2';

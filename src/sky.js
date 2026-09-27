@@ -9,7 +9,7 @@ export const sunDir = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.V
 
 // Linear-light values. ~15 minutes after sunrise (7 deg): ~2700-2900 K orange direct
 // light, dim and cool skylight (the sky itself is only a fraction as bright).
-export const SUN_COLOR = new THREE.Color().setRGB(1.0, 0.62, 0.34, THREE.LinearSRGBColorSpace);
+export const SUN_COLOR = new THREE.Color().setRGB(1.0, 0.6, 0.4, THREE.LinearSRGBColorSpace);
 export const SUN_INTENSITY = 5.1;
 export const ENV_INTENSITY = 1.0;
 export const FOG_DENSITY = 1 / 200; // per metre at sea level
@@ -59,10 +59,11 @@ vec3 odSkyBase(vec3 d, float glowScale) {
   float az = odSunSide(d);
 
   // Anti-solar side: dusty blue-grey dome, pink "belt" above a blue-grey earth-shadow band.
-  vec3 away = mix(vec3(0.450, 0.500, 0.660), vec3(0.300, 0.370, 0.560), smoothstep(0.35, 0.95, e));
-  away = mix(vec3(0.640, 0.560, 0.610), away, smoothstep(0.16, 0.5, e));
-  away = mix(vec3(0.800, 0.620, 0.620), away, smoothstep(0.02, 0.2, e));
-  away = mix(vec3(0.640, 0.600, 0.650), away, smoothstep(0.0, 0.035, e));
+  // clear pale blue dome, a soft pink band just above the horizon
+  vec3 away = mix(vec3(0.400, 0.540, 0.780), vec3(0.250, 0.380, 0.650), smoothstep(0.35, 0.95, e));
+  away = mix(vec3(0.600, 0.620, 0.760), away, smoothstep(0.1, 0.32, e));
+  away = mix(vec3(0.860, 0.640, 0.660), away, smoothstep(0.02, 0.14, e));
+  away = mix(vec3(0.720, 0.640, 0.700), away, smoothstep(0.0, 0.03, e));
 
   // Solar side, a broad graded band: red-orange at the horizon -> deep orange (~6 deg)
   // -> orange-gold (~15 deg) -> pale yellow -> clean blue-grey.
@@ -93,7 +94,7 @@ vec3 odApplyFog(vec3 col, vec3 offs, float density) {
   float fDy = offs.y / fH;
   float fK = abs(fDy) > 1e-3 ? (1.0 - exp(-fDy)) / fDy : 1.0;
   // the first ~50 m stay crisp; humid haze builds beyond that
-  float fOd = density * exp(-max(cameraPosition.y, 0.0) / fH) * max(fDist - 50.0, 0.0) * fK;
+  float fOd = density * exp(-max(cameraPosition.y, 0.0) / fH) * max(fDist - 90.0, 0.0) * mix(0.18, 1.0, smoothstep(250.0, 500.0, fDist)) * fK;
   // The haze colour is the horizon sky, i.e. km of air. Toward the sun that is the
   // blazing glow, so a short slab of it would light up backlit sand as bright as the
   // sky; there the haze is thinned to keep near backlit ground dark as in photos.
@@ -141,11 +142,12 @@ float odWorley(vec2 p) {
 // Low altocumulus / small cumulus patches near the horizon: large-scale coverage
 // times packed round puffs (Worley), so they read as clumps rather than smears.
 float odCloudField(vec2 q) {
-  vec2 w = vec2(odNoise(q * 0.9 + 3.3), odNoise(q * 0.9 + 7.9)) - 0.5;
-  float cov = odFbm(q * 0.22 + 1.7);
-  float pf = 1.0 - odWorley(q * 1.05 + w * 0.8);
-  float pf2 = 1.0 - odWorley(q * 2.6 + w * 1.4 + 5.0);
-  return cov * 0.75 + (pf * 0.6 + pf2 * 0.4) * 0.42;
+  vec2 w = vec2(odFbm(q * 0.35 + 3.3), odFbm(q * 0.35 + 7.9)) - 0.5;
+  vec2 qs = q + w * 1.8;
+  float cov = odFbm(qs * 0.26 + 1.7);
+  float torn = odFbm(qs * 1.3 + w * 2.0 + 4.0);
+  float pf = 1.0 - odWorley(qs * 1.6 + 5.0);
+  return cov * 0.78 + torn * 0.34 + pf * 0.1 - 0.06;
 }
 
 // Cloud plane projection, less flattened toward the horizon than a true plane
@@ -181,13 +183,13 @@ vec4 odClouds(vec3 d, float detail) {
   // Away from the sun: sunlit pink-peach tops over shaded lavender-grey bases.
   // Away from the sun: peach-orange sun-facing sides, lavender-grey shaded bodies and
   // darker undersides.
-  vec3 cA = mix(vec3(0.40, 0.35, 0.42), vec3(1.15, 0.78, 0.48), smoothstep(0.35, 0.75, lit) * (0.55 + 0.45 * thin));
+  vec3 cA = mix(vec3(0.33, 0.30, 0.43), vec3(1.15, 0.78, 0.48), smoothstep(0.35, 0.75, lit) * (0.55 + 0.45 * thin));
   cA *= 1.0 - 0.6 * under;
   cA += vec3(1.0, 0.7, 0.38) * 0.28 * smoothstep(0.55, 0.9, lit) * (1.0 - thick) * (1.0 - under);   // bright sun-facing rim
   // Backlit, near the sun: thick bodies slate-purple with soft internal gradients;
   // only the sun-facing edge forward-scatters, orange-gold, in a rim of varying width.
-  vec3 edge = vec3(1.0, 0.6, 0.24) * (1.1 + 1.3 * hg);
-  vec3 body = mix(vec3(0.30, 0.23, 0.28), vec3(0.14, 0.11, 0.16), thick) * (1.0 - 0.5 * under);
+  vec3 edge = vec3(1.0, 0.52, 0.17) * (1.2 + 2.2 * hg);
+  vec3 body = mix(vec3(0.28, 0.23, 0.32), vec3(0.13, 0.11, 0.18), thick) * (1.0 - 0.5 * under);
   float rim = smoothstep(0.5, 0.85, lit) * pow(thin, 1.4 * (1.6 - wv));
   vec3 cS = mix(body, edge, rim) + vec3(0.9, 0.35, 0.08) * 0.35 * hg * thin * (1.0 - rim);
   vec3 col = mix(cA, cS, near);
@@ -227,7 +229,7 @@ vec3 odSky(vec3 d, float mode) {
     float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
     float up = max(d.y, 0.0);
     float az = mix(odSunSide(d), 0.5, up * up);
-    col = mix(col, l * vec3(0.74, 0.90, 1.32), 0.85 * pow(1.0 - az, 1.5));
+    col = mix(col, l * vec3(0.66, 0.86, 1.42), 0.85 * pow(1.0 - az, 1.5));
     col = mix(col, l * vec3(1.06, 1.0, 0.92), 0.5 * up * az);   // overhead: near-neutral, the dim blue zenith offset by the peach sun-side dome
     col /= 1.0 + 1.5 * l;
     // Weighted to the open dome overhead; the low solar sky is compressed so a
@@ -306,10 +308,10 @@ function installGroundBounce() {
     float odTow = smoothstep( 0.3, 0.9, dot( normalize( odVw.xz + 1e-5 ), normalize( odBs.xz ) ) );
     float odAwayN = smoothstep( 0.15, -0.45, dot( odBn, odBs ) );
     float odUp = smoothstep( 0.5, 0.9, odBn.y );
-    float odK = odTow * max( odAwayN, 0.7 * odUp );
+    float odK = odTow * max( odAwayN, 0.3 * odUp );
     reflectedLight.indirectDiffuse *= 1.0 - 0.6 * odK;
     reflectedLight.indirectSpecular *= 1.0 - 0.35 * odK;
-    reflectedLight.directDiffuse *= 1.0 - 0.45 * odTow * odUp;
+    reflectedLight.directDiffuse *= 1.0 - 0.3 * odTow * odUp;
     // (no grazing forward-specular sheen off rough ground: grains and blades self-shadow it)
     float odRuf = odTow * odUp * smoothstep( 0.55, 0.8, material.roughness );
     reflectedLight.directSpecular *= 1.0 - 0.85 * odRuf;
