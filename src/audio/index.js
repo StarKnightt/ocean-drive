@@ -15,6 +15,7 @@ import { createCars } from './car.js';
 import { createMusic } from './music.js';
 import { createFootsteps } from './footsteps.js';
 import { surfaceAt } from './surface.js';
+import { PALM_CLUSTERS } from '../world/palms.js';
 
 export { surfaceAt };
 
@@ -22,8 +23,8 @@ const EYE = Layout.EYE_HEIGHT ?? 1.7;
 const WATERLINE = Layout.SAND?.waterline ?? 90;
 const TOWER = Layout.TOWER ?? { x: 45, z: 5, deckHeight: 2.7 };
 const PATIO = { x: -29, y: 1.6, z: -10 };
-// Palm clusters (x, z) along both sidewalks and in the park.
-const PALMS = [[-26.5, -35], [-26.5, 25], [-12, -10], [-12, 45], [-3, -45], [3, 15]];
+// Palm clusters (x, z) along both sidewalks and in the park (from the placed palms).
+const PALMS = PALM_CLUSTERS;
 const STRIDE = 0.75;
 
 const isShot = () => typeof location !== 'undefined' && new URLSearchParams(location.search).has('shot');

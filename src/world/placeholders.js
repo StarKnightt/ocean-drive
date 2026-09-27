@@ -125,8 +125,16 @@ function buildGround(group) {
   // Low coral-stone wall between park and sand.
   // (front faces into the shadow map: with the default back faces, the wall's own west
   // face sits at the grass depth and leaked a lit line along its foot)
-  const coral = new THREE.MeshStandardMaterial({ color: 0xd8c3a0, roughness: 0.95, shadowSide: THREE.FrontSide });
-  group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.95, -Z, Z), coral, { cast: true }));
+  // (pitted coral limestone, pale: its shaded park-side face must not read as a black band)
+  const coralTex = noiseColorTexture({ size: 512, seed: 61, colorA: [196, 180, 150], colorB: [236, 224, 198], baseCells: 10, speckle: 0.35, contrast: 1.5 });
+  const coral = new THREE.MeshStandardMaterial({ map: coralTex, color: 0xf0e4cc, roughness: 0.95, shadowSide: THREE.FrontSide });
+  coral.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+      reflectedLight.indirectDiffuse *= 3.6;`);
+  };
+  coral.customProgramCacheKey = () => 'coral-wall-v2';
+  group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, -Z, Z, 0.6), coral, { cast: true }));
+  group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, -Z, Z, 0.6), coral, { cast: true }));
 
   // Sand: height from sandHeight(x), darker and wetter toward the water.
   {
@@ -418,86 +426,6 @@ function buildBackground(group) {
   }
 }
 
-function frondGeometry() {
-  const len = 4.2, w = 0.85, seg = 8;
-  const g = new THREE.PlaneGeometry(w, len, 1, seg);
-  g.translate(0, len / 2, 0);
-  g.rotateX(-Math.PI / 2); // lies along -z... reorient to +x below
-  g.rotateY(-Math.PI / 2);
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const t = x / len;
-    pos.setY(i, 0.9 * t - 2.2 * t * t);                    // arch up then droop
-    pos.setZ(i, pos.getZ(i) * (1 - 0.75 * t) * Math.sin(Math.PI * Math.min(1, t * 1.3 + 0.1)));
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-function buildPalms(group) {
-  const rnd = mulberry32(777);
-  const spots = [];
-  for (let z = -300; z <= 300; z += 11 + rnd() * 3) spots.push([SIDEWALK_W.x1 + 0.9, z + rnd() * 2]);
-  for (let z = -300; z <= 300; z += 12 + rnd() * 4) spots.push([SIDEWALK_E.x1 + 0.8, z]);
-  for (let i = 0; i < 70; i++) {
-    const z = -300 + rnd() * 600;
-    const x = PARK.x0 + 2 + rnd() * (PARK.x1 - PARK.x0 - 4);
-    if (Math.abs(x - PARK.promenadeX - 2.6 * Math.sin(z / 19)) < 3.5) continue;
-    spots.push([x, z]);
-  }
-
-  const trunkGeo = new THREE.CylinderGeometry(0.17, 0.26, 1, 8, 1);
-  trunkGeo.translate(0, 0.5, 0);
-  const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x9c8f7c, roughness: 0.95 }), spots.length);
-  const fronds = 11;
-  const frondMat = new THREE.MeshStandardMaterial({ color: 0x6d8a38, roughness: 0.75, side: THREE.DoubleSide });
-  // Fronds are nearly horizontal planes that a 7-degree sun only grazes. Real fronds
-  // are V-folded leaflets facing every way, so shade them with normals bent outward
-  // from the crown (both faces), plus light transmitted through the leaves.
-  frondMat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>',
-      'vec3 objectNormal = normalize(mix(normal * sign(normal.y + 1e-3), normalize(position + vec3(0.0, 0.9, 0.0)), 0.7));');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize(vNormal);')
-      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
-        #ifdef USE_FOG
-        {
-          float odB = pow(max(dot(normalize(vFogOffset), OD_SUN), 0.0), 2.0);
-          // V-folded leaflets: about a quarter of the frond area faces the sun whatever the
-          // frond's orientation, plus light transmitted when looking toward the sun
-          reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.08;
-          reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.0, 1.15, 0.35) * directLight.color * 0.07 * odB;
-        }
-        #endif`);
-  };
-  frondMat.customProgramCacheKey = () => 'frond-bent-v2';
-  const leaves = new THREE.InstancedMesh(frondGeometry(), frondMat, spots.length * fronds);
-
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-  const top = new THREE.Vector3(), s = new THREE.Vector3();
-  spots.forEach(([x, z], i) => {
-    const h = 8 + rnd() * 5;
-    const lean = (rnd() - 0.3) * 0.12, leanDir = rnd() * Math.PI * 2;
-    e.set(Math.cos(leanDir) * lean, 0, Math.sin(leanDir) * lean);
-    q.setFromEuler(e);
-    m.compose(new THREE.Vector3(x, CURB_HEIGHT, z), q, s.set(1, h, 1));
-    trunks.setMatrixAt(i, m);
-    top.set(0, h, 0).applyQuaternion(q).add(new THREE.Vector3(x, CURB_HEIGHT, z));
-    for (let f = 0; f < fronds; f++) {
-      e.set(0, (f / fronds) * Math.PI * 2 + rnd() * 0.4, (rnd() - 0.4) * 0.5, 'YXZ');
-      q.setFromEuler(e);
-      const sc = 0.8 + rnd() * 0.35;
-      m.compose(top, q, s.set(sc, sc, sc));
-      leaves.setMatrixAt(i * fronds + f, m);
-    }
-  });
-  trunks.castShadow = trunks.receiveShadow = true;
-  leaves.castShadow = true;  // at sunrise nothing tall stands east of the palms; crown self-shadowing at a grazing sun only blackened them
-  group.add(trunks, leaves);
-  blobs(group, 'round', spots.map(([x, z]) => ({ x, y: CURB_HEIGHT, z, sx: 1.6, sz: 1.6 })));
-}
-
 function buildCar(group) {
   const car = new THREE.Group();
   const paint = new THREE.MeshStandardMaterial({ color: 0x8c4a44, roughness: 0.4, metalness: 0.25 });
@@ -589,7 +517,6 @@ export function buildPlaceholders(scene) {
   group.name = 'placeholders';
   buildGround(group);
   buildBackground(group);  // the deco row itself is built by hotels.js
-  buildPalms(group);
   buildCar(group);
   buildTower(group);
   scene.add(group);

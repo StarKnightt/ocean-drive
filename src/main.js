@@ -3,6 +3,7 @@ import { createSky } from './sky.js';
 import { createPost } from './renderer/post.js';
 import { buildPlaceholders } from './world/placeholders.js';
 import { buildHotels } from './world/hotels.js';
+import { buildPalms } from './world/palms.js';
 import { createOcean } from './world/ocean.js';
 import { FlyCam } from './player/flycam.js';
 import { EYE_HEIGHT, CURB_HEIGHT, groundHeight } from './world/layout.js';
@@ -31,6 +32,7 @@ const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerH
 const sky = createSky(renderer, scene);
 buildPlaceholders(scene);
 buildHotels(scene);
+const palms = buildPalms(scene);
 const ocean = createOcean(scene);
 const post = createPost(renderer, scene, camera,
   params.has('bloom') ? { bloomStrength: parseFloat(params.get('bloom')) } : undefined);
@@ -91,6 +93,7 @@ function frame(t) {
   if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
   sky.update(camera);
   ocean.update(elapsed);
+  palms.update(elapsed);
 
   renderer.info.reset();
   if (params.has('nopost')) renderer.render(scene, camera);

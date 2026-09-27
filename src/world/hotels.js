@@ -1986,39 +1986,45 @@ function umbrellaGeometry() {
   return m;
 }
 // Small potted palm: short trunk, a dozen arching fronds (unit height ~1.3 m).
+// Potted areca palm: a clump of thin cane stems splaying out of the pot, each ending in
+// an arching feathery frond of many fine leaflets (unit height ~1.5 m).
 function pottedPalmGeometry() {
-  const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.035, 0.05, 0.75, 6).translate(0, 0.37, 0);
-  parts.push(trunk.toNonIndexed());
   const rnd = mulberry32(12);
-  // pinnate fronds: an arching rib with ~18 pairs of narrow drooping leaflets each
-  for (let f = 0; f < 14; f++) {
-    const len = 0.6 + rnd() * 0.35, nL = 18;
-    const P = [];
-    const rib = (t) => { const L = t * len; return [0, 0.55 * L - 0.9 * L * L, L]; };
+  const P = [];
+  const tri = (a, b, c) => P.push(...a, ...b, ...c);
+  const quad = (a, b, c, d) => { tri(a, b, c); tri(a, c, d); };
+  for (let f = 0; f < 11; f++) {
+    const az = (f / 11) * Math.PI * 2 + rnd() * 0.4, spread = 0.12 + rnd() * 0.3;
+    const ca = Math.cos(az), sa = Math.sin(az);
+    const h = 0.55 + rnd() * 0.5;
+    // cane: thin 3-sided stem, leaning out
+    const s0 = [0, 0, 0], s1 = [ca * spread * h, h, sa * spread * h];
+    for (let k = 0; k < 3; k++) {
+      const a0 = (k / 3) * Math.PI * 2, a1 = ((k + 1) / 3) * Math.PI * 2, r = 0.012;
+      const o0 = [Math.cos(a0) * r, 0, Math.sin(a0) * r], o1 = [Math.cos(a1) * r, 0, Math.sin(a1) * r];
+      quad([s0[0] + o0[0], 0, s0[2] + o0[2]], [s0[0] + o1[0], 0, s0[2] + o1[2]], [s1[0] + o1[0], s1[1], s1[2] + o1[2]], [s1[0] + o0[0], s1[1], s1[2] + o0[2]]);
+    }
+    // frond: rachis continues up and out, arching over; 24 pairs of fine leaflets
+    const len = 0.7 + rnd() * 0.35, nL = 24;
+    const rib = (t) => {
+      const L = t * len;
+      return [s1[0] + ca * L * (0.35 + spread), s1[1] + 0.6 * L - 1.0 * L * L, s1[2] + sa * L * (0.35 + spread)];
+    };
+    const side = [-sa, 0, ca];
     for (let k = 1; k <= nL; k++) {
-      const t = k / (nL + 1), c = rib(t), ll = 0.2 * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.08)) * (1 - 0.35 * t) + 0.03;
-      const t2 = rib(Math.min(1, t + 0.06));
-      for (const s of [-1, 1]) {
-        const tip = [c[0] + s * ll, c[1] - ll * (0.35 + 0.4 * t), c[2] + ll * 0.45];
-        const base2 = [t2[0], t2[1], t2[2]];
-        const mid = [c[0] + s * ll * 0.5 + 0.0, c[1] - ll * 0.12, c[2] + ll * 0.3];
-        P.push(...c, ...mid, ...base2, ...mid, ...tip, ...base2);
+      const t = k / (nL + 1), c = rib(t), c2 = rib(Math.min(1, t + 0.02));
+      const ll = 0.24 * Math.sin(Math.PI * Math.min(1, t * 1.05 + 0.1)) * (1 - 0.3 * t) + 0.04;
+      for (const sg of [-1, 1]) {
+        const tip = [c[0] + side[0] * sg * ll * 0.8 + ca * ll * 0.35, c[1] - ll * (0.45 + 0.3 * t), c[2] + side[2] * sg * ll * 0.8 + sa * ll * 0.35];
+        tri(c, c2, tip);
       }
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((P.length / 3) * 2).fill(0), 2));
-    g.computeVertexNormals();
-    const a = (f / 14) * Math.PI * 2 + rnd() * 0.3, tilt = (rnd() - 0.3) * 0.5;
-    g.rotateX(-tilt);
-    g.rotateY(a);
-    g.translate(0, 0.72 + rnd() * 0.05, 0);
-    parts.push(g);
   }
-  const m = mergeGeometries(parts);
-  m.computeVertexNormals();
-  return m;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((P.length / 3) * 2).fill(0), 2));
+  g.computeVertexNormals();
+  return g;
 }
 function shrubGeometry() {
   // smooth clipped shrub: a few soft lobes, fine leafy crinkle, smooth-shaded
@@ -2372,14 +2378,15 @@ export function buildHotels(scene) {
       place(new THREE.InstancedMesh(pot, new THREE.MeshStandardMaterial({ roughness: 0.7 }), potted.length),
         potted.map((p) => ({ x: p.x, y: p.y, z: p.z, color: p.potCol })));
     }
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0x5f7f34, roughness: 0.75, side: THREE.DoubleSide });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide });
     leafMat.onBeforeCompile = (shader) => {
       shader.fragmentShader = shader.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
-        reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.06;`);
+        reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.12;
+        reflectedLight.indirectDiffuse *= 1.3;`);
     };
-    leafMat.customProgramCacheKey = () => 'hotel-potpalm-v1';
+    leafMat.customProgramCacheKey = () => 'hotel-potpalm-v2';
     place(new THREE.InstancedMesh(pottedPalmGeometry(), leafMat, ctx.palms.length),
-      ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x6a8a3a, 0x5a7a30, 0x74924a][Math.floor(rp() * 3)] })),
+      ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x86ad4c, 0x9cbc58, 0x7aa244][Math.floor(rp() * 3)] })),
       (p) => new THREE.Vector3(p.s, p.s, p.s));
   }
   if (ctx.bulbs.length) {
