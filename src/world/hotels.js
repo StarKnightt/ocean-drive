@@ -5,7 +5,7 @@
 // porches, cafe patios and invented neon-letter signs. Static geometry is merged per
 // material and per street chunk; windows, reveals and furniture are instanced.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { HOTEL, BLOCK, CURB_HEIGHT, SIDEWALK_W } from './layout.js';
 import { mulberry32, noiseColorTexture, noiseNormalTexture } from '../textures/noise.js';
 
@@ -256,23 +256,23 @@ const NAMES = [
 // ---------------------------------------------------------------------------
 // Sign atlas: painted metal letters with thin neon tubes (faint at sunrise).
 class SignAtlas {
-  constructor(W = 4096, H = 2048) {
+  constructor(W = 4096, H = 4096) {
     this.W = W; this.H = H;
     this.cv = document.createElement('canvas'); this.cv.width = W; this.cv.height = H;
     this.ev = document.createElement('canvas'); this.ev.width = W; this.ev.height = H;
     this.ctx = this.cv.getContext('2d'); this.ectx = this.ev.getContext('2d');
     this.ectx.fillStyle = '#000'; this.ectx.fillRect(0, 0, W, H);
     // horizontal signs pack in shelves on the left, vertical columns on the right
-    this.VX = W - 1100;
+    this.VX = W - 1500;
     this.hp = { x: 4, y: 4, rowH: 0, x0: 4, x1: this.VX - 4 };
     this.vp = { x: this.VX, y: 4, rowH: 0, x0: this.VX, x1: W - 4 };
   }
   alloc(w, h, vertical = false) {
     const s = vertical ? this.vp : this.hp;
-    if (s.x + w > s.x1) { s.x = s.x0; s.y += s.rowH + 6; s.rowH = 0; }
+    if (s.x + w > s.x1) { s.x = s.x0; s.y += s.rowH + 24; s.rowH = 0; }
     if (s.y + h > this.H - 4) return null;
     const r = { x: s.x, y: s.y, w, h };
-    s.x += w + 6; s.rowH = Math.max(s.rowH, h);
+    s.x += w + 24; s.rowH = Math.max(s.rowH, h);
     return r;
   }
   uv(r) { return [r.x / this.W, 1 - (r.y + r.h) / this.H, (r.x + r.w) / this.W, 1 - r.y / this.H]; }
@@ -287,28 +287,31 @@ class SignAtlas {
     ctx.font = ectx.font = this.font(px, st.font);
     ctx.textAlign = ectx.textAlign = 'center';
     ctx.textBaseline = ectx.textBaseline = 'middle';
-    // return edge of the channel letter (reads as depth), then the painted face
-    ctx.fillStyle = st.edge;
-    ctx.fillText(ch, x + px * 0.035, y + px * 0.045);
-    ctx.fillStyle = st.fill;
+    ctx.lineJoin = 'round';
+    // return edge of the channel letter (reads as depth), then the painted face,
+    // thickened so strokes survive mip filtering at 80 m
+    ctx.fillStyle = ctx.strokeStyle = st.edge;
+    ctx.lineWidth = px * 0.09;
+    ctx.fillText(ch, x + px * 0.04, y + px * 0.05);
+    ctx.strokeText(ch, x + px * 0.04, y + px * 0.05);
+    ctx.fillStyle = ctx.strokeStyle = st.fill;
+    ctx.lineWidth = px * 0.07;
     ctx.fillText(ch, x, y);
-    // neon tube: a thin light line following the letter
-    ctx.lineWidth = Math.max(2, px * 0.028);
-    ctx.strokeStyle = st.tube;
-    ctx.globalAlpha = 0.85;
-    ctx.save();
-    ctx.translate(x, y); ctx.scale(0.86, 0.86);
-    ctx.strokeText(ch, 0, 0);
-    ctx.restore();
-    ctx.globalAlpha = 1;
-    ectx.lineWidth = Math.max(2, px * 0.03);
+    ctx.strokeText(ch, x, y);
+    // neon tube (unlit at sunrise): only a faint emissive trace
+    ectx.lineWidth = Math.max(2, px * 0.02);
     ectx.strokeStyle = st.tube;
     ectx.save();
     ectx.translate(x, y); ectx.scale(0.86, 0.86);
     ectx.strokeText(ch, 0, 0);
     ectx.restore();
   }
-  horizontal(text, st, px = 112) {
+  clip(r, fn) {
+    for (const c of [this.ctx, this.ectx]) { c.save(); c.beginPath(); c.rect(r.x, r.y, r.w, r.h); c.clip(); }
+    fn();
+    this.ctx.restore(); this.ectx.restore();
+  }
+  horizontal(text, st, px = 150) {
     const key = `${text}|${st.fill}|${st.font}|${st.tube}`;
     this.cache ??= new Map();
     if (this.cache.has(key)) return this.cache.get(key);
@@ -321,21 +324,25 @@ class SignAtlas {
     const sp = px * (st.font === 'script' ? 0.02 : 0.16);
     const ws = [...text].map((ch) => this.ctx.measureText(ch).width);
     const total = ws.reduce((a, b) => a + b, 0) + sp * (ws.length - 1);
-    const r = this.alloc(Math.ceil(total + px * 0.3), Math.ceil(px * 1.3));
+    const r = this.alloc(Math.ceil(total + px * 0.4), Math.ceil(px * 1.45));
     if (!r) return null;
-    let x = r.x + px * 0.15;
-    [...text].forEach((ch, i) => {
+    let x = r.x + px * 0.2;
+    this.clip(r, () => [...text].forEach((ch, i) => {
       if (ch !== ' ') this.letter(this.ctx, this.ectx, ch, x + ws[i] / 2, r.y + r.h / 2, px, st);
       x += ws[i] + sp;
-    });
+    }));
     return { uv: this.uv(r), aspect: r.w / r.h };
   }
-  vertical(text, st, px = 92) {
+  vertical(text, st0, px = 130) {
+    // upright letters stacked top to bottom (never rotated text); script does not stack
+    const st = st0.font === 'script' ? { ...st0, font: 'geo' } : st0;
     const chars = [...text.replace(/ /g, '')];
-    const cell = px * 1.08;
-    const r = this.alloc(Math.ceil(px * 1.2), Math.ceil(cell * chars.length + px * 0.2), true);
+    const cell = px * 1.12;
+    this.ctx.font = this.font(px, st.font);
+    const wMax = Math.max(...chars.map((ch) => this.ctx.measureText(ch).width));
+    const r = this.alloc(Math.ceil(Math.max(px * 1.25, wMax + px * 0.3)), Math.ceil(cell * chars.length + px * 0.25), true);
     if (!r) return null;
-    chars.forEach((ch, i) => this.letter(this.ctx, this.ectx, ch, r.x + r.w / 2, r.y + px * 0.1 + cell * (i + 0.5), px, st));
+    this.clip(r, () => chars.forEach((ch, i) => this.letter(this.ctx, this.ectx, ch, r.x + r.w / 2, r.y + px * 0.12 + cell * (i + 0.5), px, st)));
     return { uv: this.uv(r), aspect: r.w / r.h, n: chars.length };
   }
   textures() {
@@ -350,6 +357,7 @@ class SignAtlas {
 
 // Plane of letters standing just off a wall (normal N), centred at c.
 function signQuad(b, c, N, w, h, uv) {
+  c = add(c, scl(N, 0.06));   // channel letters stand on stand-offs, clear of the wall
   const R = norm(cross(UP, N));
   const hw = scl(R, w / 2), hh = [0, h / 2, 0];
   const p = (sx, sy) => add(add(c, scl(hw, sx)), scl(hh, sy));
@@ -362,7 +370,7 @@ function signQuad(b, c, N, w, h, uv) {
 function pick(rnd, arr) { return arr[Math.floor(rnd() * arr.length) % arr.length]; }
 
 function makeSpec(rnd, z0, z1, o = {}) {
-  const floors = o.floors ?? pick(rnd, [2, 3, 3, 3, 4, 4, 5]);
+  const floors = o.floors ?? pick(rnd, [2, 2, 3, 3, 4, 4, 5, 6, 7]);
   const gH = 3.9 + rnd() * 0.5;
   const fh = 3.0 + rnd() * 0.3;
   const H = G + gH + (floors - 1) * fh;
@@ -389,7 +397,7 @@ function makeSpec(rnd, z0, z1, o = {}) {
     canopy: o.canopy ?? pick(rnd, ['full', 'entrance', 'entrance', 'awning', 'none']),
     porch: o.porch ?? rnd() < 0.8,
     patio: o.patio ?? pick(rnd, ['umbrella', 'tent', 'awning', 'canopy', 'umbrella', 'porch']),
-    umbrellaCol: o.umbrellaCol ?? pick(rnd, UMBRELLA_COLS), canopyCol: o.canopyCol ?? pick(rnd, [0x2f6e4a, 0x2a6f95, 0x3d7d4e, 0x1f5f7f]),
+    umbrellaCol: o.umbrellaCol ?? pick(rnd, UMBRELLA_COLS), canopyCol: o.canopyCol ?? pick(rnd, [0x3f9a5e, 0x3d9ad6, 0xd9668c, 0x2f8f7f]), canopyAlt: o.canopyAlt,
     rail: o.rail ?? pick(rnd, ['wall', 'pipe', 'wall', 'pipe']),
     portholes: o.portholes ?? rnd() < 0.45, glassBlock: rnd() < 0.5, medallions: o.medallions ?? rnd() < 0.45,
     fountain: o.fountain ?? rnd() < 0.55,          // "frozen fountain" relief over the entrance
@@ -454,7 +462,7 @@ function grime(b, c, N, w, h, strength, rnd) {
   const hw = scl(R, w / 2);
   const u0 = rnd() * 0.75, u1 = u0 + 0.12 + rnd() * 0.13;
   const vTop = rnd() < 0.5 ? 1.0 : 0.5;          // two streak families in the atlas
-  b.c = [strength, 0, 0];
+  b.c = [strength, rnd(), rnd()];                 // g: dirt kind (soot / rust / algae), b: warmth
   const p = (s, y) => add(add(o, scl(hw, s)), [0, y, 0]);
   b.quadUV(p(-1, -h), p(1, -h), p(1, 0), p(-1, 0), N, [u0, vTop - 0.5], [u1, vTop - 0.5], [u1, vTop], [u0, vTop]);
 }
@@ -559,10 +567,12 @@ function buildHotel(S, B, ctx, atlas) {
   const upperWin = (wall, u, yc, w, f, o = {}) => {
     windowRecord(ctx, wall, u, yc, w, winH, { interior: interiorFor(rnd, 'win'), depth: 0.34, ...o });
     if (detail && S.ac && rnd() < 0.2 && w < 1.8) acUnits.push({ wall, u, y: yc - winH / 2 - 0.08 });
-    else if (detail && rnd() < 0.22) {
+    else if (detail && rnd() < 0.16) {
+      // run off one sill corner or the middle, varied width, length and strength
       const Rv = cross(UP, wall.N);
-      const c = [wall.o[0] + Rv[0] * u, yc - winH / 2 - 0.08, wall.o[2] + Rv[2] * u];
-      grime(B.grime, c, wall.N, w * (0.5 + rnd() * 0.5), 0.5 + rnd() * 1.1, 0.25 + rnd() * 0.3, rnd);
+      const uu = u + (rnd() - 0.5) * w * 0.7;
+      const c = [wall.o[0] + Rv[0] * uu, yc - winH / 2 - 0.08, wall.o[2] + Rv[2] * uu];
+      grime(B.grime, c, wall.N, w * (0.2 + rnd() * 0.6), 0.3 + rnd() * rnd() * 2.2, 0.12 + rnd() * 0.35, rnd);
     }
   };
   const eyebrowYs = [];
@@ -733,7 +743,11 @@ function buildHotel(S, B, ctx, atlas) {
   ribbon(paint, full, G - 0.2, G + 0.5, 0.05);
   paint.color(trim);
   ribbon(paint, full, top - 0.12, top + 0.05, 0.08);
-  if (S.style !== 'plain' || rnd() < 0.5) {
+  if (['pylon', 'twin', 'tower', 'ziggurat', 'fin'].includes(S.style)) {
+    // triple speed lines across the parapet band
+    paint.color(isWhite(trim) ? accent : trim);
+    for (let k = 0; k < 3; k++) ribbon(paint, full, top - 0.85 + k * 0.2, top - 0.77 + k * 0.2, 0.03);
+  } else if (S.style !== 'plain' || rnd() < 0.5) {
     paint.color(isWhite(trim) ? accent : trim);
     ribbon(paint, full, top - 0.55, top - 0.4, 0.02);
   }
@@ -833,12 +847,20 @@ function buildHotel(S, B, ctx, atlas) {
     const letterTop = Math.min(yt - 0.7, top + 0.2);
     if (yt - letterTop > 1.8) windowRecord(ctx, pw, -zc, (yt + letterTop) / 2 + 0.1, Math.min(0.62, cw * 0.4), 0, { round: true, depth: 0.3, interior: [0, rnd(), rnd(), rnd()], collar: isWhite(col) ? accent : COL.white });
     let vs = name ? atlas.vertical(name, signStyle) : null;
-    const lh = vs ? Math.min(1.05, cw * 0.62, (letterTop - (yb + 1.6)) / vs.n) : 0;
+    const lh = vs ? Math.min(1.3, cw * 0.78, (letterTop - (yb + 1.6)) / vs.n) : 0;
     if (lh < 0.4) vs = null;
     const signBottom = vs ? letterTop - lh * vs.n : letterTop;
     if (S.glassBlock && signBottom - yb > 3.5) windowRecord(ctx, pw, -zc, (yb + 0.5 + signBottom - 0.5) / 2, 0.7, signBottom - yb - 1.0, { kind: 'block', depth: 0.1 });
-    else {
-      // a stack of portholes down the pylon below the letters
+    else if (vs) {
+      // speed-line grooves under the letters (portholes there read as more letters)
+      paint.color(isWhite(col) ? accent : COL.white);
+      for (let k = 0; k < 3; k++) {
+        const y = signBottom - 0.45 - k * 0.32;
+        if (y > yb + 0.8) box(paint, fx + pd, fx + pd + 0.05, y - 0.07, y, zc - cw * 0.36, zc + cw * 0.36);
+      }
+      paint.color(col);
+    } else {
+      // a stack of portholes down the pylon
       for (let y = signBottom - 0.75; y > yb + 1.1; y -= 1.35) {
         windowRecord(ctx, pw, -zc, y, Math.min(0.62, cw * 0.4), 0, { round: true, depth: 0.3, interior: [0, rnd(), rnd(), rnd()], collar: isWhite(col) ? accent : COL.white });
       }
@@ -1071,7 +1093,32 @@ function buildHotel(S, B, ctx, atlas) {
     metal.color(0x8a8984);
     const dz = z0 + 2 + rnd() * (W - 4);
     box(metal, fx - 7, fx - 2, H + 1.4, H + 1.9, dz - 0.25, dz + 0.25);
-  } else if (S.roof === 'sign' && name && !signDone) {
+  }
+  if (detail) {
+    // rooftop odds and ends over the parapet: a TV mast, a flagpole, a terrace rail
+    metal.color(0x7a7974);
+    if (rnd() < 0.6) {
+      const ax = fx - 3 - rnd() * 4, az = z0 + 2 + rnd() * (W - 4), ah = 2.5 + rnd() * 2.5;
+      cyl(metal, [ax, H, az], [ax, H + ah, az], 0.025, 5, [1, 0, 0]);
+      for (let k = 0; k < 3; k++) cyl(metal, [ax, H + ah - 0.3 - k * 0.4, az - 0.5 + k * 0.1], [ax, H + ah - 0.3 - k * 0.4, az + 0.5 - k * 0.1], 0.012, 4, [0, 1, 0]);
+    }
+    if (rnd() < 0.45) {
+      const fz = z0 + 1 + rnd() * (W - 2), fh2 = 3.5 + rnd() * 1.5, py0 = raisedTop > top ? raisedTop : top + 0.2;
+      metal.color(0xe8e6e0);
+      cyl(metal, [fx - 0.4, py0, fz], [fx - 0.4, py0 + fh2, fz], 0.03, 6, [1, 0, 0]);
+      cyl(metal, [fx - 0.4, py0 + fh2, fz], [fx - 0.4, py0 + fh2 + 0.08, fz], 0.06, 8, [1, 0, 0], 0, Math.PI * 2, true);
+      B.fabric.color(pick(rnd, [0x2d6f9f, 0xc0343c, 0x2f8f7f, 0xe07a9a]));
+      const fy = py0 + fh2 - 0.05;
+      B.fabric.quadUV([fx - 0.4, fy - 0.7, fz], [fx - 0.35, fy - 0.72, fz + 1.1], [fx - 0.35, fy - 0.02, fz + 1.1], [fx - 0.4, fy, fz], [1, 0, 0], [200, 0.7], [200, 0.7], [200, 0.7], [200, 0.7]);
+    }
+    if (rnd() < 0.5) {
+      const rx = fx - 1.6, ra = z0 + 1 + rnd() * W * 0.3, rb = Math.min(z1 - 1, ra + W * (0.3 + rnd() * 0.3));
+      metal.color(isWhite(trim) ? accent : trim);
+      for (const y of [H + 0.55, H + 1.0]) cyl(metal, [rx, y, ra], [rx, y, rb], 0.022, 5, [0, 1, 0]);
+      for (let z = ra; z <= rb + 1e-3; z += Math.max(0.8, (rb - ra) / Math.ceil((rb - ra) / 1.2))) cyl(metal, [rx, H, z], [rx, H + 1.0, z], 0.022, 5, [1, 0, 0]);
+    }
+  }
+  if (S.roof === 'sign' && name && !signDone) {
     const hs = atlas.horizontal(name, { ...signStyle, fill: pick(rnd, ['#f5f1e8', '#2f6a6a', '#8a3f45']) });
     if (hs) {
       const h = Math.min(1.3, (W * 0.55) / hs.aspect), w = h * hs.aspect;
@@ -1128,8 +1175,12 @@ function buildHotel(S, B, ctx, atlas) {
     if (name) {
       const hs = atlas.horizontal(name, entStyle);
       if (hs) {
-        const h = Math.min(0.62, (cwid + 1.6) / hs.aspect);
-        signQuad(B.signs, [entranceX + cp - 0.12, cy + 0.2 + h / 2, zc], [1, 0, 0], h * hs.aspect, h, hs.uv);
+        const h = Math.min(0.7, (cwid + 1.6) / hs.aspect);
+        // fascia board the channel letters stand on (their shadow lands right behind them)
+        const lw = h * hs.aspect;
+        paint.color(new THREE.Color(entStyle.fill).getHSL({}).l > 0.5 ? accent : COL.white);
+        box(paint, entranceX + cp - 0.3, entranceX + cp - 0.2, cy + 0.16, cy + 0.3 + h, zc - lw / 2 - 0.12, zc + lw / 2 + 0.12);
+        signQuad(B.signs, [entranceX + cp - 0.2, cy + 0.23 + h / 2, zc], [1, 0, 0], lw, h, hs.uv);
         signDone = true; entSign = true;
         canopyTop = cy + 0.25 + h;
       }
@@ -1291,12 +1342,38 @@ function buildPorch(S, B, ctx, rnd, L) {
         tor.dispose();
       }
     } else {
+      // low stucco wall with a capped top, Deco grille panels above between square posts:
+      // grouped vertical bars around a ring, flat top rail
+      const wy = py + 0.42;
       paint.color(wallCol);
-      box(paint, px - 0.2, px, py, py + 0.18, a, b, { '-y': true });
-      metal.color(isWhite(scheme.trim) ? COL.white : scheme.trim);
-      for (const y of [py + 0.55, py + 0.95]) cyl(metal, [px - 0.1, y, a], [px - 0.1, y, b], 0.024, 6, [0, 1, 0]);
-      for (let z = a; z <= b + 1e-3; z += Math.max(0.9, (b - a) / Math.ceil((b - a) / 1.3))) {
-        cyl(metal, [px - 0.1, py + 0.18, z], [px - 0.1, py + 0.95, z], 0.028, 6, [1, 0, 0]);
+      box(paint, px - 0.22, px, py, wy, a, b, { '-y': true });
+      paint.color(COL.white);
+      box(paint, px - 0.26, px + 0.04, wy, wy + 0.06, a, b);
+      const gcol = isWhite(scheme.trim) ? scheme.accent : scheme.trim;
+      const np = Math.max(1, Math.round((b - a) / 1.25)), pw = (b - a) / np;
+      const top = wy + 0.5, gx = px - 0.11;
+      for (let i = 0; i <= np; i++) {
+        const z = a + pw * i;
+        paint.color(wallCol);
+        box(paint, px - 0.24, px + 0.02, wy, top + 0.08, z - 0.1, z + 0.1);
+        paint.color(COL.white);
+        box(paint, px - 0.27, px + 0.05, top + 0.08, top + 0.13, z - 0.13, z + 0.13);
+      }
+      metal.color(gcol);
+      box(metal, gx - 0.025, gx + 0.025, top - 0.03, top, a, b);
+      box(metal, gx - 0.015, gx + 0.015, wy + 0.06, wy + 0.09, a, b);
+      for (let i = 0; i < np; i++) {
+        const zc2 = a + pw * (i + 0.5), yc = (wy + 0.09 + top - 0.03) / 2, rr = 0.13;
+        const tor = new THREE.TorusGeometry(rr, 0.013, 4, 20);
+        pushGeometry(metal, tor, new THREE.Matrix4().makeRotationY(Math.PI / 2).setPosition(gx, yc, zc2));
+        tor.dispose();
+        for (const dz of [-0.07, 0, 0.07]) box(metal, gx - 0.008, gx + 0.008, wy + 0.09, yc - Math.sqrt(Math.max(0, rr * rr - dz * dz)), zc2 + dz - 0.008, zc2 + dz + 0.008);
+        for (const dz of [-0.07, 0, 0.07]) box(metal, gx - 0.008, gx + 0.008, yc + Math.sqrt(Math.max(0, rr * rr - dz * dz)), top - 0.03, zc2 + dz - 0.008, zc2 + dz + 0.008);
+        for (const s of [-1, 1]) for (const k of [0.3, 0.42]) {
+          const z = zc2 + s * pw * k;
+          box(metal, gx - 0.008, gx + 0.008, wy + 0.09, top - 0.03, z - 0.008, z + 0.008);
+        }
+        for (const s of [-1, 1]) box(metal, gx - 0.008, gx + 0.008, yc - 0.008, yc + 0.008, zc2 + s * rr, zc2 + s * pw * 0.42);
       }
     }
     // planters with palms or shrubs at the wall ends
@@ -1373,12 +1450,19 @@ function buildPorch(S, B, ctx, rnd, L) {
     for (const [a, b] of segs) tentRow(ctx, B.fabric, B.wire, px + 0.25, px + 2.95, a, b, S.tentCol ?? 0xf2efe8);
   } else if (S.patio === 'canopy') {
     const yTop = (S.canopy === 'full' ? G + S.gH - 0.4 : G + S.gH - 0.25);
+    // separate sagging bays (never one sheet), the house colour with the odd second colour
+    const alt = S.canopyAlt ?? pick(rnd, [0xe07a9a, 0x4fa36a, 0xf1eee6]);
+    const striped = rnd() < 0.4;
     for (const [a, b] of segs) {
       const d = px + 3.0 - fx;
-      awning(B.fabric, B.wire, fx, (a + b) / 2, b - a, yTop, d, S.canopyCol, rnd() < 0.4, rnd, 1.0);
+      const nb = Math.max(1, Math.round((b - a) / 3.8));
+      const bw = (b - a) / nb;
+      for (let k = 0; k < nb; k++) {
+        const z0 = a + bw * k;
+        awning(B.fabric, B.wire, fx, z0 + bw / 2, bw - 0.28, yTop - (k % 2) * 0.06, d, k % 3 === 2 ? alt : S.canopyCol, striped, rnd, 1.0);
+      }
       metal.color(0xd8d6cf);
-      const n = Math.max(1, Math.round((b - a) / 3));
-      for (let i = 0; i <= n; i++) cyl(metal, [fx + d, G, a + 0.05 + (b - a - 0.1) * (i / n)], [fx + d, yTop - 1.0, a + 0.05 + (b - a - 0.1) * (i / n)], 0.035, 6, [1, 0, 0]);
+      for (let i = 0; i <= nb; i++) cyl(metal, [fx + d, G, a + 0.05 + (b - a - 0.1) * (i / nb)], [fx + d, yTop - 1.0, a + 0.05 + (b - a - 0.1) * (i / nb)], 0.035, 6, [1, 0, 0]);
       festoon(ctx, B.wire, [fx + d - 0.1, yTop - 1.05, a + 0.2], [fx + d - 0.1, yTop - 1.05, b - 0.2], 0.12);
     }
   }
@@ -1520,7 +1604,7 @@ function paintMaterial() {
           float dirt = exp(-hb / (0.3 + 0.45 * odVn(vec2(along * 1.3, 2.0)))) * (0.6 + 0.4 * odVn(vec2(along * 3.0, vOdP.y * 2.0)));
           // broad water stains
           float stain = smoothstep(0.55, 0.85, odVn(vec2(along * 0.35, vOdP.y * 0.6) + 7.0)) * smoothstep(0.4, 0.7, odVn(vec2(along * 1.4, vOdP.y * 2.2)));
-          float k = (1.0 - 0.09 * st * vOdW.z * vert - 0.3 * dirt * vOdW.z * vert - 0.06 * stain * vOdW.z * vert) * (0.975 + 0.04 * pch);
+          float k = (1.0 - 0.09 * st * vOdW.z * vert - 0.42 * dirt * vOdW.z * vert - 0.06 * stain * vOdW.z * vert) * (0.975 + 0.04 * pch);
           // patched / repainted rectangles of a slightly different tint
           vec2 pc = vec2(along / 2.9 + odVh(vec2(floor(vOdP.y / 1.7), 5.0)) * 3.0, vOdP.y / 1.7);
           vec2 pci = floor(pc), pf = fract(pc);
@@ -1549,7 +1633,11 @@ function paintMaterial() {
           // skylight in shade: a cooler, bluish version of the wall colour, not a violet one
           {
             vec3 irr = reflectedLight.indirectDiffuse / max(diffuseColor.rgb, vec3(0.02));
-            irr = mix(irr, vec3(dot(irr, vec3(0.3, 0.59, 0.11))) * vec3(0.9, 0.98, 1.1), 0.55);
+            float irL = dot(irr, vec3(0.3, 0.59, 0.11));
+            // sun-facing walls see the peach solar dome and sunlit sand, not the lilac anti-solar
+            // sky: a weaker, warm fill there keeps the lit fronts saturated amber-peach
+            float sfd = smoothstep(0.1, 0.8, dot(normalize(wn.xz + 1e-5), normalize(OD_SUN.xz))) * vert;
+            irr = mix(mix(irr, irL * vec3(0.9, 0.98, 1.1), 0.55), irL * vec3(1.05, 0.96, 0.86) * 0.6, sfd);
             reflectedLight.indirectDiffuse = irr * diffuseColor.rgb;
           }
           // less sky seen low in the street; contact occlusion at the foot
@@ -1564,7 +1652,7 @@ function paintMaterial() {
           // walls turned from the sun see the dim blue anti-solar sky and shaded ground only
           sunFace = dot(normalize(wn.xz + 1e-5), normalize(OD_SUN.xz));
           // (plus light off the sunlit fronts and pavement across the street)
-          reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.12, 1.16, 1.24), smoothstep(0.15, -0.5, sunFace) * vert);
+          reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(1.55, 1.6, 1.72), smoothstep(0.1, -0.3, sunFace) * vert);
           #endif
           // light bounced off the sunlit sidewalk and street onto the lower facade
           reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.10, 0.075, 0.055) * exp(-hb / 2.5) * vert * (0.3 + 0.7 * smoothstep(-0.3, 0.5, sunFace));
@@ -1613,9 +1701,11 @@ function glassMaterial() {
 
           // glazing kinds: clear (reads nearly black), tinted, and the odd mirror-film pane
           float h0 = odGh(s * 5.31);
-          float F0 = h0 < 0.4 ? 0.04 + 0.03 * h0 : h0 < 0.74 ? 0.075 + 0.2 * (h0 - 0.4) : 0.45 + 1.0 * (h0 - 0.74);
-          if (round) F0 = max(F0, 0.12);
-          if (isG > 0.5) F0 = 0.045 + 0.04 * h0;
+          // (old float glass behind screens and a haze of salt: even "clear" panes mirror a
+          // good share of the bright sky, reading mid grey-blue rather than black)
+          float F0 = h0 < 0.4 ? 0.13 + 0.08 * h0 : h0 < 0.74 ? 0.2 + 0.3 * (h0 - 0.4) : 0.5 + 0.9 * (h0 - 0.74);
+          if (round) F0 = max(F0, 0.2);
+          if (isG > 0.5) F0 = 0.14 + 0.1 * h0;
           vec3 tint = h0 < 0.4 ? vec3(1.0) : h0 < 0.74 ? mix(vec3(0.82, 0.93, 0.9), vec3(0.8, 0.84, 0.92), odGh(s * 2.9)) : mix(vec3(0.86, 0.93, 1.0), vec3(1.0, 0.9, 0.72), odGh(s * 17.0));
           float F = F0 + (1.0 - F0) * pow(1.0 - cosT, 5.0);
 
@@ -1639,13 +1729,15 @@ function glassMaterial() {
           float hedge = step(R.y, lowEl) * step(-0.02, R.y);
           vec3 ground = mix(vec3(0.16, 0.13, 0.10), vec3(0.075, 0.072, 0.07), smoothstep(-0.03, -0.25, R.y));
           vec3 refl = mix(sky, ground, smoothstep(0.012, -0.012, R.y));
-          refl = mix(refl, vec3(0.05, 0.055, 0.04), hedge * 0.9);
-          refl = mix(refl, vec3(0.035, 0.035, 0.028), palm * 0.92 * step(-0.02, R.y));
+          refl = mix(refl, vec3(0.07, 0.08, 0.05), hedge * 0.9);
+          refl = mix(refl, vec3(0.07, 0.065, 0.05), palm * 0.9 * step(-0.02, R.y));
+          // sun glints: a few panes tilted just right catch the low sun
+          refl += OD_SUNCOL * 6.0 * pow(max(dot(R, OD_SUN), 0.0), 900.0) * step(0.8, odGh(s * 31.7));
           refl *= tint;
 
           // what is behind the glass: rooms are dark next to a sunlit wall
           float sunIn = max(dot(nW, OD_SUN), 0.0);
-          vec3 room = vec3(0.016, 0.015, 0.014) * (0.6 + 0.8 * uv.y) * (0.6 + 0.8 * odGh(vWin.z * 13.7))
+          vec3 room = vec3(0.034, 0.031, 0.028) * (0.6 + 0.8 * uv.y) * (0.6 + 0.8 * odGh(vWin.z * 13.7))
                     + directLight.color * sunIn * 0.004 * smoothstep(0.2, 0.6, uv.y);
           vec3 lightIn = directLight.color * sunIn * 0.08 + vec3(0.03, 0.03, 0.035);
           float pk = fract(vWin.z * 3.0);
@@ -1676,12 +1768,16 @@ function glassMaterial() {
             inner = mix(room, cur * lightIn * (0.8 + 0.2 * sin(uv.x * 90.0) * (1.0 - smoothstep(0.2, 0.5, fwidth(uv.x * 14.0)))), vWin.y * 0.7);
           } else if (type > 5.5 && type < 6.5) {   // lobby / shop: deep and dim, a few lamps far inside
             float lamp = step(0.93, odGh(floor(uv.x * 6.0) + s * 7.0)) * smoothstep(0.55, 0.75, uv.y) * (1.0 - smoothstep(0.8, 0.9, uv.y));
-            inner = vec3(0.014, 0.012, 0.010) * (0.6 + 0.6 * uv.y) + vec3(0.09, 0.06, 0.03) * lamp;
+            // faint lobby: pale floor near the glass, a counter band, lamps deeper in
+            float floorB = smoothstep(0.3, 0.0, uv.y);
+            float counter = step(0.3, uv.y) * step(uv.y, 0.42) * step(0.3, fract(uv.x * 1.3 + s));
+            inner = vec3(0.04, 0.036, 0.03) * (0.6 + 0.6 * uv.y) + vec3(0.07, 0.06, 0.05) * floorB
+                  + vec3(0.05, 0.035, 0.025) * counter + vec3(0.12, 0.08, 0.04) * lamp;
           } else if (type > 6.5) {                  // casement left open
             open = 1.0;
             inner = room * 0.6;
           }
-          if (isG > 0.5) inner *= 0.6;
+          if (isG > 0.5) inner *= 0.9;
           F *= 1.0 - open;
           outgoingLight = inner * tint * (1.0 - F) + refl * F;
         }
@@ -1729,11 +1825,11 @@ function fabricMaterial() {
         {
           // canvas glows with the sun shining through it
           vec3 wn = inverseTransformDirection(normal, viewMatrix);
-          reflectedLight.indirectDiffuse += diffuseColor.rgb * OD_SUNCOL * OD_SUN_I * 0.022 * max(-wn.y, 0.0);
+          reflectedLight.indirectDiffuse += diffuseColor.rgb * OD_SUNCOL * OD_SUN_I * 0.05 * max(-wn.y, 0.0);
         }
         #endif`);
   };
-  m.customProgramCacheKey = () => 'hotel-fabric-v2';
+  m.customProgramCacheKey = () => 'hotel-fabric-v3';
   return m;
 }
 
@@ -1776,9 +1872,15 @@ function grimeMaterial() {
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   m.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', 'diffuseColor.a *= min(vColor.r * 1.4, 0.9);');
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
+      diffuseColor.a *= min(vColor.r * 1.4, 0.9);
+      // not one grey decal: soot-grey, rust-brown under metal, green-black algae runs
+      vec3 odK = vColor.g < 0.5 ? mix(vec3(0.24, 0.22, 0.2), vec3(0.34, 0.26, 0.18), vColor.b)
+               : vColor.g < 0.8 ? vec3(0.46, 0.27, 0.14) : vec3(0.18, 0.22, 0.14);
+      diffuseColor.rgb = odK;
+      diffuseColor.a *= vColor.g < 0.5 ? 1.0 : 0.75;`);
   };
-  m.customProgramCacheKey = () => 'hotel-grime-v1';
+  m.customProgramCacheKey = () => 'hotel-grime-v2';
   return m;
 }
 
@@ -1839,11 +1941,22 @@ function glassBlockMaterial() {
 function chairGeometry() {
   const parts = [];
   const bx = (w, h, d, x, y, z) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); parts.push(g); };
-  bx(0.42, 0.035, 0.42, 0, 0.45, 0);
-  bx(0.42, 0.36, 0.03, 0, 0.66, -0.2);
-  bx(0.42, 0.04, 0.03, 0, 0.86, -0.2);
-  for (const [x, z] of [[-0.19, -0.19], [0.19, -0.19], [-0.19, 0.19], [0.19, 0.19]]) bx(0.025, 0.45, 0.025, x, 0.225, z);
-  return mergeGeometries(parts);
+  // bistro chair: slatted seat in a frame, two back uprights with three curved-back
+  // slats, splayed legs
+  bx(0.42, 0.025, 0.03, 0, 0.45, 0.195); bx(0.42, 0.025, 0.03, 0, 0.45, -0.195);
+  bx(0.03, 0.025, 0.42, 0.195, 0.45, 0); bx(0.03, 0.025, 0.42, -0.195, 0.45, 0);
+  for (let i = 0; i < 5; i++) bx(0.36, 0.018, 0.06, 0, 0.455, -0.15 + i * 0.075);
+  for (const x of [-0.19, 0.19]) bx(0.028, 0.46, 0.028, x, 0.69, -0.21);
+  for (let i = 0; i < 3; i++) {
+    const y = 0.64 + i * 0.1;
+    for (let k = 0; k < 4; k++) bx(0.1, 0.05, 0.02, -0.15 + k * 0.1, y, -0.215 - 0.018 * Math.cos((k - 1.5) * 0.7));
+  }
+  for (const [x, z] of [[-0.19, -0.19], [0.19, -0.19], [-0.19, 0.19], [0.19, 0.19]]) {
+    const g = new THREE.CylinderGeometry(0.012, 0.014, 0.46, 5);
+    g.rotateZ(-x * 0.25).rotateX(z * 0.25).translate(x * 1.06, 0.225, z * 1.06);
+    parts.push(g.toNonIndexed());
+  }
+  return mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
 }
 function tableGeometry() {
   const top = new THREE.BoxGeometry(0.7, 0.03, 0.7); top.translate(0, 0.745, 0);
@@ -1878,37 +1991,46 @@ function pottedPalmGeometry() {
   const trunk = new THREE.CylinderGeometry(0.035, 0.05, 0.75, 6).translate(0, 0.37, 0);
   parts.push(trunk.toNonIndexed());
   const rnd = mulberry32(12);
-  for (let f = 0; f < 12; f++) {
-    const len = 0.6 + rnd() * 0.35, seg = 5;
-    const g = new THREE.PlaneGeometry(1, 1, 4, seg);
-    const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const t = pos.getY(i) + 0.5, u = pos.getX(i);
-      const w = 0.2 * Math.sin(Math.PI * Math.min(1, t * 1.15 + 0.05)) * (1 - 0.5 * t);
-      const L = t * len;
-      // leaflet fold: the cloth dips along the rib, edges ragged
-      pos.setXYZ(i, u * w * (1 + 0.25 * Math.sin(u * 40 + t * 17)), 0.55 * L - 0.9 * L * L - Math.abs(u) * w * 0.4, L);
+  // pinnate fronds: an arching rib with ~18 pairs of narrow drooping leaflets each
+  for (let f = 0; f < 14; f++) {
+    const len = 0.6 + rnd() * 0.35, nL = 18;
+    const P = [];
+    const rib = (t) => { const L = t * len; return [0, 0.55 * L - 0.9 * L * L, L]; };
+    for (let k = 1; k <= nL; k++) {
+      const t = k / (nL + 1), c = rib(t), ll = 0.2 * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.08)) * (1 - 0.35 * t) + 0.03;
+      const t2 = rib(Math.min(1, t + 0.06));
+      for (const s of [-1, 1]) {
+        const tip = [c[0] + s * ll, c[1] - ll * (0.35 + 0.4 * t), c[2] + ll * 0.45];
+        const base2 = [t2[0], t2[1], t2[2]];
+        const mid = [c[0] + s * ll * 0.5 + 0.0, c[1] - ll * 0.12, c[2] + ll * 0.3];
+        P.push(...c, ...mid, ...base2, ...mid, ...tip, ...base2);
+      }
     }
-    const a = (f / 12) * Math.PI * 2 + rnd() * 0.3, tilt = (rnd() - 0.3) * 0.5;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((P.length / 3) * 2).fill(0), 2));
+    g.computeVertexNormals();
+    const a = (f / 14) * Math.PI * 2 + rnd() * 0.3, tilt = (rnd() - 0.3) * 0.5;
     g.rotateX(-tilt);
     g.rotateY(a);
     g.translate(0, 0.72 + rnd() * 0.05, 0);
-    parts.push(g.toNonIndexed());
+    parts.push(g);
   }
   const m = mergeGeometries(parts);
   m.computeVertexNormals();
   return m;
 }
 function shrubGeometry() {
-  const g = new THREE.IcosahedronGeometry(0.5, 2);
+  // smooth clipped shrub: a few soft lobes, fine leafy crinkle, smooth-shaded
+  const g = mergeVertices(new THREE.IcosahedronGeometry(0.5, 3).deleteAttribute('normal').deleteAttribute('uv'));
   const p = g.attributes.position;
-  const rnd = mulberry32(3);
-  const cache = new Map();
+  const v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
-    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    if (!cache.has(key)) cache.set(key, 0.8 + rnd() * 0.35);
-    const k = cache.get(key);
-    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 0.9, p.getZ(i) * k);
+    v.fromBufferAttribute(p, i).normalize();
+    const lobe = 0.9 + 0.08 * Math.sin(v.x * 5.1 + 1.3) * Math.sin(v.z * 4.3 + 0.7) + 0.06 * Math.sin(v.y * 6.0 + v.x * 3.0);
+    const crinkle = 0.03 * Math.sin(v.x * 17 + v.y * 11) * Math.sin(v.z * 15 - v.y * 9);
+    const r = 0.5 * (lobe + crinkle);
+    p.setXYZ(i, v.x * r, v.y * r * (v.y < -0.3 ? 0.75 : 0.92), v.z * r);
   }
   g.computeVertexNormals();
   return g;
@@ -1922,13 +2044,13 @@ function streetPlan() {
   const plan = [
     // z0, z1, overrides
     // about half white / cream with strong pastel trim and bands, half pale pastel with white bands
-    [-70, -52.5, { floors: 3, style: 'band', r0: 3.2, r1: 0, scheme: { body: COL.warmWhite, trim: COL.teal, accent: COL.rose }, band: { col: 0xb3dcc6, mode: 1 }, winLayout: 'triple', name: 'THE CORALINE', canopy: 'entrance', patio: 'awning', awningColor: 0x2e7fa8, porch: true, portholes: true, medallions: true, roof: 'ac', exposed: [true, false] }],
+    [-70, -52.5, { floors: 2, style: 'band', r0: 3.2, r1: 0, scheme: { body: COL.warmWhite, trim: COL.teal, accent: COL.rose }, band: { col: 0xb3dcc6, mode: 1 }, winLayout: 'triple', name: 'THE CORALINE', canopy: 'entrance', patio: 'awning', awningColor: 0x2e7fa8, porch: true, portholes: true, medallions: true, roof: 'ac', exposed: [true, false] }],
     [-50.8, -35.6, { floors: 4, style: 'fin', r0: 0, r1: 0, scheme: { body: COL.mint, trim: COL.white, accent: COL.teal }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'window', name: 'SEAGROVE', canopy: 'full', patio: 'umbrella', umbrellaCol: 0xd9477a, portholes: true, roof: 'tank' }],
     [-33.8, -15.2, { floors: 5, style: 'ziggurat', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.aqua, accent: COL.pinkDeep }, band: { col: 0xb4dedb, mode: 1 }, winLayout: 'ribbon', eyebrow: 'full', name: 'BELLA MAR', canopy: 'full', patio: 'tent', setback: 0.8, eyeCol: 'trim', fountain: true, roof: 'tank' }],
     [-13.6, 2.2, { floors: 3, style: 'pylon', r0: 0, r1: 0, scheme: { body: COL.pink, trim: COL.white, accent: COL.coral }, band: { col: COL.white, mode: 2 }, winLayout: 'punched', eyebrow: 'window', name: 'PALMIRA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0x3f8a5a, porch: true, setback: 0, portholes: true, fountain: true, medallions: true, parapetStep: true, finial: true }],
-    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'AZURINE', canopy: 'entrance', patio: 'canopy', canopyCol: 0x2f6e4a, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
+    [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'AZURINE', canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
     [26.4, 40.2, { floors: 3, style: 'corner', r0: 0, r1: 3.2, scheme: { body: COL.lavender, trim: COL.white, accent: COL.lilac }, band: { col: COL.white, mode: 2 }, winLayout: 'ribbon', eyebrow: 'full', name: 'ORIANA', canopy: 'full', patio: 'porch', noSidewalk: true, portholes: true, parapetStep: true, rail: 'pipe' }],
-    [41.8, 56.0, { floors: 5, style: 'tower', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.sky, accent: COL.coral }, band: { col: 0xb5d0e6, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARINELLA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0xf1efe9, setback: 1.2, roof: 'tank' }],
+    [41.8, 56.0, { floors: 7, style: 'tower', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.sky, accent: COL.coral }, band: { col: 0xb5d0e6, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARINELLA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0xf1efe9, setback: 1.2, roof: 'tank' }],
     [57.6, 70, { floors: 2, style: 'plain', r0: 0, r1: 3.0, scheme: { body: COL.lemon, trim: COL.white, accent: COL.aqua }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'full', name: 'SOLANA', canopy: 'full', patio: 'awning', awningColor: 0x3d7d4e, parapetStep: true, roof: 'sign', fins: true, exposed: [false, true] }],
   ];
   const specs = plan.map(([a, b, o]) => makeSpec(rnd, a, b, { porch: true, ...o, detail: 1 }));
@@ -1975,7 +2097,7 @@ export function buildHotels(scene) {
   for (const S of specs) {
     const zc = (S.z0 + S.z1) / 2;
     const B = chunks.find((c) => zc < c.max);
-    ctx.chairCol = pick(rndC, [0x6b5a45, 0x3b3b3b, 0xe8e6e0, 0x7a8f8c, 0x8a6b4a, 0x2f5f6f, 0xd9d4c8, 0x9a7a52]);
+    ctx.chairCol = pick(rndC, [0xc0343c, 0xe07a9a, 0xefece6, 0x3f8a5a, 0x2d6f9f, 0x6b5a45, 0xd9a13a, 0x2f8f7f, 0xefece6, 0xc0343c]);
     buildHotel(S, B, ctx, atlas);
   }
 
@@ -2160,9 +2282,21 @@ export function buildHotels(scene) {
   const blockMat = glassBlockMaterial();
   const { map: signMap, em: signEm } = atlas.textures();
   const signMat = new THREE.MeshStandardMaterial({
-    map: signMap, alphaTest: 0.5, roughness: 0.5, metalness: 0.25,
-    emissive: 0xffffff, emissiveMap: signEm, emissiveIntensity: 0.35, side: THREE.DoubleSide,
+    map: signMap, alphaTest: 0.5, alphaToCoverage: true, roughness: 0.5, metalness: 0.25,
+    emissive: 0xffffff, emissiveMap: signEm, emissiveIntensity: 0.08, side: THREE.DoubleSide,
   });
+  // soft contact shadow of the channel letters on the wall just behind them
+  const signShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, map: signMap, transparent: true, opacity: 0.4, depthWrite: false });
+  signShadowMat.onBeforeCompile = (s) => {
+    s.vertexShader = s.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\ntransformed += -normal * 0.05 + vec3(0.0, -0.03, 0.0);');
+    s.fragmentShader = s.fragmentShader.replace('#include <map_fragment>', `
+      vec2 odTs = 1.5 / vec2(textureSize(map, 0));
+      float odA = 0.0;
+      for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) odA += texture2D(map, vMapUv + vec2(float(i), float(j)) * odTs * 4.0).a;
+      diffuseColor.a *= odA / 9.0;`);
+  };
+  signShadowMat.customProgramCacheKey = () => 'sign-shadow-v1';
   for (const c of chunks) {
     const add = (buf, mat, cast = true) => {
       if (buf.empty) return;
@@ -2179,7 +2313,12 @@ export function buildHotels(scene) {
     add(c.fabric, fabricMat);
     add(c.terrazzo, terrMat, false);
     add(c.block, blockMat, false);
-    add(c.signs, signMat);
+    if (!c.signs.empty) {
+      add(c.signs, signMat);
+      const sh = new THREE.Mesh(group.children[group.children.length - 1].geometry, signShadowMat);
+      sh.renderOrder = 3;
+      group.add(sh);
+    }
     add(c.grime, grimeMat, false);
     add(c.wire, metalMat, false);
   }

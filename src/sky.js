@@ -98,7 +98,9 @@ vec3 odApplyFog(vec3 col, vec3 offs, float density) {
   // sky; there the haze is thinned to keep near backlit ground dark as in photos.
   fOd *= mix(1.0, 0.3, smoothstep(0.3, 0.95, dot(fDir, OD_SUN)));
   // down-sun the near air is barely visible: facades 50-150 m away stay crisp and warm
+  // (and the sunlit towers behind them, 150-400 m, stay warm rather than lilac boxes)
   fOd *= mix(1.0, 0.3, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - smoothstep(120.0, 220.0, fDist)));
+  fOd *= mix(1.0, 0.55, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * smoothstep(120.0, 220.0, fDist) * (1.0 - smoothstep(350.0, 700.0, fDist)));
   return mix(col, odHaze(fDir), 1.0 - exp(-fOd));
 }
 `;
@@ -387,7 +389,7 @@ export function createSky(renderer, scene) {
     if (cz === centerZ) return;
     centerZ = cz;
     fitShadow(sun, new THREE.Box3(
-      new THREE.Vector3(-62, -1.5, cz - SPAN), new THREE.Vector3(96, 22, cz + SPAN)));
+      new THREE.Vector3(-62, -1.5, cz - SPAN), new THREE.Vector3(96, 30, cz + SPAN)));
     renderer.shadowMap.needsUpdate = true;
   }
   placeShadow(0);

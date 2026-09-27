@@ -171,6 +171,8 @@ function buildGround(group) {
             // lit grain faces fill the view and the beach glows warm, not sky-grey)
             reflectedLight.directDiffuse *= mix(1.0, 0.06, odInto) * (1.0 + 2.0 * odAway);
             reflectedLight.indirectDiffuse *= mix(1.0, 0.55, odInto);
+            // down-sun the sand is lit grain faces: warm, the lilac sky fill is mostly hidden
+            reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(0.78, 0.66, 0.52), odAway);
             reflectedLight.directSpecular *= (1.0 - 0.95 * odInto) * (1.0 - smoothstep(0.0, 0.2, odWet));   // the wet film's sun glint is drawn below
             // backlit dry sand is lit by the sky: neutral-cool grey, warmer toward the damp shore
             float odL = dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722));
@@ -389,7 +391,10 @@ function buildBackground(group) {
   });
   bm.geometry = unit.clone();
   bm.geometry.setAttribute('aBg', new THREE.InstancedBufferAttribute(aBg, 4));
-  bm.castShadow = bm.receiveShadow = true;
+  // (not receiving: at a 7 deg sun the hotels' 180 m shadows would leave every building
+  // behind them slate-dark; the fronts seen over and between the hotels read sunlit)
+  bm.castShadow = true;
+  bm.receiveShadow = false;
   group.add(bm);
 
   // rounded ends on some slab towers (a half-cylinder bulging past the box end)
@@ -539,7 +544,30 @@ function buildTower(group) {
   deck.position.y = d - 0.1;
   const cabin = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2.3, 24), pink);
   cabin.position.set(0.5, d + 1.15, 0);
-  const roof = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 0.45, 24), yellow);
+  // canopy underside: painted tongue-and-groove slats, lit by the sand below
+  const slatTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 16; i++) {
+      const v = 214 + ((i * 37) % 11) - 5;
+      g.fillStyle = `rgb(${v},${v - 6},${v - 16})`;
+      g.fillRect(0, i * 16, 256, 16);
+      g.fillStyle = 'rgba(60,45,30,0.55)';
+      g.fillRect(0, i * 16 + 14, 256, 2);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    return t;
+  })();
+  const under = new THREE.MeshStandardMaterial({ map: slatTex, color: 0xf2ece0, roughness: 0.8, side: THREE.DoubleSide });
+  under.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+      reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3(0.55, 0.40, 0.28);`);
+  };
+  under.customProgramCacheKey = () => 'tower-under-v1';
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.8, 0.45, 24), [yellow, yellow, under]);
   roof.position.set(0.5, d + 2.5, 0);
   // ramp on the west side
   const len = 6.5;
