@@ -1993,10 +1993,11 @@ function pottedPalmGeometry() {
   const P = [];
   const tri = (a, b, c) => P.push(...a, ...b, ...c);
   const quad = (a, b, c, d) => { tri(a, b, c); tri(a, c, d); };
-  for (let f = 0; f < 11; f++) {
-    const az = (f / 11) * Math.PI * 2 + rnd() * 0.4, spread = 0.12 + rnd() * 0.3;
+  // bushy uneven clump: many arching stems of different heights, leaning unevenly
+  for (let f = 0; f < 17; f++) {
+    const az = rnd() * Math.PI * 2, spread = 0.1 + rnd() * 0.45;
     const ca = Math.cos(az), sa = Math.sin(az);
-    const h = 0.55 + rnd() * 0.5;
+    const h = 0.3 + rnd() * rnd() * 0.9;
     // cane: thin 3-sided stem, leaning out
     const s0 = [0, 0, 0], s1 = [ca * spread * h, h, sa * spread * h];
     for (let k = 0; k < 3; k++) {
@@ -2005,10 +2006,10 @@ function pottedPalmGeometry() {
       quad([s0[0] + o0[0], 0, s0[2] + o0[2]], [s0[0] + o1[0], 0, s0[2] + o1[2]], [s1[0] + o1[0], s1[1], s1[2] + o1[2]], [s1[0] + o0[0], s1[1], s1[2] + o0[2]]);
     }
     // frond: rachis continues up and out, arching over; 24 pairs of fine leaflets
-    const len = 0.7 + rnd() * 0.35, nL = 24;
+    const len = 0.5 + rnd() * 0.5, nL = 26;
     const rib = (t) => {
       const L = t * len;
-      return [s1[0] + ca * L * (0.35 + spread), s1[1] + 0.6 * L - 1.0 * L * L, s1[2] + sa * L * (0.35 + spread)];
+      return [s1[0] + ca * L * (0.35 + spread), s1[1] + 0.5 * L - 1.3 * L * L, s1[2] + sa * L * (0.35 + spread)];
     };
     const side = [-sa, 0, ca];
     for (let k = 1; k <= nL; k++) {
@@ -2386,7 +2387,7 @@ export function buildHotels(scene) {
     };
     leafMat.customProgramCacheKey = () => 'hotel-potpalm-v2';
     place(new THREE.InstancedMesh(pottedPalmGeometry(), leafMat, ctx.palms.length),
-      ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x86ad4c, 0x9cbc58, 0x7aa244][Math.floor(rp() * 3)] })),
+      ctx.palms.map((p) => ({ x: p.x, y: p.y + (p.pot ? 0.5 : 0), z: p.z, s: p.s, rot: rp() * 6.28, color: [0x4f7a2e, 0x5b8636, 0x46702a, 0x668a3a][Math.floor(rp() * 4)] })),
       (p) => new THREE.Vector3(p.s, p.s, p.s));
   }
   if (ctx.bulbs.length) {

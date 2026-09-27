@@ -338,9 +338,10 @@ function installSmoothShadows(shadowCam, mapSize) {
 				if ( bSum < 0.001 ) {
 					shadow = 1.0;
 				} else {
-					// the sun's 0.53 deg disc: penumbra width 0.0093 x blocker distance -> half-width radius
-					float pen = max( 0.00465 * dSum / bSum, minM );
-					vec2 rT = clamp( pen / odTexM, vec2( 1.0 ), vec2( 8.0 ) );
+					// the sun's disc gives 0.0093 x blocker distance; kept tighter so long trunk bars
+					// and fringed crowns stay readable far from their casters
+					float pen = max( 0.0026 * dSum / bSum, minM );
+					vec2 rT = clamp( pen / odTexM, vec2( 1.0 ), vec2( 6.0 ) );
 					vec2 stp = rT * texelSize / 3.5;
 					shadow = 0.0;
 					for ( int i = 0; i < 8; i ++ ) {

@@ -7,7 +7,6 @@
 // shadows show the gaps between them. Wind sways crowns and frond tips in the vertex
 // shader (frozen in ?shot mode through the time passed to update()).
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT } from './layout.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 
@@ -30,10 +29,14 @@ function plan() {
     const variant = o.variant ?? (species !== 'coconut' ? 0
       : row === 'park' ? pick([0, 1, 2, 2, 3, 3, 4, 1])
         : pick([0, 1, 1, 3, 3, 4, 4, 2, 0, 1, 3, 2]));
-    // lean mostly toward the ocean (+x), some the other way in the park
-    const spread = row === 'park' ? 0.9 : 0.7;
-    const rotY = o.rotY ?? ((rnd() - 0.5) * 2 * spread + (row === 'park' && rnd() < 0.15 ? Math.PI : 0));
-    trees.push({ x, z, row, ground, species: o.species ?? species, variant, rotY, scale: 0.85 + rnd() * 0.32, seed: Math.floor(rnd() * 1e9) });
+    // lean direction and amount vary a lot: mostly toward the ocean (+x) but anything
+    // from near vertical (shear cancels the variant's lean) to steep
+    const spread = row === 'park' ? 1.3 : 1.2;
+    const rotY = o.rotY ?? ((rnd() - 0.5) * 2 * spread + (rnd() < (row === 'park' ? 0.3 : 0.12) ? Math.PI : 0));
+    const k = o.k ?? (rnd() < 0.25 ? -0.1 - rnd() * 0.05 : (rnd() - 0.3) * 0.18);
+    // height: 6-20 m so crowns layer, some above the hotel roofs
+    const hs = o.hs ?? (0.78 + rnd() * 0.5);
+    trees.push({ x, z, row, ground, species: o.species ?? species, variant, rotY, k, hs, scale: 0.88 + rnd() * 0.26, seed: Math.floor(rnd() * 1e9) });
   };
   // irregular rows: mostly 7-14 m, the odd long gap, the odd close pair
   const row = (x0, rowName, ground, skip) => {
@@ -41,7 +44,12 @@ function plan() {
       const x = x0 + (rnd() - 0.5) * 0.3;
       if (!skip(z)) {
         tree(x, z + (rnd() - 0.5), rowName, ground);
-        if (rnd() < 0.22) { const dz = 1.6 + rnd() * 1.2; if (!skip(z + dz)) tree(x + (rnd() - 0.5) * 0.4, z + dz, rowName, ground); }
+        if (rnd() < 0.22) {
+          // close pair, leaning apart or crossing
+          const dz = 1.6 + rnd() * 1.2, first = trees[trees.length - 1];
+          const rot = rnd() < 0.5 ? first.rotY + Math.PI * (0.6 + rnd() * 0.4) : first.rotY + 0.5;
+          if (!skip(z + dz)) tree(x + (rnd() - 0.5) * 0.4, z + dz, rowName, ground, { rotY: rot, hs: first.hs * (0.7 + rnd() * 0.25) });
+        }
       }
       z += rnd() < 0.18 ? 17 + rnd() * 9 : 7 + rnd() * 7;
     }
@@ -108,7 +116,7 @@ function frondAtlas() {
   // many long narrow leaflets with sky between them; tips of varying length separate
   for (let k = -14; k < 24; k++) {
     const y0 = k * (512 / LEAF_N) + (rnd() - 0.5) * 8, y1 = y0 + LEAF_SLANT * 512 + (rnd() - 0.5) * 40;
-    const L = 180 + rnd() * 74, w0 = 30 + rnd() * 8;
+    const L = 190 + rnd() * 64, w0 = 66 + rnd() * 12;   // ~4 cm blades, ~75% coverage
     const pts = [], back = [];
     for (let i = 0; i <= 16; i++) {
       const t = i / 16;
@@ -171,7 +179,7 @@ function trunkTextures() {
       for (const r of rings) {
         const yy = r.y + r.amp * Math.sin((x / 256) * Math.PI * 2 * r.f + r.ph) + 1.5 * Math.sin((x / 256) * Math.PI * 2 * 7 + r.ph * 3);
         let d = Math.abs(y - yy); d = Math.min(d, S - d);
-        if (d < r.w * 2.5) { const k = Math.exp(-(d * d) / (r.w * r.w)) * r.a; h -= 0.5 * k; alb -= 0.3 * k; }
+        if (d < r.w * 2.5) { const k = Math.exp(-(d * d) / (r.w * r.w)) * r.a; h -= 0.55 * k; alb -= 0.42 * k; }
         else if (d < r.w * 5) h += 0.06 * r.a;   // slightly swollen between scars
       }
     } else {
@@ -259,12 +267,12 @@ function trunkGeometry({ H, lean, bend, species, seed, sc = 0 }) {
   const crownshaft = species === 'royal' ? 1.9 : 0;
   const radius = (t, s) => {
     const h = t * L;
-    if (species === 'coconut') return 0.125 + 0.045 * (1 - t) + 0.17 * Math.exp(-h / 0.5) + 0.008 * Math.sin(h * 1.7 + seed);   // slender, flared root boss
+    if (species === 'coconut') return 0.125 + 0.045 * (1 - t) + 0.17 * Math.exp(-h / 0.5) + 0.008 * Math.sin(h * 1.7 + seed) + 0.035 * s * Math.exp(-h / 0.45);   // slender, rough flared root boss
     if (species === 'royal') return h > L - crownshaft ? 0.215 + 0.02 * Math.sin(((h - (L - crownshaft)) / crownshaft) * Math.PI) : 0.22 + 0.06 * Math.exp(-(((t - 0.4) / 0.25) ** 2)) + 0.1 * Math.exp(-h / 0.6) - 0.03 * t;
     return 0.23 + 0.04 * Math.exp(-h / 0.5) + 0.012 * s;
   };
   const uOff = species === 'sabal' ? 0.5 : 0;
-  if (species === 'coconut') { cA.setHex(0xd2ccc0); cB.setHex(0x8d8070); }
+  if (species === 'coconut') { cA.setHex(0xc2bcb0); cB.setHex(0xd8d2c4); }
   else if (species === 'royal') { cA.setHex(0xc4c2bb); cB.setHex(0x5f8a3c); }
   else { cA.setHex(0x7d6c58); cB.setHex(0x6a5a47); }
   const m = new Mesher(true);
@@ -272,13 +280,16 @@ function trunkGeometry({ H, lean, bend, species, seed, sc = 0 }) {
     const t = i / segs, a = (j / rad) * Math.PI * 2;
     const [tx, ty] = tans[i];
     const N = [-ty, tx, 0];   // in-plane normal; binormal is z
-    const r = radius(t, Math.sin(a * 3 + i));
+    const r = radius(t, i < 6 ? Math.sin(a * 5 + i * 1.3) * 0.6 + Math.sin(a * 11 + i * 2.1) * 0.4 : Math.sin(a * 3 + i));
     const p = pts[i];
     const pos = [p[0] + (N[0] * Math.cos(a)) * r, p[1] + N[1] * Math.cos(a) * r, Math.sin(a) * r];
     const h = len[i];
     if (species === 'royal') col.copy(h > L - crownshaft ? cB : cA);
-    else col.copy(cA).lerp(cB, Math.max(0, Math.min(1, (h - (L - 1.6)) / 1.6)));   // smoother, darker near the crown
-    col.multiplyScalar(0.94 + 0.12 * rnd());
+    else {
+      // light grey to grey-tan; rougher and darker toward the base, a smoother lighter band below the crown
+      col.copy(cA).lerp(cB, Math.max(0, Math.min(1, (h - (L - 1.4)) / 1.4)));
+      if (species === 'coconut') col.multiplyScalar(0.72 + 0.28 * Math.min(1, h / 1.6));
+    }
     return [pos, [uOff + (j / rad) * 0.5, h], col];
   });
   // crown knob of frond bases (coconut / sabal) or spear leaf (royal), closing the top
@@ -322,26 +333,26 @@ function coconutGeometry() {
   };
   for (let b = 0; b < 3; b++) {
     const a = (b / 3) * Math.PI * 2 + rnd() * 0.6;
-    const cx = Math.cos(a) * 0.5, cz = Math.sin(a) * 0.5, cy = -0.5 - rnd() * 0.2;
-    stalk([Math.cos(a) * 0.15, -0.05, Math.sin(a) * 0.15], [cx, cy + 0.15, cz], 0.035, 0xd9902e);
-    const n = 4 + Math.floor(rnd() * 3), yel = rnd() < 0.35;
+    const cx = Math.cos(a) * 0.5, cz = Math.sin(a) * 0.5, cy = -0.3 - rnd() * 0.15;
+    stalk([Math.cos(a) * 0.15, -0.05, Math.sin(a) * 0.15], [cx, cy + 0.15, cz], 0.035, 0xa8884e);
+    const n = 3 + Math.floor(rnd() * 3), yel = rnd() < 0.25;
     for (let i = 0; i < n; i++) {
       const aa = rnd() * Math.PI * 2, rr = 0.14 + rnd() * 0.12;
-      const g = new THREE.SphereGeometry(0.18 + rnd() * 0.04, 9, 7);
+      const g = new THREE.SphereGeometry(0.13 + rnd() * 0.03, 9, 7);
       g.scale(1, 1.15, 1);
       g.translate(cx + Math.cos(aa) * rr, cy - rnd() * 0.18, cz + Math.sin(aa) * rr);
-      addGeo(g, yel && rnd() < 0.7 ? 0xd8b23a : rnd() < 0.8 ? 0x7e9a2c : 0x9a7a36);
+      addGeo(g, yel && rnd() < 0.6 ? 0x9a8a32 : rnd() < 0.7 ? 0x4f5e22 : 0x6a5428);
     }
   }
   // bare flower stalks: arching orange-yellow strands with a few branches
   for (let k = 0; k < 3; k++) {
     const a = rnd() * Math.PI * 2;
     const p0 = [Math.cos(a) * 0.15, -0.05, Math.sin(a) * 0.15], p1 = [Math.cos(a) * 0.7, -0.35, Math.sin(a) * 0.7];
-    stalk(p0, p1, 0.03, 0xe0a33a);
+    stalk(p0, p1, 0.03, 0xb49a62);
     for (let j = 0; j < 4; j++) {
       const t = 0.4 + j * 0.15, q = [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t, p0[2] + (p1[2] - p0[2]) * t];
       const bb = a + (rnd() - 0.5) * 1.4;
-      stalk(q, [q[0] + Math.cos(bb) * 0.35, q[1] - 0.45 - rnd() * 0.2, q[2] + Math.sin(bb) * 0.35], 0.012, 0xe8b54a);
+      stalk(q, [q[0] + Math.cos(bb) * 0.35, q[1] - 0.45 - rnd() * 0.2, q[2] + Math.sin(bb) * 0.35], 0.014, 0xbfa46c);
     }
   }
   return m.geometry();
@@ -349,7 +360,7 @@ function coconutGeometry() {
 
 // Pinnate frond: arching rachis along +x (local), leaflet ribbons hanging from both
 // sides in a V; uv.x = region + across (0 healthy, 1 ragged), uv.y = rachis tiles.
-function pinnateFrond({ L, rise, droop, leaf, v0, v1, region, seed }) {
+function pinnateFrond({ L, rise, droop, leaf, v0, v1, region, seed, tw = 0 }) {
   const rnd = mulberry32(seed);
   const segs = 14;
   const rach = (t) => [L * t * (1 - 0.1 * t), L * (rise * t - droop * t * t), 0.06 * L * Math.sin(t * 2.2 + seed) * t];
@@ -370,7 +381,10 @@ function pinnateFrond({ L, rise, droop, leaf, v0, v1, region, seed }) {
       const t = t0 + (1 - t0) * (i / segs);
       const { p, N } = frame(t);
       const a = v0 + (v1 - v0) * t + jit;
-      const dir = [-N[0] * Math.sin(a), -N[1] * Math.sin(a), s * Math.cos(a)];
+      // the blade plane twists along the rachis
+      const ph = tw * t, cp = Math.cos(ph), sp = Math.sin(ph);
+      const dn = -Math.sin(a), dz = s * Math.cos(a);
+      const dir = [N[0] * (dn * cp - dz * sp), N[1] * (dn * cp - dz * sp), dn * sp + dz * cp];
       const w = leaf * (0.3 + 0.7 * Math.sin(Math.PI * Math.min(1, (t - t0) * 1.35 + 0.12))) * (1 - 0.5 * t) * (i === segs ? 0.35 : 1);
       const k = j / 2, curl = 0.35 * w * k * k;
       const pos = [p[0] + dir[0] * w * k - N[0] * curl, p[1] + dir[1] * w * k - N[1] * curl, p[2] + dir[2] * w * k];
@@ -439,7 +453,7 @@ vec4 odFrondTex(sampler2D tex, vec2 uv) {
   // mip levels average the thin blades' alpha below the cut-off: boost it with distance
   vec2 ts = vec2(textureSize(tex, 0));
   float lod = 0.5 * log2(max(dot(gx * ts, gx * ts), dot(gy * ts, gy * ts)) + 1e-8);
-  c.a = min(1.0, c.a * (1.0 + max(lod, 0.0) * 0.2));
+  c.a = min(1.0, c.a * (1.0 + max(lod, 0.0) * 0.35));
 #endif
   if (region > 0.5 && region < 1.5) {
     // ragged / dead fronds: missing leaflets and snapped tips
@@ -463,13 +477,15 @@ function frondMaterial(atlas) {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.odWindT = WIND;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${SWAY_GLSL}`)
+      .replace('#include <common>', `#include <common>\n${SWAY_GLSL}
+varying float vOdK;`)
       // V-folded leaflets face every way: normals bent outward from the crown (both
       // faces), so a grazing 7 deg sun still lights part of every frond
       .replace('#include <beginnormal_vertex>',
         'vec3 objectNormal = normalize(mix(normal * sign(normal.y + 1e-3), normalize(position + vec3(0.0, 0.9, 0.0)), 0.6));')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vec3 odOrg = batchingMatrix[3].xyz;
+        vOdK = clamp(length(position) / 2.2, 0.0, 1.0);
         {
           // frond tips flutter; amplitude grows along the rachis
           float ph = fract(sin(dot(odOrg.xz, vec2(12.9898, 78.233)) + float(gl_DrawID)) * 43758.5) * 6.28;
@@ -479,28 +495,33 @@ function frondMaterial(atlas) {
         }`)
       .replace('mvPosition = modelViewMatrix * mvPosition;', 'mvPosition.xyz += odSway(odOrg);\nmvPosition = modelViewMatrix * mvPosition;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${FROND_TEX_GLSL}`)
+      .replace('#include <common>', `#include <common>\n${FROND_TEX_GLSL}
+varying float vOdK;`)
       .replace('#include <map_fragment>', MAP_REPLACE)
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize(vNormal);')
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         #ifdef USE_FOG
         {
           vec3 odV = -normalize(vFogOffset);
-          float odB = pow(max(dot(-odV, OD_SUN), 0.0), 2.0);
-          // about a quarter of the V-folded leaflet area faces the sun whatever the
-          // frond's orientation (glossy yellow-green in the low sun)
-          reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.16;
-          // translucency: sun behind the actual blade (geometric normal) seen from the
-          // other side -> lime-yellow glow, strongest at grazing view (bright rim)
           vec3 odNg = normalize(cross(dFdx(vFogOffset), dFdy(vFogOffset)));
           odNg *= sign(dot(odNg, odV));
-          float odBack = max(-dot(odNg, OD_SUN), 0.0);
-          float odRim = pow(1.0 - abs(dot(odNg, odV)), 2.0);
-          reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.15, 1.3, 0.45) * directLight.color * (0.3 * odBack + 0.2 * odRim * odBack + 0.1 * odB);
+          // the bent normals would light every blade; only the face we actually see
+          // being sunward gets direct light (backlit fronds stay dark silhouettes)
+          float odFace = dot(odNg, OD_SUN);
+          float odLit = smoothstep(-0.1, 0.3, odFace);
+          reflectedLight.directDiffuse *= mix(0.1, 1.0, odLit);
+          reflectedLight.directSpecular *= odLit;
+          reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.1 * odLit;
+          // modest olive-gold transmission through single leaflet layers toward the sun
+          float odT = max(-odFace, 0.0) * pow(max(dot(-odV, OD_SUN), 0.0), 3.0);
+          reflectedLight.directDiffuse += diffuseColor.rgb * vec3(0.85, 0.75, 0.2) * directLight.color * 0.1 * odT;
+          // crown interior in deep shade
+          reflectedLight.indirectDiffuse *= 0.35 + 0.65 * vOdK;
+          reflectedLight.directDiffuse *= 0.55 + 0.45 * vOdK;
         }
         #endif`);
   };
-  m.customProgramCacheKey = () => 'palm-frond-v2';
+  m.customProgramCacheKey = () => 'palm-frond-v3';
   const depth = new THREE.MeshDepthMaterial({ map: atlas, alphaTest: 0.5, side: THREE.DoubleSide });
   depth.defines = { OD_DEPTH: '' };
   depth.onBeforeCompile = (shader) => {
@@ -514,7 +535,7 @@ function frondMaterial(atlas) {
 
 function trunkMaterial() {
   const { map, normalMap } = trunkTextures();
-  const m = new THREE.MeshStandardMaterial({ map, normalMap, normalScale: new THREE.Vector2(1.2, 1.2), vertexColors: true, roughness: 0.9 });
+  const m = new THREE.MeshStandardMaterial({ map, normalMap, normalScale: new THREE.Vector2(1.7, 1.7), vertexColors: true, roughness: 0.9 });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.odWindT = WIND;
     shader.vertexShader = shader.vertexShader
@@ -541,7 +562,11 @@ function groundMesh(trees) {
     c.fillStyle = ['#5f7f36', '#7c9a44', '#4e6b2c'][i % 3];
     c.beginPath(); c.arc(x, y, 5 + rnd() * 9, 0, Math.PI * 2); c.fill();
   }
-  c.strokeStyle = '#8f8d86'; c.lineCap = 'butt';
+  // dirty stain ring on the paving around the pit
+  const st = c.createRadialGradient(128, 128, 60, 128, 128, 128);
+  st.addColorStop(0, 'rgba(0,0,0,0)'); st.addColorStop(1, 'rgba(50,40,30,0.35)');
+  c.fillStyle = st; c.fillRect(0, 0, 256, 256);
+  c.strokeStyle = '#4f4c46'; c.lineCap = 'butt';
   c.lineWidth = 10; c.strokeRect(10, 10, 236, 236);
   c.lineWidth = 6;
   for (let x = 30; x < 236; x += 22) {
@@ -550,7 +575,7 @@ function groundMesh(trees) {
   }
   c.strokeStyle = 'rgba(40,36,32,0.5)'; c.lineWidth = 2;
   for (let x = 33; x < 236; x += 22) { c.beginPath(); c.moveTo(x, 12); c.lineTo(x, 244); c.stroke(); }
-  c.strokeStyle = '#8f8d86'; c.lineWidth = 8; c.beginPath(); c.arc(128, 128, 44, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#4f4c46'; c.lineWidth = 8; c.beginPath(); c.arc(128, 128, 44, 0, Math.PI * 2); c.stroke();
   // bare trampled sand / dirt patch with a ragged edge into the lawn
   c.save(); c.beginPath(); c.rect(256, 0, 256, 256); c.clip();
   for (let i = 0; i < 70; i++) {
@@ -563,6 +588,11 @@ function groundMesh(trees) {
     const a = rnd() * 6.28, d = Math.sqrt(rnd()) * 100;
     c.fillStyle = rnd() < 0.5 ? 'rgba(150,128,96,0.5)' : 'rgba(220,204,170,0.5)';
     c.fillRect(384 + Math.cos(a) * d, 128 + Math.sin(a) * d, 2, 2);
+  }
+  for (let i = 0; i < 26; i++) {
+    const a = rnd() * 6.28, d = 20 + rnd() * 80, x = 384 + Math.cos(a) * d, y = 128 + Math.sin(a) * d, b = rnd() * 6.28, l = 14 + rnd() * 26;
+    c.strokeStyle = rnd() < 0.5 ? 'rgba(120,96,58,0.9)' : 'rgba(150,132,90,0.9)'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(b) * l, y + Math.sin(b) * l); c.stroke();
   }
   c.restore();
   const tex = new THREE.CanvasTexture(cv);
@@ -589,14 +619,7 @@ function groundMesh(trees) {
   });
   im.receiveShadow = true;
   im.renderOrder = 1;
-  // raised concrete curb around each street cut-out
-  const hotel = trees.filter((t) => t.ground === 0);
-  const fg = [];
-  for (const [w, d, x, z] of [[1.5, 0.1, 0, 0.7], [1.5, 0.1, 0, -0.7], [0.1, 1.3, 0.7, 0], [0.1, 1.3, -0.7, 0]]) fg.push(new THREE.BoxGeometry(w, 0.14, d).translate(x, 0.07, z));
-  const frame = new THREE.InstancedMesh(mergeGeometries(fg), new THREE.MeshStandardMaterial({ color: 0xcfc6b8, roughness: 0.9 }), hotel.length);
-  hotel.forEach((t, i) => { m4.makeTranslation(t.x, 0, t.z); frame.setMatrixAt(i, m4); });
-  frame.castShadow = frame.receiveShadow = true;
-  return [im, frame];
+  return [im];
 }
 
 // ---------------------------------------------------------------------------
@@ -621,10 +644,10 @@ export function buildPalms(scene) {
   // frond variants
   const frondGeos = [
     // arc out, then the tip drops well below the midrib; leaflets hang from the rachis
-    pinnateFrond({ L: 4.7, rise: 0.38, droop: 1.25, leaf: 0.95, v0: 0.5, v1: 1.0, region: 0, seed: 11 }),
-    pinnateFrond({ L: 4.3, rise: 0.45, droop: 1.45, leaf: 0.9, v0: 0.6, v1: 1.1, region: 0, seed: 12 }),
-    pinnateFrond({ L: 5.0, rise: 0.3, droop: 1.1, leaf: 1.0, v0: 0.5, v1: 0.95, region: 1, seed: 13 }),
-    pinnateFrond({ L: 4.0, rise: 0.5, droop: 1.6, leaf: 0.85, v0: 0.65, v1: 1.15, region: 0, seed: 14 }),
+    pinnateFrond({ L: 5.0, rise: 0.42, droop: 0.8, leaf: 0.95, v0: 0.45, v1: 0.9, region: 0, seed: 11, tw: 0.5 }),
+    pinnateFrond({ L: 4.6, rise: 0.48, droop: 0.95, leaf: 0.9, v0: 0.5, v1: 1.0, region: 0, seed: 12, tw: -0.6 }),
+    pinnateFrond({ L: 5.2, rise: 0.35, droop: 0.75, leaf: 1.0, v0: 0.45, v1: 0.9, region: 1, seed: 13, tw: 0.8 }),
+    pinnateFrond({ L: 4.4, rise: 0.5, droop: 1.15, leaf: 0.85, v0: 0.55, v1: 1.05, region: 0, seed: 14, tw: -0.4 }),
     pinnateFrond({ L: 4.0, rise: 0.05, droop: 0.35, leaf: 0.75, v0: 1.25, v1: 1.45, region: 1, seed: 15 }),   // dead, hanging
     pinnateFrond({ L: 3.8, rise: 0.55, droop: 1.1, leaf: 0.85, v0: 0.35, v1: 0.8, region: 0, seed: 16 }),    // royal: flatter, plumose
     fanFrond(17),
@@ -644,10 +667,15 @@ export function buildPalms(scene) {
     const base = new THREE.Vector3(t.x, t.row === 'hotel' ? 0 : CURB_HEIGHT, t.z);
     q.setFromAxisAngle(Y, t.rotY);
     const sc = t.scale * (t.species === 'sabal' ? 0.95 : 1);
-    trunkInst.push({ g: ti, m: new THREE.Matrix4().compose(base, q, new THREE.Vector3(sc, sc, sc)), c: col.setScalar(0.9 + rnd() * 0.2).clone() });
-    const top = new THREE.Vector3(...trunks[ti].top).multiplyScalar(sc).applyQuaternion(q).add(base);
+    // per-tree height stretch (capped ~21 m) and lean shear
+    const hy = Math.max(0.8, Math.min(t.hs, 21 / (trunkDefs[ti].H * sc)));
+    const tm = new THREE.Matrix4().compose(base, q, new THREE.Vector3(1, 1, 1))
+      .multiply(new THREE.Matrix4().set(1, t.k, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1))
+      .multiply(new THREE.Matrix4().makeScale(sc, sc * hy, sc));
+    trunkInst.push({ g: ti, m: tm, c: col.setScalar(0.94 + rnd() * 0.12).clone() });
+    const top = new THREE.Vector3(...trunks[ti].top).applyMatrix4(tm);
     const bleach = rnd();
-    const fresh = new THREE.Color().setRGB(0.19, 0.4, 0.085).lerp(new THREE.Color(0.34, 0.45, 0.1), bleach * 0.8);
+    const fresh = new THREE.Color().setRGB(0.1, 0.2, 0.038).lerp(new THREE.Color(0.16, 0.25, 0.045), bleach * 0.8);   // mid-deep olive; the warm sun makes the gold
     const addFrond = (g, az, pitch, s, c, roll = 0) => {
       qa.setFromAxisAngle(Y, t.rotY + az);
       qb.setFromAxisAngle(Zax, pitch);
@@ -672,24 +700,28 @@ export function buildPalms(scene) {
       }
       continue;
     }
-    // dense shaggy mop: 20-32 fronds, the upper ones arching up, the lower half hanging
-    // below the crown line, the lowest nearly vertical; each tree differently shaped
+    // full ball: spear + young fronds up top, middle fronds horizontal, only the lower
+    // ones arch out and droop; some missing / broken, lopsided per tree
     const young = ti === 0;
-    const n = (young ? 16 : 20) + Math.floor(rnd() * 13);
-    const droopBias = (rnd() - 0.5) * 0.35, spin = rnd() * 6.28, fsc = (young ? 0.78 : 1) * (0.92 + rnd() * 0.16);
+    const n = (young ? 16 : 22) + Math.floor(rnd() * 11);
+    const droopBias = (rnd() - 0.5) * 0.3, spin = rnd() * 6.28, fsc = (young ? 0.8 : 1.12) * (0.9 + rnd() * 0.2);
+    const lop = rnd() * 0.35, lopAz = rnd() * 6.28;
+    addFrond(3, spin, 1.5, 0.45 * fsc, col.copy(fresh).multiplyScalar(1.2), 0);
     for (let i = 0; i < n; i++) {
       const f = i / (n - 1);
+      if (f > 0.2 && rnd() < 0.08) continue;
       const g = [0, 1, 2, 3][Math.floor(rnd() * 4)];
-      const pitch = 1.05 - 2.3 * Math.pow(f, 0.85) + droopBias + (rnd() - 0.5) * 0.3;
-      const s = ((f < 0.12 ? 0.65 + f * 2.5 : 0.95) + rnd() * 0.15) * fsc;
+      const az = spin + i * 2.3999 + (rnd() - 0.5) * 0.45;
+      const pitch = 1.3 - 2.0 * Math.pow(f, 0.9) + droopBias - lop * Math.cos(az - lopAz) + (rnd() - 0.5) * 0.25;
+      const s = ((f < 0.12 ? 0.55 + f * 3.5 : 0.97) + rnd() * 0.12) * fsc * (rnd() < 0.05 ? 0.6 : 1);
       // older (lower) fronds yellower
-      const c = col.copy(fresh).lerp(new THREE.Color(0.5, 0.46, 0.12), f * f * 0.7 * (0.4 + bleach)).multiplyScalar(0.88 + 0.25 * rnd());
-      addFrond(g, spin + i * 2.3999 + (rnd() - 0.5) * 0.45, pitch, s, c, (rnd() - 0.5) * 0.6);
+      const c = col.copy(fresh).lerp(new THREE.Color(0.3, 0.28, 0.08), f * f * 0.6 * (0.4 + bleach)).multiplyScalar(0.85 + 0.3 * rnd());
+      addFrond(g, az, pitch, s, c, (rnd() - 0.5) * 0.8);
     }
     // brown / tan dead fronds hanging under most crowns
     const dead = young ? Math.floor(rnd() * 2) : rnd() < 0.15 ? 1 : 2 + Math.floor(rnd() * 4);
     for (let i = 0; i < dead; i++) {
-      addFrond(4, rnd() * 6.28, -1.42 - rnd() * 0.15, (1.0 + rnd() * 0.2) * fsc, col.setRGB(0.34, 0.2, 0.08).multiplyScalar(0.7 + 0.6 * rnd()), (rnd() - 0.5) * 0.8);
+      addFrond(4, rnd() * 6.28, -1.52 - rnd() * 0.08, (0.8 + rnd() * 0.15) * fsc, col.setRGB(0.24, 0.21, 0.15).multiplyScalar(0.8 + 0.4 * rnd()), (rnd() - 0.5) * 0.8);   // dull dry grey-tan, limp against the trunk
     }
     if (!young && rnd() < 0.85) {
       qa.setFromAxisAngle(Y, rnd() * 6.28);
@@ -719,6 +751,7 @@ export function buildPalms(scene) {
   // (crowns only grazed by a 7 deg sun; their own shadow on each other only blackened them)
   fMesh.receiveShadow = false;
   group.add(tMesh, fMesh, ...groundMesh(PALM_TREES));
+  window.__palmTrees = PALM_TREES;
   scene.add(group);
 
   window.__palmStats = { trees: PALM_TREES.length, fronds: frondInst.length, trunks: trunkInst.length, clusters: PALM_CLUSTERS.length };
