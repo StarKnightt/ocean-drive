@@ -664,7 +664,8 @@ function furniture() {
   return [m, signs(posts, regs)];
 }
 
-// Sign blades (text on a canvas atlas): street names at the crosswalk, parking rules.
+// Sign plates (text on a canvas atlas): street-name blades on a cap bracket at the top of
+// the crosswalk posts, regulation plates clamped to the front of their poles.
 function signs(posts, regs) {
   const [cv, c] = canvas(1024, 512);
   const blade = (y, text) => {
@@ -676,6 +677,7 @@ function signs(posts, regs) {
   blade(0, 'OCEAN DR');
   blade(128, '9 ST');
   // regulation sign (white): 256 wide x 256 tall at the bottom left
+  c.textBaseline = 'alphabetic';
   c.fillStyle = '#f2f1ea'; c.fillRect(0, 256, 256, 256);
   c.strokeStyle = '#b02a26'; c.lineWidth = 8; c.strokeRect(10, 266, 236, 236);
   c.fillStyle = '#b02a26'; c.font = 'bold 44px Arial, sans-serif'; c.textAlign = 'center';
@@ -693,32 +695,61 @@ function signs(posts, regs) {
   c.strokeStyle = '#d9c28a'; c.lineWidth = 6; c.strokeRect(522, 266, 236, 236);
   c.fillStyle = '#efe6cc'; c.font = 'bold 58px Georgia, serif'; c.textAlign = 'center';
   c.fillText('VALET', 640, 360); c.font = 'bold 34px Georgia, serif'; c.fillText('PARKING', 640, 420);
+  // bare aluminium for the backs of plates (768..1024 x 256..512)
+  c.fillStyle = '#a4a7a8'; c.fillRect(768, 256, 256, 256);
   const map = tex(cv);
-  const quad = (w, h, u0, v0, u1, v1) => {
-    // double-sided with readable text on both faces
+  // CanvasTexture flips Y: v0 is the top edge of the sign in the atlas, v1 the bottom.
+  // Two faces 12 mm apart; `back` = 'text' keeps the back readable (blades, A-frame
+  // outer faces), otherwise the back is plain metal.
+  const BACK_U = 0.875, BACK_V = 0.25;
+  const plate = (w, h, u0, v0, u1, v1, back) => {
     const g = new THREE.BufferGeometry();
-    const p = [-w / 2, -h / 2, 0.012, w / 2, -h / 2, 0.012, -w / 2, h / 2, 0.012, w / 2, h / 2, 0.012,
-      w / 2, -h / 2, -0.012, -w / 2, -h / 2, -0.012, w / 2, h / 2, -0.012, -w / 2, h / 2, -0.012];
-    const uv = [u0, v0, u1, v0, u0, v1, u1, v1, u0, v0, u1, v0, u0, v1, u1, v1];
+    const p = [-w / 2, -h / 2, 0.006, w / 2, -h / 2, 0.006, -w / 2, h / 2, 0.006, w / 2, h / 2, 0.006,
+      w / 2, -h / 2, -0.006, -w / 2, -h / 2, -0.006, w / 2, h / 2, -0.006, -w / 2, h / 2, -0.006];
+    const bk = back === 'text' ? [u0, v1, u1, v1, u0, v0, u1, v0] : Array(4).fill([BACK_U, BACK_V]).flat();
+    const uv = [u0, v1, u1, v1, u0, v0, u1, v0, ...bk];
     g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex([0, 1, 2, 1, 3, 2, 4, 5, 6, 5, 7, 6]);
     g.computeVertexNormals();
     return g;
   };
-  const L = [];
-  const H = CURB_HEIGHT;
+  const L = [], M = [];
+  const H = CURB_HEIGHT, POLE_R = 0.035;
+  // a plate clamped to the front of a pole: offset past the pole, two U-bracket straps
+  const mounted = (w, h, uv, rotY, x, y, z) => {
+    const off = POLE_R + 0.018;
+    L.push(plate(w, h, ...uv).translate(0, 0, off).rotateY(rotY).translate(x, y, z));
+    for (const by of [h * 0.3, -h * 0.3]) {
+      M.push(new THREE.BoxGeometry(0.1, 0.035, 0.02).translate(0, by, off - 0.016).rotateY(rotY).translate(x, y, z));          // bracket plate behind the sign
+      M.push(new THREE.BoxGeometry(0.1, 0.03, 0.014).translate(0, by, -POLE_R - 0.007).rotateY(rotY).translate(x, y, z));      // strap behind the pole
+      for (const bx of [-0.045, 0.045]) {                                                                                      // the U-bolt legs
+        M.push(new THREE.BoxGeometry(0.012, 0.012, off + POLE_R).translate(bx, by, (off - POLE_R) / 2 - 0.008).rotateY(rotY).translate(x, y, z));
+      }
+    }
+  };
   for (const [x, z] of posts) {
-    L.push(quad(0.9, 0.18, 0, 1, 1, 0.75).rotateY(Math.PI / 2).translate(x, H + 3.05, z));       // OCEAN DR, along the street
-    L.push(quad(0.6, 0.18, 0.2, 0.75, 0.8, 0.5).translate(x, H + 2.84, z));                      // 9 ST, across it
-    L.push(quad(0.6, 0.6, 0.25, 0.5, 0.5, 0).rotateY(x < LANES.centerX ? Math.PI / 2 : -Math.PI / 2).translate(x, H + 2.2, z));
+    // street-name blades stacked above the pole top in a slotted cap bracket, crossed
+    const top = H + 3.2;
+    L.push(plate(0.9, 0.18, 0, 1, 1, 0.75, 'text').rotateY(Math.PI / 2).translate(x, top + 0.14, z));   // OCEAN DR, along the street
+    L.push(plate(0.6, 0.18, 0.2, 0.75, 0.8, 0.5, 'text').translate(x, top + 0.35, z));                  // 9 ST, across it
+    M.push(new THREE.CylinderGeometry(0.045, 0.045, 0.06, 12).translate(x, top + 0.02, z));
+    M.push(new THREE.BoxGeometry(0.035, 0.42, 0.05).translate(x, top + 0.24, z));
+    M.push(new THREE.BoxGeometry(0.05, 0.42, 0.035).translate(x, top + 0.24, z));
+    M.push(new THREE.BoxGeometry(0.04, 0.02, 0.04).translate(x, top + 0.46, z));
+    mounted(0.6, 0.6, [0.25, 0.5, 0.5, 0], x < LANES.centerX ? Math.PI / 2 : -Math.PI / 2, x, H + 2.2, z);
   }
-  for (const [x, z] of regs) L.push(quad(0.45, 0.45, 0, 0.5, 0.25, 0).rotateY(Math.PI / 2).translate(x, H + 2.1, z));
-  // valet A-frame sign on the sidewalk
-  for (const s of [-1, 1]) L.push(quad(0.55, 0.8, 0.5, 0.5, 0.75, 0).rotateX(s * 0.18).rotateY(Math.PI / 2 * (s > 0 ? 1 : -1)).translate(-25.4 + s * 0.07, H + 0.4, 24.3));
+  for (const [x, z] of regs) mounted(0.45, 0.45, [0, 0.5, 0.25, 0], Math.PI / 2, x, H + 2.1, z);
+  // valet A-frame sign on the sidewalk (text on the outer faces)
+  for (const s of [-1, 1]) L.push(plate(0.55, 0.8, 0.5, 0.5, 0.75, 0).rotateX(s * 0.18).rotateY(Math.PI / 2 * (s > 0 ? 1 : -1)).translate(-25.4 + s * 0.07, H + 0.4, 24.3));
   const m = new THREE.Mesh(mergeGeometries(L), new THREE.MeshStandardMaterial({ map, roughness: 0.5, metalness: 0.1 }));
   m.castShadow = m.receiveShadow = true;
-  return m;
+  const strip = (g) => { g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('uv'); return g; };
+  const hw = new THREE.Mesh(mergeGeometries(M.map(strip)), new THREE.MeshStandardMaterial({ color: 0x8d908c, roughness: 0.45, metalness: 0.6 }));
+  hw.castShadow = hw.receiveShadow = true;
+  const g = new THREE.Group();
+  g.add(m, hw);
+  return g;
 }
 
 export function buildStreet(scene) {
