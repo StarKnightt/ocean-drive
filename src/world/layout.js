@@ -72,7 +72,7 @@ export const SHORE_X = (() => {
 // The shore break: small sunrise waves spill here, a few metres off the shoreline.
 export const BREAK_X = SHORE_X + 2.5;
 // Highest swash reach (the wet/dry line sits just above it).
-export const SWASH_MAX = 7.0;
+export const SWASH_MAX = 5.5;
 export const WET_LINE_X = BREAK_X - SWASH_MAX - 0.6;
 
 // Low mounds and wind undulations on the dry beach (m). Zero at the park wall, in the

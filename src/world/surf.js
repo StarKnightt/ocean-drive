@@ -36,7 +36,7 @@ function eventFront(e, z, t) {
     fresh = 1 - d;
   }
   // lace lobes on the leading edge
-  const lobes = (0.22 * Math.sin(z * 0.83 + e.ph * 3) + 0.12 * Math.sin(z * 2.1 + e.ph * 5)) * r;
+  const lobes = (0.22 * Math.sin(z * 0.83 + e.ph * 3) + 0.12 * Math.sin(z * 2.1 + e.ph * 5) + 0.3 * Math.abs(Math.sin(z * 1.9 + e.ph * 2)) - 0.15) * r;
   return { front: BREAK_X - runupAt(e, z) * r + lobes, fresh };
 }
 
@@ -154,7 +154,7 @@ vec3 surfFront(float z, float t) {
     float r, fresh;
     if (tau < tb + tu) { float u = (tau - tb) / tu; r = 1.0 - (1.0 - u) * (1.0 - u); fresh = 1.0; }
     else { float d = (tau - tb - tu) / td; r = 1.0 - pow(d, 1.4); fresh = 1.0 - d; }
-    float lobes = (0.22 * sin(z * 0.83 + B.y * 3.0) + 0.12 * sin(z * 2.1 + B.y * 5.0)) * r;
+    float lobes = (0.22 * sin(z * 0.83 + B.y * 3.0) + 0.12 * sin(z * 2.1 + B.y * 5.0) + 0.3 * abs(sin(z * 1.9 + B.y * 2.0)) - 0.15) * r;   // scalloped
     float f = SURF_BREAK_X - surfRunup(A, B, z) * r + lobes;
     if (f < best.x) best = vec3(f, fresh, A.z);
   }
@@ -167,7 +167,7 @@ float surfCrest(float x, float z, float t, out float white) {
     vec4 A = uSurfA[i]; vec4 B = uSurfB[i];
     float tau = t - A.x, k = A.y, tb = ${T_BREAK.toFixed(2)} * k;
     if (tau < -${T_LEAD.toFixed(1)} || tau > tb + 2.5) continue;
-    float amp = (0.25 + 0.35 * A.z) * (0.85 + 0.15 * sin(z * 0.045 + B.y));
+    float amp = (0.4 + 0.4 * A.z) * (0.85 + 0.15 * sin(z * 0.045 + B.y));
     // crest line slightly oblique and wavy along the shore
     float xc = SURF_BREAK_X + (tb - tau) * 3.0 + 1.2 * sin(z * 0.031 + B.y) + 0.5 * sin(z * 0.11 + 2.0 * B.y);
     float d = x - xc;
@@ -181,6 +181,18 @@ float surfCrest(float x, float z, float t, out float white) {
     float lip = smoothstep(tb - 0.6, tb, tau) * (tau < tb ? 1.0 : exp(-(tau - tb) / 1.2));
     white = max(white, lip * smoothstep(0.35, 0.9, prof) * (0.6 + 0.4 * surfN(vec2(z * 1.7, x * 2.3 - t * 3.0))));
   }
+  // between the sets: 2-3 rows of small spilling breakers, segmented along the shore,
+  // growing as they shoal, white on the crest and a whitewater trail behind once broken
+  float ph = (x - SURF_BREAK_X) / 8.5 + t * 3.0 / 8.5 + 0.35 * sin(z * 0.05);
+  float f = fract(ph), row = floor(ph);
+  float seg = smoothstep(0.3, 0.6, surfN(vec2(z * 0.045 + row * 3.7, row * 1.3)));
+  float grow = smoothstep(SURF_BREAK_X + 30.0, SURF_BREAK_X + 8.0, x) * smoothstep(SURF_BREAK_X - 1.5, SURF_BREAK_X + 1.5, x);
+  float back = exp(-f * f / 0.06), face = exp(-(1.0 - f) * (1.0 - f) / 0.02);
+  float rp = max(back, face);
+  h += (0.12 + 0.3 * seg) * grow * rp;
+  float brk = seg * grow * smoothstep(SURF_BREAK_X + 12.0, SURF_BREAK_X + 5.0, x);
+  float wn = surfN(vec2(z * 2.1, x * 1.7 - t * 2.0)) * 0.5 + surfN(vec2(z * 6.0, x * 5.0)) * 0.5;
+  white = max(white, brk * (smoothstep(0.75, 0.98, rp) + 0.8 * exp(-f / 0.12) * smoothstep(0.35, 0.6, wn)) * (0.6 + 0.4 * wn));
   return h;
 }
 `;

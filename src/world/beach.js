@@ -25,8 +25,8 @@ import { mulberry32 } from '../textures/noise.js';
 const DETAIL_TILE = 6;   // m covered by one tile of the micro-relief texture
 
 // ---------------------------------------------------------------------------
-// micro relief bake: R,G = slope (dh/dx, dh/dz), B = lit fraction under the fixed
-// sunrise sun (self-shadowing of footprints and churn), A = albedo variation
+// churned-sand bake: R,G = slope (dh/dx, dh/dz), B = lit fraction under the fixed
+// sunrise sun (self-shadowing), A = albedo variation. Footprints are procedural.
 
 function periodicNoise(N, cells, rnd) {
   const g = new Float32Array(cells * cells);
@@ -54,35 +54,6 @@ function bakeSandDetail(N = 1024) {
   for (const [cells, amp] of [[6, 0.014], [14, 0.007], [32, 0.0035], [80, 0.0015]]) {
     const n = periodicNoise(N, cells, rnd);
     for (let i = 0; i < H.length; i++) H[i] += (n[i] - 0.5) * 2 * amp;
-  }
-  // footprints: walkers crossing the tile in all directions
-  const stamp = (cx, cy, ang, D) => {
-    const ca = Math.cos(ang), sa = Math.sin(ang);
-    const R = Math.ceil(0.2 / texel);
-    const ci = Math.round(cx / texel), cj = Math.round(cy / texel);
-    for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) {
-      const px = di * texel, py = dj * texel;
-      const u = px * ca + py * sa, v = -px * sa + py * ca;
-      const rh = Math.hypot((u + 0.07) / 0.055, v / 0.042);
-      const rb = Math.hypot((u - 0.06) / 0.075, v / 0.05);
-      const r = Math.min(rh, rb);
-      let h = 0;
-      if (r < 1.3) h -= D * (1 - smooth(0.25, 1.25, r));
-      h += D * 0.4 * Math.exp(-(((r - 1.35) / 0.28) ** 2)) * (u > 0 ? 1.3 : 0.7);   // kicked-up rim, more at the toe
-      if (h === 0) continue;
-      const i = ((ci + di) % N + N) % N, j = ((cj + dj) % N + N) % N;
-      H[j * N + i] += h;
-    }
-  };
-  for (let w = 0; w < 16; w++) {
-    let x = rnd() * DETAIL_TILE, y = rnd() * DETAIL_TILE, a = rnd() * Math.PI * 2;
-    const D = 0.012 + rnd() * 0.016;
-    const steps = 6 + Math.floor(rnd() * 8);
-    for (let s = 0; s < steps; s++) {
-      const side = s % 2 ? 1 : -1;
-      stamp(x - Math.sin(a) * 0.09 * side, y + Math.cos(a) * 0.09 * side, a, D * (0.6 + rnd() * 0.5));
-      x += Math.cos(a) * 0.72; y += Math.sin(a) * 0.72; a += (rnd() - 0.5) * 0.25;
-    }
   }
   // slopes
   const data = new Uint8Array(N * N * 4);
@@ -163,8 +134,10 @@ function sandGeometry(zA, zB, rows, detail) {
 }
 
 function sandMaterial(detailTex, surf) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xefe6d4, roughness: 0.95 });
-  const f = (v) => v.toFixed(2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xe6d8c2, roughness: 0.95 });
+  const f = (v) => v.toFixed(3);
+  const L = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.Vector3());
+  const tanEl = Math.tan((SUN.elevationDeg * Math.PI) / 180);
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uDetail = { value: detailTex };
     Object.assign(shader.uniforms, surf.uniforms);
@@ -175,77 +148,119 @@ function sandMaterial(detailTex, surf) {
       .replace('#include <common>', `#include <common>
         varying vec3 vOdW;
         uniform sampler2D uDetail;
-        ${SURF_GLSL}`)
+        ${SURF_GLSL}
+        const vec3 SD_SUN = vec3(${f(L.x)}, ${f(L.y)}, ${f(L.z)});
+        // Footprints: one candidate per hashed cell (random offset, heading, size, depth),
+        // two scales (fresh prints, old wind-softened ones); nothing repeats.
+        float sdShoe(vec2 d, float ang) {
+          float c = cos(ang), s = sin(ang);
+          float u = d.x * c + d.y * s, v = -d.x * s + d.y * c;
+          float r = min(length(vec2((u + 0.07) / 0.055, v / 0.042)), length(vec2((u - 0.06) / 0.075, v / 0.05)));
+          return -(1.0 - smoothstep(0.25, 1.25, r)) + 0.4 * exp(-pow((r - 1.35) / 0.28, 2.0)) * (u > 0.0 ? 1.3 : 0.7);
+        }
+        float sdPrints(vec2 p, float cell, float dens, float seed, float depthK, float scaleK) {
+          vec2 g = p / cell;
+          vec2 c0 = floor(g - 0.5);
+          float h = 0.0;
+          for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+            vec2 c = c0 + vec2(float(i), float(j));
+            float r0 = surfHash(c + seed);
+            if (r0 > dens) continue;
+            vec2 o = vec2(surfHash(c + seed + 1.7), surfHash(c + seed + 3.1)) * 0.5 + 0.25;
+            float ang = surfHash(c + seed + 5.3) * 6.2832;
+            float sc = scaleK * (0.85 + 0.3 * surfHash(c + seed + 7.9));
+            float dp = depthK * (0.5 + 0.5 * surfHash(c + seed + 9.4));
+            h += dp * sdShoe((p - (c + o) * cell) / sc, ang);
+          }
+          return h;
+        }
+        float sdH(vec2 p, float busy) {
+          return sdPrints(p, 0.72, 0.62 * busy, 11.0, 0.022, 1.0) + sdPrints(p + 0.37, 1.35, 0.5 * busy, 47.0, 0.012, 1.35);
+        }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        vec4 odDt = texture2D(uDetail, vOdW.xz / ${f(DETAIL_TILE)});
         float odX = vOdW.x, odZ = vOdW.z;
-        // wet / damp / dry: the wet line is the last high swash reach
+        // churned sand: the baked tile at two rotated scales so it never visibly repeats
+        vec2 odP2 = mat2(0.8, 0.6, -0.6, 0.8) * vOdW.xz;
+        vec4 odDa = texture2D(uDetail, vOdW.xz / ${f(DETAIL_TILE)});
+        vec4 odDb = texture2D(uDetail, odP2 / ${f(DETAIL_TILE * 0.71)} + 0.31);
+        // zones: dry -> damp band -> wet (swash reach) -> glassy strip at the water
         float odWl = ${f(WET_LINE_X)} + 0.5 * sin(odZ * 0.21) + 0.3 * sin(odZ * 0.83 + 1.3);
-        float odWet = smoothstep(odWl - 0.12, odWl + 0.12, odX);
-        float odDamp = smoothstep(${f(WET_LINE_X - 10)}, odWl, odX);
-        // beach-cleaner rake passes by the park wall, fresh (few footprints)
+        float odWet = smoothstep(odWl - 0.1, odWl + 0.1, odX);
+        float odDamp = smoothstep(odWl - 3.5, odWl - 0.2, odX);
+        float odGlass = smoothstep(${f(SHORE_X - 2.4)}, ${f(SHORE_X - 1.0)}, odX + 0.4 * sin(odZ * 0.37));
         float odRake = smoothstep(${f(SAND.x0 + 0.5)}, ${f(SAND.x0 + 1.0)}, odX) * (1.0 - smoothstep(${f(SAND.x0 + 12)}, ${f(SAND.x0 + 14)}, odX));
         // relief strength: trodden dry sand > raked > damp > swash-smoothed wet sand
-        float odW = mix(1.0, 0.3, odRake) * (1.0 - 0.45 * odDamp) * (1.0 - 0.8 * odWet);
-        // footprint density varies (busy paths, quiet stretches): breaks up the tiling
-        odW *= 0.35 + 0.85 * smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4);
-        diffuseColor.rgb *= mix(1.0, 0.72 + 0.56 * odDt.a, 0.6 + 0.4 * (1.0 - odWet));
-        // sargassum wrack line: patchy brown-gold band at the old high-tide line
-        float odWx = ${f(WET_LINE_X - 2.6)} + 0.9 * sin(odZ * 0.047) + 0.4 * sin(odZ * 0.19 + 1.0);
-        float odWd = abs(odX - odWx) / (0.55 + 0.35 * surfN(vec2(odZ * 0.08, 3.0)));
-        float odWr = (1.0 - smoothstep(0.6, 1.0, odWd)) * smoothstep(0.35, 0.6, surfN(vec2(odX * 1.4, odZ * 0.45)) * 0.7 + surfN(vec2(odZ * 2.3, odX * 3.1)) * 0.5);
-        vec3 odWc = mix(vec3(0.24, 0.15, 0.06), vec3(0.52, 0.36, 0.13), surfN(vec2(odZ * 5.0, odX * 5.0)));
-        diffuseColor.rgb = mix(diffuseColor.rgb, odWc, odWr * 0.9);
+        float odBusy = smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4);
+        float odW = mix(1.0, 0.35, odRake) * (1.0 - 0.3 * odDamp) * (1.0 - 0.75 * odWet);
+        float odPrintK = (0.25 + 0.75 * odBusy) * (1.0 - odRake * 0.8) * (1.0 - odWet);
+        diffuseColor.rgb *= 0.8 + 0.4 * (odDa.a * 0.5 + odDb.a * 0.5);
+        // sargassum wrack line: a continuous red-brown band above the swash, clumpy
+        float odWx = ${f(WET_LINE_X - 0.9)} + 0.5 * sin(odZ * 0.047) + 0.25 * sin(odZ * 0.19 + 1.0);
+        float odWd = abs(odX - odWx) / (0.45 + 0.3 * surfN(vec2(odZ * 0.08, 3.0)));
+        float odWr = (1.0 - smoothstep(0.55, 1.0, odWd)) * (0.55 + 0.45 * smoothstep(0.3, 0.6, surfN(vec2(odX * 1.4, odZ * 0.45)) * 0.7 + surfN(vec2(odZ * 2.3, odX * 3.1)) * 0.5));
+        vec3 odWc = mix(vec3(0.17, 0.07, 0.03), vec3(0.42, 0.22, 0.08), surfN(vec2(odZ * 5.0, odX * 5.0)));
+        diffuseColor.rgb = mix(diffuseColor.rgb, odWc, odWr);
         // tire tracks of the lifeguard truck
         float odTx = 57.0 + 4.0 * sin(odZ / 37.0) + 1.5 * sin(odZ / 13.0 + 1.0);
         float odT1 = abs(odX - odTx - 0.82), odT2 = abs(odX - odTx + 0.82);
         float odTd = min(odT1, odT2);
-        float odTrack = (1.0 - smoothstep(0.1, 0.15, odTd)) * (1.0 - smoothstep(${SAND_DETAIL_Z - 30}.0, ${SAND_DETAIL_Z}.0, abs(odZ)));
-        diffuseColor.rgb *= 1.0 - 0.08 * odTrack;
-        // moisture darkening
-        diffuseColor.rgb *= mix(1.0, 0.84, odDamp);
-        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.46, 0.44, 0.42), odWet);`)
+        float odTnear = 1.0 - smoothstep(${SAND_DETAIL_Z - 30}.0, ${SAND_DETAIL_Z}.0, abs(odZ));
+        float odTrack = (1.0 - smoothstep(0.1, 0.15, odTd)) * odTnear;
+        // moisture: darker damp band, dark wet sand, darkest glassy strip
+        diffuseColor.rgb *= mix(1.0, 0.78, odDamp);
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.5, 0.45, 0.4), odWet);
+        diffuseColor.rgb *= mix(1.0, 0.75, odGlass);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, 0.55, odWet);`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        roughnessFactor = mix(roughnessFactor, 0.5, odWet);`)
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
         {
-          // micro relief in world space on top of the mesh normal
-          vec2 odS = (odDt.rg - 0.5) * 2.0 * 0.55 * odW;
-          // rake grooves run along the shore; fade before they alias
-          float odLam = 0.09;
-          float odAa = 1.0 - smoothstep(0.15, 0.4, fwidth(odX) / odLam);
+          // Relief shading under the grazing sun, done as a factor on the sun term (not
+          // by bending the lighting normal): dents get a dark sun-away side and long
+          // 7 deg shadows but are never brighter than the flat sand around them.
+          vec2 odS = ((odDa.rg - 0.5) + mat2(0.8, -0.6, 0.6, 0.8) * (odDb.rg - 0.5)) * 0.55 * odW;
+          float odAa = 1.0 - smoothstep(0.15, 0.4, fwidth(odX) / 0.09);
           float odBand = 0.6 + 0.4 * sin(odZ * 0.02 + floor(odX / 2.3) * 1.7);
-          odS.x += odRake * odAa * odBand * 0.4 * cos(6.2832 * odX / odLam + 0.6 * sin(odZ * 0.3));
-          // tire track: sunken with sharp edges and a chevron tread
+          odS.x += odRake * odAa * odBand * 0.4 * cos(6.2832 * odX / 0.09 + 0.6 * sin(odZ * 0.3));
           float odTs = sign(odX - odTx - 0.82) * (1.0 - smoothstep(0.02, 0.05, abs(odT1 - 0.13))) + sign(odX - odTx + 0.82) * (1.0 - smoothstep(0.02, 0.05, abs(odT2 - 0.13)));
           float odTaa = 1.0 - smoothstep(0.2, 0.5, fwidth(odZ) / 0.11);
-          odS.x += odTs * 0.5 * (1.0 - smoothstep(${SAND_DETAIL_Z - 30}.0, ${SAND_DETAIL_Z}.0, abs(odZ)));
-          odS.y += odTrack * odTaa * 0.45 * cos(6.2832 * (odZ + abs(odTd) * 0.8) / 0.11);
-          vec3 odGeo = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
-          vec3 odN = normalize(odGeo + vec3(-odS.x, 0.0, -odS.y));
-          normal = normalize((viewMatrix * vec4(odN, 0.0)).xyz);
-        }`)
-      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
-        // baked footprint / churn shadows under the grazing sun
-        reflectedLight.directDiffuse *= mix(1.0, odDt.b, 0.92 * odW);
+          odS.x += odTs * 0.5 * odTnear;
+          odS.y += odTrack * odTaa * 0.45 * cos(6.2832 * (odZ + odTd * 0.8) / 0.11);
+          float odLit = odDa.b * odDb.b;
+          float odDist = length(vOdW - cameraPosition);
+          float odNear = (1.0 - smoothstep(25.0, 45.0, odDist)) * odPrintK;
+          if (odNear > 0.01) {
+            vec2 p = vOdW.xz;
+            float e = 0.012;
+            float h0 = sdH(p, odBusy), hx = sdH(p + vec2(e, 0.0), odBusy), hz = sdH(p + vec2(0.0, e), odBusy);
+            odS += vec2(hx - h0, hz - h0) / e * odNear;
+            // footprint shadows: march toward the sun
+            vec2 ld = normalize(SD_SUN.xz);
+            float occ = 0.0;
+            for (int k = 1; k <= 4; k++) {
+              float s = float(k * k) * 0.022;
+              occ = max(occ, sdH(p + ld * s, odBusy) - (h0 + s * ${f(tanEl)} + 0.0008));
+            }
+            odLit *= 1.0 - smoothstep(0.0, 0.004, occ) * odNear;
+          }
+          vec3 odNg = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+          vec3 odNd = normalize(odNg + vec3(-odS.x, 0.0, -odS.y));
+          float odFlat = max(dot(odNg, SD_SUN), 0.04);
+          float odRel = clamp(max(dot(odNd, SD_SUN), 0.0) / odFlat, 0.0, 1.08);
+          reflectedLight.directDiffuse *= mix(1.0, odRel * mix(1.0, odLit, 0.92), min(1.0, odW + odNear));
+        }
         #ifdef USE_FOG
         {
           vec3 odVd = normalize(vFogOffset);
           float odG = dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz));
           float odGraze = 1.0 - abs(odVd.y);
-          float odInto = smoothstep(-0.2, 0.9, odG) * smoothstep(0.05, 0.75, odGraze) * (1.0 - odWet);
           float odAway = smoothstep(0.2, -1.0, odG) * odGraze;
-          // rough sand under a grazing sun: dim looking into the sun, warm glow down-sun
-          reflectedLight.directDiffuse *= mix(1.0, 0.2, odInto) * (1.0 + 1.2 * odAway);
-          reflectedLight.indirectDiffuse *= mix(1.0, 0.6, odInto);
-          reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(0.8, 0.7, 0.58), odAway);
-          reflectedLight.directSpecular *= (1.0 - 0.95 * odInto) * (1.0 - smoothstep(0.0, 0.2, odWet));
-          float odL = dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722));
-          vec3 odCool = odL * vec3(0.82, 0.9, 1.06);
-          reflectedLight.indirectDiffuse = mix(reflectedLight.indirectDiffuse, odCool, 0.6 * odInto * (1.0 - odDamp));
+          // warm grains down-sun; the lilac sky fill is kept modest against the sun term
+          reflectedLight.directDiffuse *= 1.0 + 0.8 * odAway;
+          reflectedLight.indirectDiffuse *= vec3(0.62, 0.57, 0.52) * mix(1.0, 0.85, odAway);
+          reflectedLight.directSpecular *= 1.0 - smoothstep(0.0, 0.2, odWet);
         }
         #endif`)
-      // wet sand: a thin water film mirroring the sunrise sky, with the sun streak
+      // wet sand: glassy film mirroring the gold sky; a soft sun glow, no hard streak
       .replace('#include <opaque_fragment>', `
         #ifdef USE_FOG
         {
@@ -253,26 +268,23 @@ function sandMaterial(detailTex, surf) {
           float odNv = max(-odI.y, 0.02);
           vec3 odR = reflect(odI, vec3(0.0, 1.0, 0.0));
           float odF = 0.02 + 0.98 * pow(1.0 - odNv, 5.0);
-          float odRefl = odWet * (0.22 + 0.5 * odF);
-          odRefl = max(odRefl, odDamp * odF * 0.08);
-          vec3 odRb = normalize(vec3(odR.x, odR.y + 0.12, odR.z));
-          outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.65, 0.0)) * 0.55, odRefl);
+          float odRefl = odWet * (0.08 + 0.3 * odF) + odGlass * (0.3 + 0.5 * odF);
+          vec3 odRb = normalize(vec3(odR.x, odR.y * 0.6 + 0.01, odR.z));   // film ripples smear it toward the gold horizon
+          outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.65, 0.0)) * 0.6, min(odRefl, 0.85));
           vec3 odV = -odI;
           vec3 odH = normalize(OD_SUN + odV);
           vec2 odFw = normalize(odI.xz + 1e-5);
           vec2 odRt = vec2(-odFw.y, odFw.x);
           float odSx = dot(odH.xz, odRt) / odH.y, odSz = dot(odH.xz, odFw) / odH.y;
-          float odRip = 0.15 + 1.1 * surfN(vec2(odX * 2.5, odZ * 5.0)) * surfN(vec2(odX * 0.9 + 3.0, odZ * 1.7));
-          float odGl = odRip * exp(-(odSx * odSx / (2.0 * 0.018 * 0.018) + odSz * odSz / (2.0 * 0.06 * 0.06)));
-          float odFh = 0.02 + 0.98 * pow(1.0 - max(dot(odH, odV), 0.0), 5.0);
-          vec3 odSp = directLight.color * vec3(1.0, 0.62, 0.26) * odFh * odGl * 6.0 * odWet;
-          float odSl = dot(odSp, vec3(0.2126, 0.7152, 0.0722));
-          outgoingLight += odSp / (1.0 + odSl / 2.5);
+          // broad, soft gold glow (the wet grains scatter the sun into a patch)
+          float odGl = exp(-(odSx * odSx / (2.0 * 0.08 * 0.08) + odSz * odSz / (2.0 * 0.1 * 0.1)));
+          vec3 odSp = directLight.color * vec3(1.0, 0.62, 0.3) * odGl * (0.06 * odWet + 0.4 * odGlass);
+          outgoingLight += odSp / (1.0 + dot(odSp, vec3(0.2126, 0.7152, 0.0722)) / 1.5);
         }
         #endif
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'beach-sand-v1';
+  mat.customProgramCacheKey = () => 'beach-sand-v2';
   return mat;
 }
 
@@ -318,8 +330,8 @@ function swashSheet(surf) {
       ${FOG_FN_GLSL}
       ${SURF_GLSL}
       float odFoam(vec2 p, float t) {
-        float a = sqrt(odWorley(p * 2.2 + vec2(t * 0.2, 0.0)));
-        float b = sqrt(odWorley(p * 5.2 - vec2(0.0, t * 0.12) + 3.1));
+        float a = sqrt(odWorley(p * 3.6 + vec2(t * 0.2, 0.0)));
+        float b = sqrt(odWorley(p * 9.0 - vec2(0.0, t * 0.12) + 3.1));
         float dens = odNoise(p * 0.8);
         float fPatch = smoothstep(0.3, 0.7, odNoise(p * vec2(0.5, 0.22)));
         float lace = smoothstep(0.68 - 0.08 * dens, 0.76, a) * 0.8 + smoothstep(0.66 - 0.08 * dens, 0.74, b) * 0.45;
@@ -350,16 +362,19 @@ function swashSheet(surf) {
         // glint of the low sun on the sheet
         vec3 H = normalize(OD_SUN + V);
         float nh = max(dot(n, H), 0.0);
-        float spec = pow(nh, 900.0) * 30.0;
+        float spec = pow(nh, 900.0) * 30.0 * smoothstep(0.55, 0.85, odNoise(p * 14.0 + t * 1.5));
         vec3 col = sky * F + vec3(0.018, 0.032, 0.028) * (1.0 - F);
-        float alpha = clamp(0.28 + 0.5 * smoothstep(0.0, 0.08, depth) * 0.6 + F * 0.6, 0.0, 0.92);
+        float alpha = clamp(0.12 + 0.25 * smoothstep(0.0, 0.08, depth) + F * 0.6, 0.0, 0.9);
         // foam: bright lace at the leading edge, bubble trails behind, fading as it drains
         float lace = odFoam(p, t);
-        float edge = exp(-max(s, 0.0) / (0.22 + 0.2 * fresh)) * smoothstep(-0.02, 0.03, s);
-        float foam = max(edge * mix(0.6, 1.0, lace), lace * exp(-max(s, 0.0) / 1.6) * 0.6);
+        float edge = exp(-max(s, 0.0) / (0.1 + 0.12 * fresh)) * smoothstep(-0.02, 0.01, s);
+        // lacy leading edge, thin bubble trails behind it
+        float trail = smoothstep(0.6, 0.9, odNoise(vec2(p.x * 0.8, p.y * 7.0 + p.x * 1.3)));
+        float foam = max(edge * mix(0.45, 1.0, lace), max(lace, trail * 0.7) * exp(-max(s, 0.0) / 1.4) * 0.75);
         foam *= 0.35 + 0.65 * fresh;
         vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
-        vec3 foamCol = vec3(0.93) * (OD_SUNCOL * OD_SUN_I * 0.318 * 0.3 + skyUp * 1.1);
+        float foamL = dot(OD_SUNCOL * OD_SUN_I * 0.318 * 0.35 + skyUp * 1.1, vec3(0.2126, 0.7152, 0.0722));
+        vec3 foamCol = vec3(1.0, 0.97, 0.92) * 0.85 * foamL * 1.6;
         col = mix(col, foamCol, foam);
         col += OD_SUNCOL * OD_SUN_I * vec3(1.0, 0.7, 0.4) * spec * (1.0 - foam) * 0.02;
         alpha = max(alpha * (1.0 - foam), foam);
@@ -402,10 +417,19 @@ function beam(a, b, w, hex) {
   return colorize(g, hex);
 }
 
+// round rail between two points
+function tubeRail(a, b, r, hex) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const g = new THREE.CylinderGeometry(r, r, A.distanceTo(B), 10);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), B.clone().sub(A).normalize()));
+  g.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
+  return colorize(g, hex);
+}
+
 // Painted plywood / fibreglass: board seams, salt-bleached chips showing grey wood,
 // grime low down.
-function paintedMaterial(extra = {}) {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, ...extra });
+function paintedMaterial({ wear = 1, ...extra } = {}) {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: wear ? 0.72 : 0.55, ...extra });
   mat.onBeforeCompile = (s) => {
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vPw;\nvarying vec3 vPn;')
@@ -421,17 +445,19 @@ function paintedMaterial(extra = {}) {
         {
           vec2 uvw = abs(vPn.x) > 0.5 ? vPw.zy : abs(vPn.z) > 0.5 ? vPw.xy : vPw.xz;
           float vert = 1.0 - abs(vPn.y);
-          float seam = smoothstep(0.9, 0.97, fract(vPw.y / 0.15)) * vert * 0.22;
-          float chip = smoothstep(0.8, 0.86, pwN(uvw * 19.0) * 0.6 + pwN(uvw * 73.0) * 0.5);
+          float seam = smoothstep(0.9, 0.97, fract(vPw.y / 0.15)) * vert * 0.22 * ${wear.toFixed(2)};
+          float chip = smoothstep(0.82, 0.86, pwN(uvw * 31.0) * 0.6 + pwN(uvw * 97.0) * 0.5) * ${wear.toFixed(2)};
           float grime = (1.0 - smoothstep(0.0, 1.2, vPw.y - ${(sandHeight(TOWER.x)).toFixed(2)})) * 0.25;
           vec3 c = diffuseColor.rgb;
           c = mix(c, vec3(dot(c, vec3(0.333))), 0.08);                     // salt-bleached
-          c = mix(c, vec3(0.66, 0.62, 0.56), chip * 0.3);                   // chipped to grey wood
-          c *= (1.0 - seam) * (1.0 - grime) * (0.94 + 0.12 * pwN(uvw * 3.0));
+          c = mix(c, vec3(0.7, 0.66, 0.6), chip * 0.2);                   // chipped to grey wood
+          c *= (1.0 - seam) * (1.0 - grime) * (1.0 - ${(0.06 * wear).toFixed(3)} + ${(0.12 * wear).toFixed(3)} * pwN(uvw * 3.0));
           diffuseColor.rgb = c;
-        }`);
+        }`)
+      // sides turned away from the low sun sit in soft sky shade, not front-lit colour
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n        reflectedLight.indirectDiffuse *= 0.7;');
   };
-  mat.customProgramCacheKey = () => 'beach-painted-v1' + (extra.side ?? '');
+  mat.customProgramCacheKey = () => 'beach-painted-v2-' + wear + (extra.side ?? '');
   return mat;
 }
 
@@ -441,7 +467,7 @@ function paintedMaterial(extra = {}) {
 const T = {
   deck: { x0: -2.0, x1: 3.4, z0: -2.0, z1: 2.0 },
   cabin: { x0: 0.7, x1: 3.2, z0: -1.25, z1: 1.25, h: 2.35 },
-  roof: { x0: -1.35, x1: 3.75, z0: -2.05, z1: 2.05 },
+  roof: { x0: -1.5, x1: 4.3, z0: -2.55, z1: 2.55 },
   stair: { z0: -1.85, z1: -0.75, run: 0.28 },
 };
 
@@ -450,25 +476,43 @@ function buildTower(scene, colliders) {
   const base = sandHeight(bx) + sandDetail(bx, bz);
   const D = TOWER.deckHeight;
   const PINK = 0xf0a0b4, TEAL = 0x2fb5a8, YEL = 0xf6d24a, NAVY = 0x2b3f8c, WHITE = 0xf3efe6, DECK = 0xd9cdb6, ORANGE = 0xf08a3c;
-  const parts = [], glass = [];
+  const parts = [], glass = [], rails = [];
   const add = (g) => parts.push(g);
+  const addR = (g) => rails.push(g);
   const col = (x0, x1, y0, y1, z0, z1) => colliders.push({ min: { x: bx + x0, y: base + y0, z: bz + z0 }, max: { x: bx + x1, y: base + y1, z: bz + z1 } });
 
   // skids on the sand, posts, cross bracing
-  for (const x of [-1.8, 3.2]) add(boxAt(x - 0.14, x + 0.14, -0.1, 0.16, -2.3, 2.3, ORANGE));
+  // wide skid beams on the sand, cross sleepers
+  for (const x of [-1.8, 3.2]) add(boxAt(x - 0.26, x + 0.26, -0.12, 0.2, -2.6, 2.6, ORANGE));
+  for (const z of [-2.35, 2.35]) add(boxAt(-2.2, 3.6, 0.2, 0.36, z - 0.2, z + 0.2, ORANGE));
   const posts = [];
   for (const x of [-1.8, 0.7, 3.2]) for (const z of [-1.8, 1.8]) posts.push([x, z]);
   for (const [x, z] of posts) {
     add(boxAt(x - 0.1, x + 0.1, 0.1, D - 0.2, z - 0.1, z + 0.1, TEAL));
     col(x - 0.12, x + 0.12, 0, D - 0.2, z - 0.12, z + 0.12);
   }
-  for (const z of [-1.8, 1.8]) {
-    add(beam([-1.8, 0.25, z], [0.7, D - 0.35, z], 0.09, WHITE));
-    add(beam([0.7, 0.25, z], [-1.8, D - 0.35, z], 0.09, WHITE));
-    add(beam([0.7, 0.25, z], [3.2, D - 0.35, z], 0.09, WHITE));
-    add(beam([3.2, 0.25, z], [0.7, D - 0.35, z], 0.09, WHITE));
+  // bold X bracing (above the skirt panel)
+  const yb0 = 1.55;
+  for (const z of [-1.86, 1.86]) {
+    add(beam([-1.8, yb0, z], [0.7, D - 0.35, z], 0.15, NAVY));
+    add(beam([0.7, yb0, z], [-1.8, D - 0.35, z], 0.15, NAVY));
+    add(beam([0.7, yb0, z], [3.2, D - 0.35, z], 0.15, NAVY));
+    add(beam([3.2, yb0, z], [0.7, D - 0.35, z], 0.15, NAVY));
   }
-  for (const x of [-1.8, 3.2]) { add(beam([x, 0.25, -1.8], [x, D - 0.35, 1.8], 0.09, WHITE)); add(beam([x, 0.25, 1.8], [x, D - 0.35, -1.8], 0.09, WHITE)); }
+  for (const x of [-1.86, 3.26]) { add(beam([x, yb0, -1.8], [x, D - 0.35, 1.8], 0.15, NAVY)); add(beam([x, yb0, 1.8], [x, D - 0.35, -1.8], 0.15, NAVY)); }
+  // solid painted skirt panel around the stilts: vertical pink / white stripes, teal trim
+  const skY0 = 0.45, skY1 = 1.5, sw0 = 0.3;
+  for (const z of [-1.92, 1.92]) {
+    for (let x = -1.9, i = 0; x < 3.3; x += sw0, i++) add(boxAt(x, Math.min(x + sw0, 3.3), skY0, skY1, z - 0.03, z + 0.03, i % 2 ? WHITE : PINK));
+    add(boxAt(-1.95, 3.35, skY1, skY1 + 0.08, z - 0.05, z + 0.05, TEAL));
+    add(boxAt(-1.95, 3.35, skY0 - 0.08, skY0, z - 0.05, z + 0.05, TEAL));
+  }
+  for (const x of [-1.92, 3.32]) {
+    for (let z = -1.9, i = 0; z < 1.9; z += sw0, i++) add(boxAt(x - 0.03, x + 0.03, skY0, skY1, z, Math.min(z + sw0, 1.9), i % 2 ? WHITE : PINK));
+    add(boxAt(x - 0.05, x + 0.05, skY1, skY1 + 0.08, -1.95, 1.95, TEAL));
+    add(boxAt(x - 0.05, x + 0.05, skY0 - 0.08, skY0, -1.95, 1.95, TEAL));
+  }
+  col(-1.96, 3.36, skY0, skY1, -1.96, 1.96);
 
   // deck: joists, planks, a pink fascia band
   const dk = T.deck;
@@ -555,12 +599,12 @@ function buildTower(scene, colliders) {
     const len = Math.hypot(bx2 - ax, bz2 - az), n = Math.max(1, Math.round(len / 0.9));
     for (let i = 0; i <= n; i++) {
       const x = ax + ((bx2 - ax) * i) / n, z = az + ((bz2 - az) * i) / n;
-      add(boxAt(x - 0.04, x + 0.04, D, D + rh, z - 0.04, z + 0.04, RAIL));
+      addR(colorize(new THREE.CylinderGeometry(0.035, 0.035, rh, 10).translate(x, D + rh / 2, z), RAIL));
     }
-    for (const y of [rh, rh * 0.5]) add(beam([ax, D + y, az], [bx2, D + y, bz2], y === rh ? 0.07 : 0.045, RAIL));
+    for (const y of [rh, rh * 0.5]) addR(tubeRail([ax, D + y, az], [bx2, D + y, bz2], y === rh ? 0.035 : 0.022, RAIL));
     for (let i = 0; i < n * 4; i++) {   // balusters
       const f2 = (i + 0.5) / (n * 4), x = ax + (bx2 - ax) * f2, z = az + (bz2 - az) * f2;
-      add(boxAt(x - 0.015, x + 0.015, D + 0.05, D + rh * 0.5, z - 0.015, z + 0.015, WHITE));
+      addR(colorize(new THREE.CylinderGeometry(0.012, 0.012, rh * 0.5 - 0.05, 6).translate(x, D + 0.05 + (rh * 0.5 - 0.05) / 2, z), WHITE));
     }
     col(Math.min(ax, bx2) - 0.05, Math.max(ax, bx2) + 0.05, D, D + rh, Math.min(az, bz2) - 0.05, Math.max(az, bz2) + 0.05);
   };
@@ -583,7 +627,7 @@ function buildTower(scene, colliders) {
   }
   for (const z of [st.z0, st.z1]) {
     add(beam([stairX1, D - 0.15, z], [stairX0, gyEnd + 0.05, z], 0.07, TEAL));                // stringer
-    add(beam([stairX1, D + rh, z], [stairX0 + 0.1, gyEnd + rh, z], 0.06, RAIL));             // handrail
+    addR(tubeRail([stairX1, D + rh, z], [stairX0 + 0.1, gyEnd + rh, z], 0.03, RAIL));        // handrail
     add(boxAt(stairX0 + 0.06, stairX0 + 0.14, gyEnd - 0.05, gyEnd + rh, z - 0.04, z + 0.04, RAIL));
     for (let i = 1; i < nT; i += 2) {
       const x = stairX1 - i * run, y = D - i * rise;
@@ -593,13 +637,16 @@ function buildTower(scene, colliders) {
   }
 
   // flags on a pole at the north-east corner (plain yellow and purple)
-  add(colorize(new THREE.CylinderGeometry(0.035, 0.045, 4.4, 8).translate(dk.x1 - 0.08, D + 2.2, dk.z0 + 0.08), WHITE));
-  col(dk.x1 - 0.14, dk.x1 - 0.02, D, D + 4.4, dk.z0 + 0.02, dk.z0 + 0.14);
+  add(colorize(new THREE.CylinderGeometry(0.045, 0.06, 6.2, 8).translate(dk.x1 - 0.08, D + 3.1, dk.z0 + 0.08), WHITE));
+  col(dk.x1 - 0.14, dk.x1 - 0.02, D, D + 6.2, dk.z0 + 0.02, dk.z0 + 0.14);
 
   const mat = paintedMaterial();
   const mesh = new THREE.Mesh(mergeGeometries(parts), mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  const railMesh = new THREE.Mesh(mergeGeometries(rails), paintedMaterial({ wear: 0 }));
+  railMesh.castShadow = true;
+  railMesh.receiveShadow = true;
 
   // soffit: painted tongue-and-groove, bounce-lit warm from the sunlit sand below
   const soffitTex = (() => {
@@ -648,14 +695,15 @@ function buildTower(scene, colliders) {
     s.uniforms.uFlagT = flagU;
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nuniform float uFlagT;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        float fu = clamp(position.x / 0.9, 0.0, 1.0);
-        transformed.z += fu * (0.12 * sin(position.x * 5.0 - uFlagT * 6.0) + 0.05 * sin(position.x * 11.0 - uFlagT * 9.0 + position.y * 4.0));
-        transformed.y -= fu * fu * 0.08;`);
+        float fu = clamp(position.x / 1.7, 0.0, 1.0);
+        transformed.z += fu * (0.18 * sin(position.x * 3.2 - uFlagT * 5.0) + 0.06 * sin(position.x * 8.0 - uFlagT * 8.0 + position.y * 3.0));
+        transformed.y -= fu * fu * 0.12;`);
   };
   flagMat.customProgramCacheKey = () => 'tower-flag';
   const flags = mergeGeometries([
-    colorize(new THREE.PlaneGeometry(0.9, 0.55, 12, 4).translate(0.45, 0, 0).translate(0, D + 4.1, 0), 0xf2c21f),
-    colorize(new THREE.PlaneGeometry(0.8, 0.5, 12, 4).translate(0.4, 0, 0).translate(0, D + 3.45, 0), 0x6b3fa0),
+    colorize(new THREE.PlaneGeometry(1.7, 1.05, 16, 6).translate(0.85, 0, 0).translate(0, D + 5.6, 0), 0x2f9a52),
+    colorize(new THREE.PlaneGeometry(1.6, 1.0, 16, 6).translate(0.8, 0, 0).translate(0, D + 4.45, 0), 0xf2c21f),
+    colorize(new THREE.PlaneGeometry(1.5, 0.95, 16, 6).translate(0.75, 0, 0).translate(0, D + 3.35, 0), 0x6b3fa0),
   ]);
   const flagMesh = new THREE.Mesh(flags, flagMat);
   // blow toward the west-south-west (sea breeze), from the pole
@@ -664,7 +712,7 @@ function buildTower(scene, colliders) {
   flagMesh.castShadow = true;
 
   const tower = new THREE.Group();
-  tower.add(mesh, soffitMesh, glassMesh, flagMesh);
+  tower.add(mesh, railMesh, soffitMesh, glassMesh, flagMesh);
   tower.position.set(bx, base, bz);
   scene.add(tower);
 
@@ -680,76 +728,165 @@ function buildTower(scene, colliders) {
 // ---------------------------------------------------------------------------
 // dune grass, wrack clumps, props
 
-function duneGrass(scene, rnd) {
-  const blades = [];
+function prep(g) {
+  g = g.index ? g.toNonIndexed() : g;
+  if (g.attributes.uv) g.deleteAttribute('uv');
+  if (!g.attributes.normal) g.computeVertexNormals();
+  return g;
+}
+
+// sea grape: a dome of big round leaves, green with the odd bronze-red one
+function seaGrapeGeometry(rnd) {
+  const leaves = [];
+  const cols = [0x55782f, 0x668a37, 0x4a6b2a, 0x76963f, 0x8a5a2c];
+  for (let i = 0; i < 170; i++) {
+    const u = rnd(), a = rnd() * Math.PI * 2, el = Math.acos(1 - u * 0.95);
+    const n = new THREE.Vector3(Math.sin(el) * Math.cos(a), Math.cos(el), Math.sin(el) * Math.sin(a));
+    const r = 0.5 + rnd() * 0.12;
+    const g = new THREE.CircleGeometry(0.05 + rnd() * 0.035, 8);
+    const tilt = n.clone().add(new THREE.Vector3((rnd() - 0.5) * 0.8, 0.5, (rnd() - 0.5) * 0.8)).normalize();
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), tilt));
+    g.translate(n.x * r, n.y * r * 0.85 + 0.05, n.z * r);
+    leaves.push(colorize(g, cols[rnd() < 0.07 ? 4 : Math.floor(rnd() * 4)]));
+  }
+  for (let i = 0; i < 5; i++) {
+    const a = rnd() * 6.28;
+    leaves.push(beam([0, 0, 0], [Math.cos(a) * 0.35, 0.45, Math.sin(a) * 0.35], 0.03, 0x6b5a48));
+  }
+  return mergeGeometries(leaves.map(prep));
+}
+
+// sea oats: an irregular tuft of arching blades and a few drooping seed heads
+function seaOatGeometry(rnd) {
+  const parts = [];
   const green = new THREE.Color(0x7c8a44), straw = new THREE.Color(0xd6c07a), dry = new THREE.Color(0xb59a58);
-  for (let b = 0; b < 42; b++) {
-    const a = rnd() * Math.PI * 2, lean = 0.25 + rnd() * 0.7, h = 0.3 + rnd() * 0.45, w = 0.01 + rnd() * 0.01;
+  for (let b = 0; b < 30; b++) {
+    const a = rnd() * Math.PI * 2, lean = 0.3 + rnd() * 0.8, h = 0.35 + rnd() * 0.5, w = 0.01 + rnd() * 0.008;
     const pos = [], colr = [];
-    const segs = 4;
-    for (let s = 0; s <= segs; s++) {
-      const f = s / segs, y = h * f, off = lean * f * f * h;
-      const cx = Math.cos(a) * off, cz = Math.sin(a) * off;
-      const ww = w * (1 - f * 0.9);
+    for (let s = 0; s <= 4; s++) {
+      const f = s / 4, y = h * f, off = lean * f * f * h;
+      const cx = Math.cos(a) * off, cz = Math.sin(a) * off, ww = w * (1 - f * 0.9);
       pos.push(cx - Math.sin(a) * ww, y, cz + Math.cos(a) * ww, cx + Math.sin(a) * ww, y, cz - Math.cos(a) * ww);
       const c = green.clone().lerp(rnd() < 0.3 ? dry : straw, f * 0.9);
       colr.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
     const idx = [];
-    for (let s = 0; s < segs; s++) { const i = s * 2; idx.push(i, i + 1, i + 2, i + 1, i + 3, i + 2); }
+    for (let s = 0; s < 4; s++) { const i = s * 2; idx.push(i, i + 1, i + 2, i + 1, i + 3, i + 2); }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
     g.setIndex(idx);
-    blades.push(g.toNonIndexed());
+    parts.push(g);
   }
-  // sea-oat seed heads: a tall stalk with a drooping panicle
   for (let k = 0; k < 3; k++) {
-    const a = rnd() * 6.28, h = 0.8 + rnd() * 0.35;
-    blades.push(beam([0, 0, 0], [Math.cos(a) * 0.12, h, Math.sin(a) * 0.12], 0.008, 0xc9b378));
-    for (let s = 0; s < 6; s++) {
-      const y = h - 0.05 - s * 0.05;
-      const e = new THREE.SphereGeometry(0.018, 5, 3).scale(0.6, 1.6, 0.6).translate(Math.cos(a) * 0.12 + Math.cos(a + s) * 0.03, y - 0.03, Math.sin(a) * 0.12 + Math.sin(a + s) * 0.03);
-      blades.push(colorize(e, 0xbfa261));
+    const a = rnd() * 6.28, h = 0.9 + rnd() * 0.4, tip = [Math.cos(a) * 0.18, h, Math.sin(a) * 0.18];
+    parts.push(beam([0, 0, 0], tip, 0.008, 0xc9b378));
+    for (let s = 0; s < 7; s++) {
+      const e = new THREE.SphereGeometry(0.02, 5, 3).scale(0.6, 1.5, 0.6)
+        .translate(tip[0] + Math.cos(a + s) * 0.04, h - 0.06 - s * 0.045, tip[2] + Math.sin(a + s) * 0.04);
+      parts.push(colorize(e, 0xbfa261));
     }
   }
-  const geo = mergeGeometries(blades.map((g) => { g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); g.computeVertexNormals(); return g; }));
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
-  const items = [];
-  for (let p = 0; p < 60; p++) {
-    const cz = (rnd() - 0.5) * 420, cx = SAND.x0 + 0.8 + rnd() * 2.2, n = 14 + Math.floor(rnd() * 20);
-    for (let i = 0; i < n; i++) { const r = Math.sqrt(rnd()), a = rnd() * 6.28; items.push([cx + Math.cos(a) * r * 1.3, cz + Math.sin(a) * r * 4, 0.6 + rnd() * 0.6]); }
+  return mergeGeometries(parts.map(prep));
+}
+
+// saw palmetto: stiff fans of narrow leaflets on short stalks
+function palmettoGeometry(rnd) {
+  const parts = [];
+  for (let f = 0; f < 8; f++) {
+    const a = (f / 8) * Math.PI * 2 + rnd() * 0.5, tilt = 0.5 + rnd() * 0.6, len = 0.45 + rnd() * 0.3;
+    const dir = new THREE.Vector3(Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt));
+    const base = dir.clone().multiplyScalar(0.35);
+    parts.push(beam([0, 0, 0], base.toArray(), 0.02, 0x7a6a3c));
+    const side = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a));
+    for (let k = 0; k < 13; k++) {
+      const t = (k / 12 - 0.5) * 2.2;
+      const d = dir.clone().multiplyScalar(Math.cos(t * 0.6)).addScaledVector(side, Math.sin(t)).normalize();
+      const tipP = base.clone().addScaledVector(d, len);
+      const w = side.clone().multiplyScalar(0.018);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([...base.clone().add(w).toArray(), ...base.clone().sub(w).toArray(), ...tipP.toArray()], 3));
+      parts.push(colorize(g, rnd() < 0.15 ? 0x9a9a52 : 0x5d7a3a));
+    }
   }
-  const im = new THREE.InstancedMesh(geo, mat, items.length);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-  items.forEach(([x, z, s], i) => {
-    e.set((rnd() - 0.5) * 0.2, rnd() * 6.28, (rnd() - 0.5) * 0.2);
-    m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) - 0.02, z), q.setFromEuler(e), new THREE.Vector3(s, s, s));
-    im.setMatrixAt(i, m4);
-  });
-  im.castShadow = true;
-  im.receiveShadow = true;
-  scene.add(im);
+  return mergeGeometries(parts.map(prep));
+}
+
+function duneVegetation(scene, rnd) {
+  const ground = (x, z) => sandHeight(x) + sandDetail(x, z);
+  const fenceX = SAND.x0 + 4.6;
+  const path = (z) => Math.abs(z - 32) < 2.5;         // beach-access gap
+  const grape = [], oats = [], palms = [];
+  // irregular clumps: dense where the along-shore noise is high, gaps elsewhere
+  for (let z = -220; z < 220; z += 0.5 + rnd() * 1.0) {
+    if (path(z)) continue;
+    const dens = 0.5 + 0.5 * Math.sin(z * 0.043 + 1.3) * Math.sin(z * 0.11 + 0.4);
+    if (rnd() > 0.5 + 0.5 * dens) continue;
+    const x = SAND.x0 + 1.0 + Math.pow(rnd(), 0.8) * (fenceX - SAND.x0 - 1.6);
+    const r = rnd();
+    if (r < 0.35) grape.push([x, z, 0.8 + rnd() * 1.0]);
+    else if (r < 0.5) palms.push([x, z, 0.8 + rnd() * 0.7]);
+    for (let k = 0, n = 2 + Math.floor(rnd() * 6); k < n; k++) oats.push([x + (rnd() - 0.5) * 2.2, z + (rnd() - 0.5) * 2.2, 0.6 + rnd() * 0.6]);
+  }
+  const place = (geo, mat, items, sy = 1) => {
+    const im = new THREE.InstancedMesh(geo, mat, items.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    items.forEach(([x, z, s], i) => {
+      e.set((rnd() - 0.5) * 0.15, rnd() * 6.28, (rnd() - 0.5) * 0.15);
+      m4.compose(new THREE.Vector3(x, ground(x, z) - 0.03, z), q.setFromEuler(e), new THREE.Vector3(s * (0.8 + rnd() * 0.5), s * sy * (0.7 + rnd() * 0.4), s * (0.8 + rnd() * 0.5)));
+      im.setMatrixAt(i, m4);
+    });
+    im.castShadow = true;
+    im.receiveShadow = true;
+    scene.add(im);
+  };
+  const leafMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: THREE.DoubleSide });
+  place(seaGrapeGeometry(rnd), leafMat, grape);
+  place(palmettoGeometry(rnd), leafMat, palms);
+  place(seaOatGeometry(rnd), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), oats);
+
+  // rope-and-post dune fence
+  const fence = [];
+  let prev = null;
+  for (let z = -220; z <= 220; z += 2.4) {
+    if (path(z)) { prev = null; continue; }
+    const x = fenceX + 0.15 * Math.sin(z * 0.07), y = ground(x, z);
+    fence.push(colorize(new THREE.CylinderGeometry(0.05, 0.055, 1.0, 7).translate(x, y + 0.42, z), 0x8d8478));
+    if (prev) {
+      const pts = [];
+      for (let i = 0; i <= 8; i++) {
+        const f = i / 8;
+        pts.push(new THREE.Vector3(prev[0] + (x - prev[0]) * f, prev[1] + (y - prev[1]) * f + 0.82 - 0.12 * Math.sin(f * Math.PI), prev[2] + (z - prev[2]) * f));
+      }
+      fence.push(colorize(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4), 0xd6c6a0));
+    }
+    prev = [x, y, z];
+  }
+  const fm = new THREE.Mesh(mergeGeometries(fence.map(prep)), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+  fm.castShadow = true;
+  fm.receiveShadow = true;
+  scene.add(fm);
 }
 
 function wrackClumps(scene, rnd) {
-  const g = new THREE.IcosahedronGeometry(0.12, 1);
+  const g = new THREE.IcosahedronGeometry(0.06, 1);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) * (0.8 + rnd() * 0.5), p.getY(i) * 0.35, p.getZ(i) * (0.8 + rnd() * 0.5));
   g.computeVertexNormals();
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
-  const N = 900;
+  const N = 2600;
   const im = new THREE.InstancedMesh(g, mat, N);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
   for (let i = 0; i < N; i++) {
     const z = (rnd() - 0.5) * 400;
-    const wx = WET_LINE_X - 2.6 + 0.9 * Math.sin(z * 0.047) + 0.4 * Math.sin(z * 0.19 + 1);
-    const x = wx + (rnd() - 0.5) * 1.3;
-    const s = 0.4 + rnd() * 1.3;
+    const wx = WET_LINE_X - 0.9 + 0.5 * Math.sin(z * 0.047) + 0.25 * Math.sin(z * 0.19 + 1);
+    // most on the wrack band, some strays scattered down toward the swash
+    const x = i % 5 === 0 ? wx + rnd() * (WET_LINE_X + 1.5 - wx) : wx + (rnd() - 0.5) * 1.1;
+    const s = 0.5 + rnd() * rnd() * 1.6;
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28);
     m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) + 0.005, z), q, new THREE.Vector3(s * (1 + rnd()), s * (0.5 + rnd() * 0.6), s));
     im.setMatrixAt(i, m4);
-    im.setColorAt(i, c.setRGB(0.28 + rnd() * 0.25, 0.18 + rnd() * 0.14, 0.06 + rnd() * 0.05, THREE.SRGBColorSpace));
+    im.setColorAt(i, c.setRGB(0.24 + rnd() * 0.2, 0.1 + rnd() * 0.09, 0.04 + rnd() * 0.04, THREE.SRGBColorSpace));
   }
   im.receiveShadow = true;
   im.castShadow = true;
@@ -833,7 +970,7 @@ export function buildBeach(scene, surf) {
   const sheet = swashSheet(surf);
   scene.add(sheet);
   wrackClumps(scene, rnd);
-  duneGrass(scene, rnd);
+  duneVegetation(scene, rnd);
   const { surfaces, flagU } = buildTower(scene, colliders);
   props(scene, colliders);
 

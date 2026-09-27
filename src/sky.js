@@ -30,7 +30,7 @@ float odSunSide(vec3 d) {
 }
 
 // Sun glow: Henyey-Greenstein forward-scattering lobe (g = 0.86) for the broad warm
-// hotspot, plus the photographed sun: a blown white-yellow core ~8 deg across (lens
+// hotspot, plus the photographed sun: a blown white-yellow core ~4-5 deg across (lens
 // flare of an over-exposed sun) fading through cream into gold; the true disc sits
 // hidden inside the clipped core.
 vec3 odSunGlow(float mu, float lobe, float core) {
@@ -39,9 +39,9 @@ vec3 odSunGlow(float mu, float lobe, float core) {
   float th = sqrt(max(2.0 * (1.0 - mu), 0.0));          // angle from the sun (rad)
   vec3 c = vec3(1.0, 0.50, 0.14) * 0.26 * hg * lobe;
   float disc = 1.0 - smoothstep(0.0095, 0.0125, th);
-  c += core * (vec3(1.0, 0.80, 0.46) * 11.0 * exp(-pow(th / 0.042, 1.5))   // clipped core -> cream
-             + vec3(1.0, 0.58, 0.20) * 1.6 * exp(-th / 0.09)                // cream -> gold
-             + vec3(4.0, 3.0, 1.6) * disc);
+  c += core * (vec3(1.0, 0.80, 0.46) * 5.5 * exp(-pow(th / 0.028, 1.5))    // clipped core -> cream
+             + vec3(1.0, 0.58, 0.20) * 1.2 * exp(-th / 0.07)                // cream -> gold
+             + vec3(12.0, 9.0, 5.0) * disc);
   return c;
 }
 
@@ -341,7 +341,7 @@ function installSmoothShadows(shadowCam, mapSize) {
 				} else {
 					// the sun's disc gives 0.0093 x blocker distance; kept tighter so long trunk bars
 					// and fringed crowns stay readable far from their casters
-					float pen = max( 0.0026 * dSum / bSum, minM );
+					float pen = max( 0.0016 * dSum / bSum, minM );
 					vec2 rT = clamp( pen / odTexM, vec2( 1.0 ), vec2( 6.0 ) );
 					vec2 stp = rT * texelSize / 3.5;
 					shadow = 0.0;

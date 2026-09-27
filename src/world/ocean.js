@@ -56,7 +56,7 @@ function swellGLSL() {
   }`;
 }
 
-function polarGrid(rings = 170, segs = 256, r0 = 0.25, r1 = 25000) {
+function polarGrid(rings = 240, segs = 320, r0 = 0.25, r1 = 25000) {
   const q = Math.pow(r1 / r0, 1 / (rings - 1));
   const pos = new Float32Array((rings * segs + 1) * 3);
   let o = 3; // vertex 0 = centre
@@ -144,8 +144,8 @@ export function createOcean(scene, surf) {
       // foam lace: white bubble filaments around dark holes, drifting
       float odFoam(vec2 p, float t) {
         // thin white filaments along the bubble-cell borders, open water in the cells
-        float a = sqrt(odWorley(p * 1.8 + vec2(t * 0.15, 0.0)));
-        float b = sqrt(odWorley(p * 4.6 - vec2(0.0, t * 0.1) + 3.1));
+        float a = sqrt(odWorley(p * 3.0 + vec2(t * 0.15, 0.0)));
+        float b = sqrt(odWorley(p * 8.0 - vec2(0.0, t * 0.1) + 3.1));
         float dens = odNoise(p * 0.6 + t * 0.05);
         float lace = smoothstep(0.68 - 0.08 * dens, 0.76, a) * 0.8 + smoothstep(0.66 - 0.08 * dens, 0.74, b) * 0.5;
         // foam gathers in streaky patches, not an even net
@@ -195,9 +195,10 @@ export function createOcean(scene, surf) {
         float F = 0.02 + 0.98 * pow(1.0 - clamp(nv + (1.0 + 1.2 * gz) * sig, 0.0, 1.0), 5.0);
 
         // water body: turquoise over the pale sand shallows, steel-blue offshore
-        vec3 turq = vec3(0.022, 0.075, 0.066);
-        vec3 deep = vec3(0.010, 0.020, 0.032);
-        vec3 body = mix(turq, deep, smoothstep(0.6, 7.0, depth));
+        // body: a hint of turquoise only in the very shallow water, silver-blue beyond
+        vec3 turq = vec3(0.03, 0.08, 0.07);
+        vec3 deep = vec3(0.016, 0.024, 0.034);
+        vec3 body = mix(turq, deep, smoothstep(0.15, 1.2, depth));
         vec3 col = body * (1.0 - F) + sky * F;
 
         // backlit wave faces: sun through the thin crest, green-turquoise
@@ -210,7 +211,8 @@ export function createOcean(scene, surf) {
         vec3 L = OD_SUN;
         vec3 H = normalize(L + V);
         float nh = max(dot(n, H), 1e-4);
-        float m2 = 2.0 * (0.0003 + 0.22 * lost + 0.003 * pow(1.0 - nv, 8.0));
+        // wide glitter field far out (unresolved chop tilts facets toward the sun)
+        float m2 = 2.0 * (0.0012 + 0.6 * lost + 0.003 * pow(1.0 - nv, 8.0) + 0.006 * smoothstep(20.0, 600.0, dist));
         float nh2 = nh * nh;
         float D = min(exp(-(1.0 - nh2) / (nh2 * m2)) / (3.14159 * m2 * nh2 * nh2), 3000.0);
         float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
@@ -218,7 +220,9 @@ export function createOcean(scene, surf) {
         spec *= vec3(1.0, 0.74, 0.38);
         float gl = odNoise(p / max(fp * 1.6, 0.02) * vec2(1.0, 0.35) + vec2(t * 1.7, -t * 0.6));
         float gw = smoothstep(0.0, 0.0012, lost);
-        spec *= mix(1.0, smoothstep(0.58, 0.9, gl) * 5.0, gw);
+        // always broken into sparkles: resolved facets near by, twinkling glints far out
+        float gl2 = odNoise(p * 9.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 23.0 - vec2(t * 1.1, 0.0));
+        spec *= mix(smoothstep(0.18, 0.4, gl2) * 3.5, smoothstep(0.58, 0.9, gl) * 5.0, gw);
         float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
         spec /= 1.0 + sl / mix(1.8, 4.0, gw);
 
@@ -249,15 +253,21 @@ export function createOcean(scene, surf) {
 
         // lit foam: sun on bubbly (all-facing) foam + sky fill; very shallow sun, so modest
         vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
-        vec3 foamCol = vec3(0.92, 0.93, 0.9) * (OD_SUNCOL * OD_SUN_I * 0.318 * (0.22 + 0.35 * toSun) + skyUp * 1.1);
+        // white foam (albedo ~0.8): its light is taken as luminance so it stays cream-white
+        float foamL = dot(OD_SUNCOL * OD_SUN_I * 0.318 * (0.3 + 0.35 * toSun) + skyUp * 1.1, vec3(0.2126, 0.7152, 0.0722));
+        vec3 foamCol = vec3(1.0, 0.97, 0.92) * 0.85 * foamL * 1.6;
         col = mix(col, foamCol, foamAmt);
         spec *= 1.0 - foamAmt;
 
         // shallow water is clear: the wet sand shows through the last few centimetres
-        float alpha = smoothstep(-0.02, 0.05, depth) * mix(0.55, 1.0, smoothstep(0.05, 0.9, depth));
+        float alpha = smoothstep(-0.02, 0.03, depth) * mix(0.72, 1.0, smoothstep(0.03, 0.35, depth));
         alpha = max(alpha, foamAmt * smoothstep(-0.02, 0.02, depth));
         col += spec;
 
+        // warm marine haze toward the horizon: the far sea melts into the glowing sky
+        vec3 hzd = normalize(vec3(-V.x, 0.012, -V.z));
+        vec3 hzc = odSky(hzd, 2.0) * vec3(1.0, 0.94, 0.86);
+        col = mix(col, hzc, smoothstep(700.0, 9000.0, dist) * 0.85);
         #ifdef USE_FOG
           col = odApplyFog(col, vFogOffset, fogDensity * 0.18);
         #endif

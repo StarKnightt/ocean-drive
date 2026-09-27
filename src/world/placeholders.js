@@ -30,6 +30,62 @@ function mesh(geo, mat, { cast = false, receive = true } = {}) {
   return m;
 }
 
+// Park lawn: dense short blades in mixed greens and yellows (texture covers 7 m)
+function bladeTexture() {
+  const S = 1024, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const rnd = mulberry32(3131);
+  g.fillStyle = 'rgb(86,104,48)';
+  g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 60000; i++) {
+    const x = rnd() * S, y = rnd() * S, l = 3 + rnd() * 7, a = -Math.PI / 2 + (rnd() - 0.5) * 1.4;
+    const t = rnd();
+    const r = t < 0.15 ? 150 + rnd() * 40 : 80 + rnd() * 50, gg = t < 0.15 ? 150 + rnd() * 30 : 110 + rnd() * 50, b = 40 + rnd() * 30;
+    g.strokeStyle = `rgba(${r | 0},${gg | 0},${b | 0},0.9)`;
+    g.lineWidth = 1 + rnd();
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
+// Coral-limestone seawall: coursed blocks with pitted fossil faces and recessed joints.
+function coralStoneTexture() {
+  const S = 1024, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const rnd = mulberry32(6161);
+  const bw = S / 4, bh = S / 8;   // 0.6 x 0.3 m blocks on a 2.4 m tile
+  g.fillStyle = 'rgb(150,136,112)';
+  g.fillRect(0, 0, S, S);
+  for (let r = 0; r < 8; r++) {
+    const off = r % 2 ? bw / 2 : 0;
+    for (let k = -1; k < 5; k++) {
+      const x = k * bw + off, v = 205 + rnd() * 30;
+      g.fillStyle = `rgb(${v | 0},${(v - 14) | 0},${(v - 38) | 0})`;
+      g.fillRect(x + 5, r * bh + 5, bw - 10, bh - 10);
+    }
+  }
+  for (let i = 0; i < 9000; i++) {   // fossil pits and pores
+    const x = rnd() * S, y = rnd() * S, rr = 0.6 + rnd() * rnd() * 5;
+    g.fillStyle = `rgba(${90 + rnd() * 40},${80 + rnd() * 35},${60 + rnd() * 30},${0.35 + rnd() * 0.4})`;
+    g.beginPath(); g.arc(x, y, rr, 0, 6.28); g.fill();
+  }
+  for (let i = 0; i < 3000; i++) {
+    g.fillStyle = `rgba(250,244,230,${0.2 + rnd() * 0.3})`;
+    g.fillRect(rnd() * S, rnd() * S, 1 + rnd() * 2, 1 + rnd() * 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
 function buildGround(group) {
   const Z = WORLD_Z;
   const concreteTex = noiseColorTexture({
@@ -50,12 +106,27 @@ function buildGround(group) {
   });
   const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.93 });
 
-  const grassTex = noiseColorTexture({
-    size: 512, seed: 31, colorA: [104, 132, 60], colorB: [168, 180, 90], baseCells: 5, speckle: 0.22, contrast: 1.4,
-  });
-  const grass = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.62 });
+  const grassTex = bladeTexture();
+  const grass = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.75 });
   grass.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLwP;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvLwP = (modelMatrix * vec4(transformed, 1.0)).xz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+      varying vec2 vLwP;
+      float lwH(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float lwN(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(lwH(i), lwH(i + vec2(1, 0)), u.x), mix(lwH(i + vec2(0, 1)), lwH(i + vec2(1, 1)), u.x), u.y); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        // mixed St. Augustine: greener and yellower patches, sun-dried bare spots
+        float lwA = lwN(vLwP * 0.12) * 0.6 + lwN(vLwP * 0.37 + 7.0) * 0.4;
+        float lwDry = smoothstep(0.6, 0.78, lwA);
+        diffuseColor.rgb *= mix(vec3(0.9, 1.05, 0.85), vec3(1.1, 1.0, 0.8), smoothstep(0.3, 0.6, lwA));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.55, 0.34), lwDry * 0.7);
+      }`)
+      .replace('#include <aomap_fragment>', `#include <aomap_fragment>
       #ifdef USE_FOG
       {
         vec3 odVd = normalize(vFogOffset);
@@ -64,8 +135,8 @@ function buildGround(group) {
         // Backlit lawn: we see the shaded sides of the blades - dark, desaturated -
         // with sun transmitted through the thin blade edges as a bright rim.
         float odBk = smoothstep(0.2, 0.85, dot(normalize(odVd.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - abs(odVd.y));
-        reflectedLight.directDiffuse = mix(reflectedLight.directDiffuse, vec3(dot(reflectedLight.directDiffuse, vec3(0.2126, 0.7152, 0.0722))), 0.5 * odBk) * mix(1.0, 0.15, odBk);
-        reflectedLight.indirectDiffuse = mix(reflectedLight.indirectDiffuse, vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.95, 1.0, 1.05), 0.45 * odBk) * mix(1.0, 0.45, odBk);
+        reflectedLight.directDiffuse = mix(reflectedLight.directDiffuse, vec3(dot(reflectedLight.directDiffuse, vec3(0.2126, 0.7152, 0.0722))), 0.4 * odBk) * mix(1.0, 0.45, odBk);
+        reflectedLight.indirectDiffuse = mix(reflectedLight.indirectDiffuse, vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.95, 1.0, 1.05), 0.45 * odBk) * mix(1.0, 0.45, odBk) * 0.75;   // modest sky fill keeps the palm shadows legible
         // smooth translucent rim (blade edges averaged over the pixel), only where sunlit
         reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.1, 1.15, 0.35) * directLight.color * odBk * 0.12;
         // sunlight transmitted through the blades (directLight.color carries the shadow)
@@ -73,7 +144,7 @@ function buildGround(group) {
       }
       #endif`);
   };
-  grass.customProgramCacheKey = () => 'grass-translucent-v3';
+  grass.customProgramCacheKey = () => 'grass-translucent-v4';
 
   // (street, curbs and sidewalks: street.js)
 
@@ -104,15 +175,17 @@ function buildGround(group) {
   // (front faces into the shadow map: with the default back faces, the wall's own west
   // face sits at the grass depth and leaked a lit line along its foot)
   // (pitted coral limestone, pale: its shaded park-side face must not read as a black band)
-  const coralTex = noiseColorTexture({ size: 512, seed: 61, colorA: [196, 180, 150], colorB: [236, 224, 198], baseCells: 10, speckle: 0.35, contrast: 1.5 });
-  const coral = new THREE.MeshStandardMaterial({ map: coralTex, color: 0xf0e4cc, roughness: 0.95, shadowSide: THREE.FrontSide });
+  const coralTex = coralStoneTexture();
+  const coral = new THREE.MeshStandardMaterial({ map: coralTex, color: 0xf2e6cf, roughness: 0.95, shadowSide: THREE.FrontSide });
   coral.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
-      reflectedLight.indirectDiffuse *= 3.6;`);
+      reflectedLight.indirectDiffuse *= 2.2;`);
   };
-  coral.customProgramCacheKey = () => 'coral-wall-v2';
-  group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, -Z, Z, 0.6), coral, { cast: true }));
-  group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, -Z, Z, 0.6), coral, { cast: true }));
+  coral.customProgramCacheKey = () => 'coral-wall-v3';
+  const cap = new THREE.MeshStandardMaterial({ map: coralTex, color: 0xcfc2aa, roughness: 0.9, shadowSide: THREE.FrontSide });
+  // (texture covers 2.4 m: coursed blocks 0.6 x 0.3 m)
+  group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, -Z, Z, 2.4), coral, { cast: true }));
+  group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, -Z, Z, 2.4), cap, { cast: true }));
 
   // (sand, swash and the lifeguard tower: beach.js)
 }
