@@ -14,12 +14,18 @@ function waveTable() {
   const waves = [];
   const lengths = [11, 7.3, 5.1, 3.6, 2.5, 1.75, 1.2, 0.85, 0.6, 0.42, 0.3, 0.21];
   lengths.forEach((L, i) => {
-    // mostly travelling west toward the beach, short chop spreading wider
-    const spread = 0.45 + i * 0.07;
-    const ang = Math.PI + (rnd() - 0.5) * 2 * spread; // PI = toward -x
-    const k = (2 * Math.PI) / L;
-    const steep = 0.042 - i * 0.0018; // calm morning sea
-    waves.push({ dx: Math.cos(ang), dz: Math.sin(ang), k, w: Math.sqrt(9.81 * k), s: steep, ph: rnd() * 6.283, L });
+    // mostly travelling west toward the beach, short chop spreading wider; each band is
+    // split over 2-3 crossing directions and slightly detuned lengths so no ripple train
+    // lines up into regular bands
+    const spread = 0.6 + i * 0.08;
+    const n = i < 4 ? 2 : 3;
+    for (let j = 0; j < n; j++) {
+      const ang = Math.PI + (rnd() - 0.5) * 2 * spread; // PI = toward -x
+      const Lj = L * (0.85 + 0.3 * rnd());
+      const k = (2 * Math.PI) / Lj;
+      const steep = (0.042 - i * 0.0018) * (0.75 + 0.5 * rnd()) / Math.sqrt(n * 0.6); // calm morning sea
+      waves.push({ dx: Math.cos(ang), dz: Math.sin(ang), k, w: Math.sqrt(9.81 * k), s: steep, ph: rnd() * 6.283, L: Lj });
+    }
   });
   return waves;
 }
@@ -201,7 +207,7 @@ export function createOcean(scene, surf) {
 
         // water body: turquoise over the pale sand shallows, steel-blue offshore
         // body: a hint of turquoise only in the very shallow water, silver-blue beyond
-        vec3 turq = vec3(0.03, 0.08, 0.07);
+        vec3 turq = vec3(0.042, 0.058, 0.056);
         vec3 deep = vec3(0.016, 0.024, 0.034);
         vec3 body = mix(turq, deep, smoothstep(0.15, 1.2, depth));
         vec3 col = body * (1.0 - F) + sky * F;
@@ -210,14 +216,16 @@ export function createOcean(scene, surf) {
         float toSun = max(dot(-V, OD_SUN), 0.0);
         float face = clamp(dot(normalize(n.xz + 1e-5), normalize(V.xz + 1e-5)), 0.0, 1.0) * length(n.xz) * 3.0;
         float thick = clamp(vCrest / 0.35, 0.0, 1.0);
-        col += OD_SUNCOL * OD_SUN_I * vec3(0.10, 0.62, 0.48) * 0.035 * thick * clamp(face, 0.0, 1.0) * (0.25 + toSun * toSun);
+        // grey-silver / gold through the crest, only the thinnest lip a faint green
+        vec3 thru = mix(vec3(0.34, 0.33, 0.29), vec3(0.24, 0.36, 0.30), smoothstep(0.6, 0.15, thick));
+        col += OD_SUNCOL * OD_SUN_I * thru * 0.03 * thick * clamp(face, 0.0, 1.0) * (0.25 + toSun * toSun);
 
         // sun glitter: Beckmann lobe, roughness = sub-pixel wave slopes
         vec3 L = OD_SUN;
         vec3 H = normalize(L + V);
         float nh = max(dot(n, H), 1e-4);
         // wide glitter field far out (unresolved chop tilts facets toward the sun)
-        float m2 = 2.0 * (0.0012 + 0.6 * lost + 0.003 * pow(1.0 - nv, 8.0) + 0.006 * smoothstep(20.0, 600.0, dist));
+        float m2 = 2.0 * (0.0034 + 0.6 * lost + 0.003 * pow(1.0 - nv, 8.0) + 0.009 * smoothstep(10.0, 500.0, dist));
         float nh2 = nh * nh;
         float D = min(exp(-(1.0 - nh2) / (nh2 * m2)) / (3.14159 * m2 * nh2 * nh2), 3000.0);
         float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
@@ -226,8 +234,8 @@ export function createOcean(scene, surf) {
         float gl = odNoise(p / max(fp * 1.6, 0.02) * vec2(1.0, 0.35) + vec2(t * 1.7, -t * 0.6));
         float gw = smoothstep(0.0, 0.0012, lost);
         // always broken into sparkles: resolved facets near by, twinkling glints far out
-        float gl2 = odNoise(p * 9.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 23.0 - vec2(t * 1.1, 0.0));
-        spec *= mix(smoothstep(0.18, 0.4, gl2) * 3.5, smoothstep(0.58, 0.9, gl) * 5.0, gw);
+        float gl2 = odNoise(p * 31.0 + vec2(t * 2.3, t * 0.7)) * odNoise(p * 73.0 - vec2(t * 1.1, 0.0));
+        spec *= mix(smoothstep(0.3, 0.55, gl2) * 6.0, smoothstep(0.6, 0.9, gl) * 5.5, gw);
         float sl = dot(spec, vec3(0.2126, 0.7152, 0.0722));
         spec /= 1.0 + sl / mix(1.8, 4.0, gw);
 
@@ -245,7 +253,8 @@ export function createOcean(scene, surf) {
         }
         // lingering foam streaks over the surf zone
         float zone = smoothstep(${(SHORE_X - 0.5).toFixed(2)}, ${(SHORE_X + 1.0).toFixed(2)}, p.x) * (1.0 - smoothstep(${(BREAK_X + 2.0).toFixed(2)}, ${(BREAK_X + 9.0).toFixed(2)}, p.x));
-        float streak = smoothstep(0.55, 0.8, odNoise(vec2(p.x * 0.6, p.y * 0.18 + t * 0.03)));
+        vec2 sw = p * 0.32 + vec2(odNoise(p * 0.21 + 4.0), odNoise(p * 0.21 + 9.0)) * 2.4;
+        float streak = smoothstep(0.55, 0.8, odNoise(sw + vec2(0.0, t * 0.03)));
         foamAmt = max(foamAmt, zone * streak * lace * 0.55);
         // crest lip / roller whitewater
         foamAmt = max(foamAmt, vWhite * mix(0.7, 1.0, lace));

@@ -101,12 +101,12 @@ function asphaltTextures() {
   xB.fillStyle = '#000'; xB.fillRect(0, 0, M, M);
   const fm = fbmField(M, { seed: 9, baseCells: 6, octaves: 5 });
   const id = xR.getImageData(0, 0, M, M);
-  for (let i = 0; i < M * M; i++) { const v = 128 + (fm[i] - 0.5) * 45; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; }
+  for (let i = 0; i < M * M; i++) { const v = 128 + (fm[i] - 0.5) * 70; id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; }
   xR.putImageData(id, 0, 0);
   // repair patches (utility cuts): darker newer asphalt or lighter old, crisp sealed seams
-  for (let k = 0; k < 14; k++) {
+  for (let k = 0; k < 20; k++) {
     const w = 10 + mr() * 40, h = 8 + mr() * 50, x = mr() * M, y = mr() * M;
-    const v = mr() < 0.6 ? 88 + mr() * 20 : 150 + mr() * 20;
+    const v = mr() < 0.6 ? 72 + mr() * 20 : 160 + mr() * 22;
     for (const ox of [-M, 0, M]) for (const oy of [-M, 0, M]) {
       xR.fillStyle = `rgb(${v},${v},${v})`; xR.fillRect(x + ox, y + oy, w, h);
       xR.strokeStyle = 'rgb(60,60,60)'; xR.lineWidth = 1.5; xR.strokeRect(x + ox, y + oy, w, h);
@@ -122,8 +122,8 @@ function asphaltTextures() {
     xG.fillStyle = g; xG.fillRect(x - r, y - r, r * 2, r * 2);
   }
   // oil stains (used in the parking lane and down the middle of each travel lane)
-  for (let k = 0; k < 220; k++) {
-    const x = mr() * M, y = mr() * M, r = 2 + mr() * 7;
+  for (let k = 0; k < 300; k++) {
+    const x = mr() * M, y = mr() * M, r = 2.5 + mr() * 9;
     const g = xB.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, `rgba(255,255,255,${0.5 + mr() * 0.5})`); g.addColorStop(0.6, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
     xB.fillStyle = g; xB.fillRect(x - r, y - r, r * 2, r * 2);
@@ -176,7 +176,7 @@ function roadMesh() {
         float odSeam = odG(odX + 0.04 * sin(vOdW.z * 0.9), ${(PARKING.x1 + 0.35).toFixed(2)}, 0.045) + odG(odX + 0.05 * sin(vOdW.z * 0.7 + 2.0), ${(LANES.centerX + 0.45).toFixed(2)}, 0.05)
           + odG(fract(vOdW.z / 37.0) * 37.0 + 0.1 * sin(odX * 1.3), 18.0, 0.05);
         odSeam = min(odSeam, 1.0);
-        diffuseColor.rgb *= (0.8 + 0.4 * odM.r) * (1.0 - 0.1 * odTr) * (1.0 - 0.45 * odOil) * (1.0 - 0.1 * odGut) * (1.0 - 0.45 * odDirt) * (1.0 - 0.5 * odSeam);`)
+        diffuseColor.rgb *= (0.7 + 0.6 * odM.r) * (1.0 - 0.14 * odTr) * (1.0 - 0.62 * odOil) * (1.0 - 0.1 * odGut) * (1.0 - 0.45 * odDirt) * (1.0 - 0.5 * odSeam);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(0.93 + (odM.g - 0.5) * 0.6 - 0.18 * odTr - 0.5 * odOil - 0.6 * odSeam, 0.25, 1.0);`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
@@ -639,10 +639,10 @@ function furniture() {
   // hydrants
   for (const [x, z] of [[hx + 0.15, -33], [hx + 0.15, 22], [px - 0.15, -8], [px - 0.15, 46], [hx + 0.15, -110], [px - 0.15, 120]]) place(L, hyd, x, H, z, 0, 0.2);
   // benches in the park facing the sea, just east of the promenade
-  for (let z = -150; z <= 150; z += 16 + rnd() * 10) {
-    const x = promenadeX(z) + 3.4;
-    if (palmNear(x, z, 1.8) || x > PARK.x1 - 1) continue;
-    place(L, bench, x, H, z, 0, 'box');
+  for (let z = -150; z <= 150; z += 9 + rnd() * 22) {
+    const x = promenadeX(z) + 2.8 + rnd() * 1.4;
+    if (palmNear(x, z, 1.8) || x > PARK.x1 - 1 || rnd() < 0.2) continue;
+    place(L, bench, x, H, z, (rnd() - 0.5) * 0.2, 'box');
   }
   // storm drains at both curbs, manholes in the lanes
   for (let z = -280; z <= 280; z += 45) {

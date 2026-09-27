@@ -165,11 +165,15 @@ float surfCrest(float x, float z, float t, out float white) {
   float h = 0.0; white = 0.0;
   for (int i = 0; i < ${SURF_EVENTS}; i++) {
     vec4 A = uSurfA[i]; vec4 B = uSurfB[i];
-    float tau = t - A.x, k = A.y, tb = ${T_BREAK.toFixed(2)} * k;
+    float tau = t - A.x, k = A.y;
+    // the set breaks in short overlapping segments: each stretch of shore has its own
+    // height, lag and break time, so the crest is never one ruler-straight roller
+    float sg = surfN(vec2(z * 0.055 + B.y * 7.0, B.y * 3.1));
+    float sg2 = surfN(vec2(z * 0.13 + B.y * 2.0, 5.0 + B.y));
+    float tb = ${T_BREAK.toFixed(2)} * k + (sg - 0.5) * 1.6 + (sg2 - 0.5) * 0.5;
     if (tau < -${T_LEAD.toFixed(1)} || tau > tb + 2.5) continue;
-    float amp = (0.4 + 0.4 * A.z) * (0.85 + 0.15 * sin(z * 0.045 + B.y));
-    // crest line slightly oblique and wavy along the shore
-    float xc = SURF_BREAK_X + (tb - tau) * 3.0 + 1.2 * sin(z * 0.031 + B.y) + 0.5 * sin(z * 0.11 + 2.0 * B.y);
+    float amp = (0.4 + 0.4 * A.z) * (0.3 + 0.9 * smoothstep(0.2, 0.75, sg)) * (0.75 + 0.5 * sg2);
+    float xc = SURF_BREAK_X + (tb - tau) * 3.0 + 1.2 * sin(z * 0.031 + B.y) + 0.5 * sin(z * 0.11 + 2.0 * B.y) + (sg2 - 0.5) * 1.6;
     float d = x - xc;
     float pre = clamp((tau + ${T_LEAD.toFixed(1)}) / (tb + ${T_LEAD.toFixed(1)}), 0.0, 1.0);   // 0 far out .. 1 at the break
     float wf = mix(2.2, 0.8, pre * pre);                 // shoreward face steepens
@@ -179,13 +183,16 @@ float surfCrest(float x, float z, float t, out float white) {
     h += amp * prof * grow * mix(0.25, 1.0, collapse);
     // spilling lip: white on the crest top around the break, then the collapsing roller
     float lip = smoothstep(tb - 0.6, tb, tau) * (tau < tb ? 1.0 : exp(-(tau - tb) / 1.2));
-    white = max(white, lip * smoothstep(0.35, 0.9, prof) * (0.6 + 0.4 * surfN(vec2(z * 1.7, x * 2.3 - t * 3.0))));
+    vec2 wq = vec2(z * 1.3, x * 1.9 - t * 2.4);
+    wq += vec2(surfN(wq * 0.37 + 3.0), surfN(wq * 0.41 + 8.0)) * 2.6;
+    float wn2 = surfN(wq) * 0.65 + surfN(wq * 2.7 + 1.3) * 0.35;
+    white = max(white, lip * smoothstep(0.35, 0.9, prof) * smoothstep(0.25, 0.7, wn2) * smoothstep(0.15, 0.5, amp));
   }
   // between the sets: 2-3 rows of small spilling breakers, segmented along the shore,
   // growing as they shoal, white on the crest and a whitewater trail behind once broken
-  float ph = (x - SURF_BREAK_X) / 8.5 + t * 3.0 / 8.5 + 0.35 * sin(z * 0.05);
+  float ph = (x - SURF_BREAK_X) / 8.5 + t * 3.0 / 8.5 + 0.35 * sin(z * 0.05) + 0.9 * surfN(vec2(z * 0.035, x * 0.04));
   float f = fract(ph), row = floor(ph);
-  float seg = smoothstep(0.3, 0.6, surfN(vec2(z * 0.045 + row * 3.7, row * 1.3)));
+  float seg = smoothstep(0.35, 0.7, surfN(vec2(z * 0.07 + row * 3.7, row * 1.3))) * (0.5 + 0.5 * surfN(vec2(z * 0.19, row * 2.1)));
   float grow = smoothstep(SURF_BREAK_X + 30.0, SURF_BREAK_X + 8.0, x) * smoothstep(SURF_BREAK_X - 1.5, SURF_BREAK_X + 1.5, x);
   float back = exp(-f * f / 0.06), face = exp(-(1.0 - f) * (1.0 - f) / 0.02);
   float rp = max(back, face);

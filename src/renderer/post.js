@@ -16,7 +16,7 @@ const GradeShader = {
     uResolution: { value: new THREE.Vector2(1, 1) },
     uShadowTint: { value: new THREE.Vector3(0.95, 0.98, 1.05) },
     uHighlightTint: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
-    uSaturation: { value: 1.04 },
+    uSaturation: { value: 0.97 },
     uSunUv: { value: new THREE.Vector2(0.5, 0.5) },
     uSunVis: { value: 0 },
   },
@@ -62,7 +62,7 @@ const GradeShader = {
 
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       // sunlit highlights keep their colour (ACES would otherwise bleach them to pastel)
-      c = max(mix(vec3(l), c, uSaturation + 0.06 * smoothstep(0.2, 1.2, l)), 0.0);
+      c = max(mix(vec3(l), c, uSaturation + 0.02 * smoothstep(0.2, 1.2, l)), 0.0);
       // lift the deepest shadows very slightly toward a cool tone (film toe)
       c += vec3(0.004, 0.006, 0.010) * (1.0 - smoothstep(0.0, 0.08, l));
 

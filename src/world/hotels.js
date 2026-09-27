@@ -247,7 +247,7 @@ const AWNING_COLS = [0x2e7fa8, 0x2f8f7f, 0xd24a74, 0x3d7d4e, 0xe0a33a, 0x7a4f9a,
 
 // Invented names only.
 const NAMES = [
-  'CORALINE', 'SEAGROVE', 'BELLA MAR', 'PALMIRA', 'MARISOL', 'ORIANA', 'MARINELLA', 'SOLANA',
+  'CORALINE', 'SEAGROVE', 'BELLA MAR', 'ORCHIDEA', 'MARISOL', 'ORIANA', 'MARINELLA', 'SOLANA',
   'DUNEHAVEN', 'VISTAMAR', 'LA PERLITA', 'HALLORAN', 'ROSALIND', 'FAIRHOLM', 'CALYPSO', 'WYNDMERE',
   'MARBELLE', 'ISLA VERDE', 'COQUINA', 'PALOMA', 'LUNA MAR', 'ASHBY', 'HELIOS', 'SEAFOAM',
   'BRIARCLIFF', 'MONTCLAIRE', 'ALDEMAR', 'NEREIDA', 'SUNHAVEN', 'CORAL BAY', 'MAREVISTA', 'LINDEN',
@@ -1715,6 +1715,7 @@ function glassMaterial() {
           if (isG > 0.5) F0 = 0.14 + 0.1 * h0;
           vec3 tint = h0 < 0.4 ? vec3(1.0) : h0 < 0.74 ? mix(vec3(0.82, 0.93, 0.9), vec3(0.8, 0.84, 0.92), odGh(s * 2.9)) : mix(vec3(0.86, 0.93, 1.0), vec3(1.0, 0.9, 0.72), odGh(s * 17.0));
           float F = F0 + (1.0 - F0) * pow(1.0 - cosT, 5.0);
+          F = min(1.0, F * 1.5 + 0.05);   // salt-hazed old glass mirrors plenty of sky at these angles
 
           // reflected scene: sky dome incl. the sun's glare, the ground, and across the road
           // palm trunks / crowns, hedges and parked cars as silhouettes
@@ -1744,7 +1745,7 @@ function glassMaterial() {
 
           // what is behind the glass: rooms are dark next to a sunlit wall
           float sunIn = max(dot(nW, OD_SUN), 0.0);
-          vec3 room = vec3(0.034, 0.031, 0.028) * (0.6 + 0.8 * uv.y) * (0.6 + 0.8 * odGh(vWin.z * 13.7))
+          vec3 room = vec3(0.05, 0.047, 0.044) * (0.6 + 0.8 * uv.y) * (0.6 + 0.8 * odGh(vWin.z * 13.7))
                     + directLight.color * sunIn * 0.004 * smoothstep(0.2, 0.6, uv.y);
           vec3 lightIn = directLight.color * sunIn * 0.08 + vec3(0.03, 0.03, 0.035);
           float pk = fract(vWin.z * 3.0);
@@ -2034,20 +2035,70 @@ function pottedPalmGeometry() {
   g.computeVertexNormals();
   return g;
 }
-function shrubGeometry() {
-  // smooth clipped shrub: a few soft lobes, fine leafy crinkle, smooth-shaded
-  const g = mergeVertices(new THREE.IcosahedronGeometry(0.5, 3).deleteAttribute('normal').deleteAttribute('uv'));
-  const p = g.attributes.position;
-  const v = new THREE.Vector3();
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i).normalize();
-    const lobe = 0.9 + 0.08 * Math.sin(v.x * 5.1 + 1.3) * Math.sin(v.z * 4.3 + 0.7) + 0.06 * Math.sin(v.y * 6.0 + v.x * 3.0);
-    const crinkle = 0.03 * Math.sin(v.x * 17 + v.y * 11) * Math.sin(v.z * 15 - v.y * 9);
-    const r = 0.5 * (lobe + crinkle);
-    p.setXYZ(i, v.x * r, v.y * r * (v.y < -0.3 ? 0.75 : 0.92), v.z * r);
+// Leafy shrub: a dark, lumpy core (the shade inside the bush) wrapped in ~90 alpha
+// leaf-spray cards facing outward, lit with radial normals so the clump reads round
+// but ragged, with gaps and individual leaves at the silhouette.
+let LEAF_TEX = null;
+function leafTexture() {
+  if (LEAF_TEX) return LEAF_TEX;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  const rnd = mulberry32(515);
+  c.fillStyle = '#2c3a22'; c.fillRect(0, 0, 8, 8);           // opaque core swatch
+  for (let i = 0; i < 26; i++) {
+    const x = 18 + rnd() * 96, y = 18 + rnd() * 96, a = rnd() * Math.PI, l = 10 + rnd() * 9;
+    const v = 150 + rnd() * 105;
+    c.fillStyle = `rgb(${v * 0.82 | 0},${v | 0},${v * 0.7 | 0})`;
+    c.beginPath(); c.ellipse(x, y, l, l * 0.42, a, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(40,50,30,0.5)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(x - Math.cos(a) * l, y - Math.sin(a) * l); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke();
   }
-  g.computeVertexNormals();
-  return g;
+  LEAF_TEX = new THREE.CanvasTexture(cv);
+  LEAF_TEX.colorSpace = THREE.SRGBColorSpace;
+  return LEAF_TEX;
+}
+function shrubGeometry() {
+  const rnd = mulberry32(8181);
+  const core = mergeVertices(new THREE.IcosahedronGeometry(0.4, 2).deleteAttribute('normal').deleteAttribute('uv'));
+  const cp = core.attributes.position;
+  const v = new THREE.Vector3();
+  const lobe = (d) => 0.86 + 0.12 * Math.sin(d.x * 5.1 + 1.3) * Math.sin(d.z * 4.3 + 0.7) + 0.08 * Math.sin(d.y * 6.0 + d.x * 3.0);
+  for (let i = 0; i < cp.count; i++) {
+    v.fromBufferAttribute(cp, i).normalize();
+    const r = 0.4 * lobe(v) * (0.9 + 0.12 * rnd());
+    cp.setXYZ(i, v.x * r, v.y * r * (v.y < -0.3 ? 0.7 : 0.92), v.z * r);
+  }
+  core.computeVertexNormals();
+  const cn = core.index ? core.toNonIndexed() : core;
+  cn.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(cn.attributes.position.count * 2).fill(0.02), 2));
+  const pos = [], nor = [], uv = [];
+  const n = new THREE.Vector3(), t = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let k = 0; k < 90; k++) {
+    n.set(rnd() * 2 - 1, rnd() * 1.6 - 0.5, rnd() * 2 - 1).normalize();
+    const r = 0.5 * lobe(n) * (0.82 + 0.28 * rnd());
+    c.copy(n).multiplyScalar(r); c.y *= n.y < -0.3 ? 0.75 : 0.92;
+    // card roughly tangent to the surface, tilted at random
+    t.crossVectors(n, Math.abs(n.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
+    b.crossVectors(n, t);
+    const a = rnd() * 6.28, tilt = (rnd() - 0.5) * 1.2;
+    const u = t.clone().multiplyScalar(Math.cos(a)).addScaledVector(b, Math.sin(a));
+    const w = n.clone().cross(u).normalize().applyAxisAngle(u, tilt);
+    const sz = 0.2 + rnd() * 0.12;
+    const quad = [[-1, -1, 0, 0], [1, -1, 1, 0], [1, 1, 1, 1], [-1, -1, 0, 0], [1, 1, 1, 1], [-1, 1, 0, 1]];
+    for (const [qx, qy, qu, qv] of quad) {
+      const P = c.clone().addScaledVector(u, qx * sz * 0.5).addScaledVector(w, qy * sz * 0.5);
+      pos.push(P.x, P.y, P.z);
+      const N = P.clone().normalize().lerp(n, 0.4).normalize();
+      nor.push(N.x, N.y, N.z);
+      uv.push(0.12 + qu * 0.86, 0.12 + qv * 0.86);
+    }
+  }
+  const cards = new THREE.BufferGeometry();
+  cards.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  cards.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  cards.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return mergeGeometries([cn, cards]);
 }
 
 // ---------------------------------------------------------------------------
@@ -2061,7 +2112,7 @@ function streetPlan() {
     [-70, -52.5, { floors: 2, style: 'band', r0: 3.2, r1: 0, scheme: { body: COL.warmWhite, trim: COL.teal, accent: COL.rose }, band: { col: 0xb3dcc6, mode: 1 }, winLayout: 'triple', name: 'THE CORALINE', canopy: 'entrance', patio: 'awning', awningColor: 0x2e7fa8, porch: true, portholes: true, medallions: true, roof: 'ac', exposed: [true, false] }],
     [-50.8, -35.6, { floors: 4, style: 'fin', r0: 0, r1: 0, scheme: { body: COL.mint, trim: COL.white, accent: COL.teal }, band: { col: COL.white, mode: 2 }, winLayout: 'pair', eyebrow: 'window', name: 'SEAGROVE', canopy: 'full', patio: 'umbrella', umbrellaCol: 0xd9477a, portholes: true, roof: 'tank' }],
     [-33.8, -15.2, { floors: 5, style: 'ziggurat', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.aqua, accent: COL.pinkDeep }, band: { col: 0xb4dedb, mode: 1 }, winLayout: 'ribbon', eyebrow: 'full', name: 'BELLA MAR', canopy: 'full', patio: 'tent', setback: 0.8, eyeCol: 'trim', fountain: true, roof: 'tank' }],
-    [-13.6, 2.2, { floors: 3, style: 'pylon', r0: 0, r1: 0, scheme: { body: COL.pink, trim: COL.white, accent: COL.coral }, band: { col: COL.white, mode: 2 }, winLayout: 'punched', eyebrow: 'window', name: 'PALMIRA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0x3f8a5a, porch: true, setback: 0, portholes: true, fountain: true, medallions: true, parapetStep: true, finial: true }],
+    [-13.6, 2.2, { floors: 3, style: 'pylon', r0: 0, r1: 0, scheme: { body: COL.pink, trim: COL.white, accent: COL.coral }, band: { col: COL.white, mode: 2 }, winLayout: 'punched', eyebrow: 'window', name: 'ORCHIDEA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0x3f8a5a, porch: true, setback: 0, portholes: true, fountain: true, medallions: true, parapetStep: true, finial: true }],
     [3.8, 24.6, { floors: 4, style: 'twin', r0: 1.8, r1: 1.8, scheme: { body: COL.warmWhite, trim: COL.mintDeep, accent: COL.teal }, band: { col: 0xa9d8c4, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARISOL', signTop: 10.4, signBottom: 5.4, canopy: 'entrance', patio: 'canopy', canopyCol: 0x3d9ad6, canopyAlt: 0xe98fae, setback: 0.4, portholes: false, fountain: true, medallions: true, roof: 'ac', parapetStep: true }],
     [26.4, 40.2, { floors: 3, style: 'corner', r0: 0, r1: 3.2, scheme: { body: COL.lavender, trim: COL.white, accent: COL.lilac }, band: { col: COL.white, mode: 2 }, winLayout: 'ribbon', eyebrow: 'full', name: 'ORIANA', canopy: 'full', patio: 'porch', noSidewalk: true, portholes: true, parapetStep: true, rail: 'pipe' }],
     [41.8, 56.0, { floors: 7, style: 'tower', r0: 0, r1: 0, scheme: { body: COL.white, trim: COL.sky, accent: COL.coral }, band: { col: 0xb5d0e6, mode: 1 }, winLayout: 'triple', eyebrow: 'window', name: 'MARINELLA', canopy: 'entrance', patio: 'umbrella', umbrellaCol: 0xf1efe9, setback: 1.2, roof: 'tank' }],
@@ -2372,7 +2423,7 @@ export function buildHotels(scene) {
       ctx.umbrellas.map((u) => ({ x: u.x, y: u.y, z: u.z, color: 0xd8d4cc })), (u) => new THREE.Vector3(1, ctx.umbrellas[0].h, 1));
   }
   if (ctx.shrubs.length) {
-    const shrubMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
+    const shrubMat = new THREE.MeshStandardMaterial({ roughness: 0.85, map: leafTexture(), alphaTest: 0.5, side: THREE.DoubleSide });
     const rs = mulberry32(8);
     place(new THREE.InstancedMesh(shrubGeometry(), shrubMat, ctx.shrubs.length),
       ctx.shrubs.map((s) => ({ ...s, rot: rs() * 6, color: [0x3f5a2c, 0x4a6632, 0x355026, 0x56703a][Math.floor(rs() * 4)] })),
@@ -2386,7 +2437,7 @@ export function buildHotels(scene) {
       place(new THREE.InstancedMesh(pot, new THREE.MeshStandardMaterial({ roughness: 0.7 }), potted.length),
         potted.map((p) => ({ x: p.x, y: p.y, z: p.z, color: p.potCol })));
     }
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide, map: leafTexture(), alphaTest: 0.5 });
     leafMat.onBeforeCompile = (shader) => {
       shader.fragmentShader = shader.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
         reflectedLight.directDiffuse += diffuseColor.rgb * directLight.color * 0.12;

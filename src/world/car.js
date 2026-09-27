@@ -96,15 +96,15 @@ function tube(points, r, seg = 24) {
 function tyreGeometry(flatten) {
   // lathe profile (radius, axial) around y, then turned onto the x axle
   const w = 0.105, pts = [];
-  const prof = [[0.2, -w * 0.8], [0.25, -w], [0.31, -w * 1.02], [0.345, -w * 0.9], [WHEEL_R, -w * 0.55], [WHEEL_R + 0.004, 0],
-    [WHEEL_R, w * 0.55], [0.345, w * 0.9], [0.31, w * 1.02], [0.25, w], [0.2, w * 0.8]];
+  const prof = [[0.18, -w * 0.75], [0.2, -w * 0.9], [0.25, -w], [0.31, -w * 1.02], [0.345, -w * 0.9], [WHEEL_R, -w * 0.55], [WHEEL_R + 0.004, 0],
+    [WHEEL_R, w * 0.55], [0.345, w * 0.9], [0.31, w * 1.02], [0.25, w], [0.2, w * 0.9], [0.18, w * 0.75]];
   for (const [r, y] of prof) pts.push(new THREE.Vector2(r, y));
   const g = new THREE.LatheGeometry(pts, 48).rotateZ(Math.PI / 2);
   const p = g.attributes.position, col = new Float32Array(p.count * 3);
   const black = new THREE.Color(0x141414), white = new THREE.Color(0xf6f4ee);
   for (let i = 0; i < p.count; i++) {
     const r = Math.hypot(p.getY(i), p.getZ(i));
-    const c = r > 0.255 && r < 0.3 ? white : black;   // whitewall band, ~1/3 of the sidewall
+    const c = r > 0.255 && r < 0.282 ? white : black;   // thin whitewall ring on a black sidewall
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
     if (flatten && p.getY(i) < -(WHEEL_R - 0.018)) p.setY(i, -(WHEEL_R - 0.018));   // contact patch
   }
@@ -113,7 +113,7 @@ function tyreGeometry(flatten) {
   return g;
 }
 function hubGeometry() {
-  const pts = [[0.001, 0.085], [0.04, 0.084], [0.06, 0.07], [0.1, 0.06], [0.16, 0.05], [0.2, 0.035], [0.235, 0.02], [0.25, 0.0]].map(([r, y]) => new THREE.Vector2(r, y));
+  const pts = [[0.001, 0.05], [0.03, 0.05], [0.045, 0.042], [0.08, 0.036], [0.13, 0.028], [0.17, 0.018], [0.19, 0.01], [0.2, 0.0]].map(([r, y]) => new THREE.Vector2(r, y));
   return new THREE.LatheGeometry(pts, 28).rotateZ(-Math.PI / 2);
 }
 
@@ -137,9 +137,9 @@ function blobTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
   const c = cv.getContext('2d');
-  c.filter = 'blur(7px)';
+  c.filter = 'blur(3px)';
   c.fillStyle = 'rgba(0,0,0,0.97)';
-  c.fillRect(22, 8, 84, 112);
+  c.fillRect(30, 12, 68, 104);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
@@ -237,7 +237,21 @@ function shared() {
   for (const s of [-1, 1]) for (const z of [0.72, -0.62]) {
     const pts = [];
     for (let y = 0.36; y <= belt(z) - 0.02; y += 0.06) pts.push([s * (W(z) + 0.004), y, z]);
-    gaps.push(tube(pts, 0.005, 12));
+    gaps.push(tube(pts, 0.0065, 12));
+  }
+  // hood and trunk shut lines across the deck, hood edges, fender seams behind the arches
+  const hoodY = (x, z) => belt(z) + 0.01 + 0.035 * (1 - (x / W(z)) ** 2);
+  { const pts = []; for (let x = -W(1.38) + 0.1; x <= W(1.38) - 0.1 + 1e-6; x += 0.1) pts.push([x, hoodY(x, 1.38), 1.38]); gaps.push(tube(pts, 0.006, 20)); }
+  { const pts = []; for (let x = -0.72; x <= 0.72 + 1e-6; x += 0.12) pts.push([x, crown(-1.58) + 0.008, -1.58]); gaps.push(tube(pts, 0.006, 14)); }
+  for (const s of [-1, 1]) {
+    const hood = [];
+    for (let z = 1.38; z <= 2.45; z += 0.1) hood.push([s * (W(z) - 0.1), hoodY(W(z) - 0.1, z), z]);
+    gaps.push(tube(hood, 0.006, 12));
+    for (const z of [1.62 - ARCH_R - 0.22, -1.52 + ARCH_R + 0.22]) {
+      const pts = [];
+      for (let y = WHEEL_R + ARCH_R * 0.6; y <= belt(z) - 0.03; y += 0.06) pts.push([s * (W(z) + 0.004), y, z]);
+      if (pts.length > 1) gaps.push(tube(pts, 0.005, 8));
+    }
   }
   const gapGeo = mergeGeometries(gaps);
   const plateGeo = mergeGeometries([new THREE.BoxGeometry(0.5, 0.15, 0.01).translate(0, 0.28, 2.78), new THREE.BoxGeometry(0.5, 0.15, 0.01).translate(0, 0.62, -2.67)]);
@@ -364,6 +378,61 @@ function makeSedan(paint, env) {
   return g;
 }
 
+// Nose-to-tail parked cars along the rest of the lane (a few empty bays), muted modern
+// colours; merged by material so the whole row costs five draw calls.
+function parkedFleet(scene, taken) {
+  const S = shared(), P = sedanParts();
+  const rnd = (() => { let a = 7331; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
+  const cols = [0x9ea3a8, 0xe4e2dc, 0x3b4450, 0xc8c6c0, 0x6b6f73, 0x7a5a56, 0x5e7080, 0x9c937f, 0x2a2d31, 0xb9b6ae, 0x8f9ba3];
+  const parts = { body: [], glass: [], tyre: [], rim: [], blob: [] };
+  const colliders = [];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+  const add = (list, geo, m, col) => {
+    const g = geo.clone().applyMatrix4(m);
+    if (col) {
+      const c = new THREE.Color(col), n = g.attributes.position.count, a = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+      g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    }
+    list.push(g);
+  };
+  const blobGeo = new THREE.PlaneGeometry(2.2, 5.4).rotateX(-Math.PI / 2).translate(0, 0.012, 0);
+  for (let z = -88; z < 90; z += 5.4 + rnd() * 1.4) {
+    if (Math.abs(z - CAR.z) < 6.5 || Math.abs(z - (-10)) < 6.5 || (z > 22 && z < 44) || taken.some((t) => Math.abs(z - t) < 5.6) || rnd() < 0.22) continue;
+    const x = CAR.x + 0.05 + (rnd() - 0.5) * 0.25;
+    const len = 0.94 + rnd() * 0.12;
+    q.setFromEuler(new THREE.Euler(0, (rnd() - 0.5) * 0.04, 0));
+    m4.compose(new THREE.Vector3(x, roadHeight(x), z), q, sc.set(1, 1, len));
+    const col = cols[Math.floor(rnd() * cols.length)];
+    add(parts.body, P.body, m4, col);
+    add(parts.glass, P.cabinGeo, m4);
+    add(parts.blob, blobGeo, m4);
+    for (const wz of [1.4, -1.4]) for (const sx of [-1, 1]) {
+      const w = new THREE.Matrix4().makeTranslation(sx * 0.78, 0.33, wz).premultiply(m4);
+      add(parts.tyre, P.tyreGeo, w);
+      add(parts.rim, P.rimGeo, w);
+    }
+    colliders.push({ min: { x: x - 0.95, y: 0, z: z - 2.4 * len }, max: { x: x + 0.95, y: 1.5, z: z + 2.4 * len } });
+  }
+  if (!colliders.length) return colliders;
+  const strip = (g) => { g = g.index ? g.toNonIndexed() : g; if (g.attributes.uv) g.deleteAttribute('uv'); if (g.attributes.uv1) g.deleteAttribute('uv1'); return g; };
+  const paint = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.1, envMap: scene.environment, envMapIntensity: 1.3 });
+  groundReflect(paint, 'fleet');
+  const mk = (list, mat, shadow = true, keepUv = false) => {
+    const m = new THREE.Mesh(mergeGeometries(keepUv ? list : list.map(strip)), mat);
+    m.castShadow = m.receiveShadow = shadow;
+    scene.add(m);
+    return m;
+  };
+  mk(parts.body, paint);
+  mk(parts.glass, P.glass);
+  mk(parts.tyre, S.dark);
+  mk(parts.rim, S.chrome);
+  const b = mk(parts.blob, S.blob, false, true);
+  b.renderOrder = 1;
+  return colliders;
+}
+
 export function buildCars(scene) {
   const S0 = shared();
   for (const m of [S0.chrome, S0.hubMat, S0.glass, S0.lens]) m.envMap = scene.environment;
@@ -379,6 +448,8 @@ export function buildCars(scene) {
     colliders.push({ min: { x: CAR.x + 0.05 - 0.95, y: 0, z: z - 2.35 }, max: { x: CAR.x + 0.05 + 0.95, y: 1.5, z: z + 2.35 } });
   }
   scene.add(hero.car);
+  const fleet = parkedFleet(scene, [-1.5, -24, -31.5, 58]);
+  colliders.push(...fleet);
 
   // moving cars: one mesh per sounding audio car (hidden when none is passing)
   const pool = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0].map((paint) => {

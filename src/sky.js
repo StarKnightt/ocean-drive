@@ -9,8 +9,8 @@ export const sunDir = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.V
 
 // Linear-light values. ~15 minutes after sunrise (7 deg): ~2700-2900 K orange direct
 // light, dim and cool skylight (the sky itself is only a fraction as bright).
-export const SUN_COLOR = new THREE.Color().setRGB(1.0, 0.37, 0.105, THREE.LinearSRGBColorSpace);
-export const SUN_INTENSITY = 7.0;
+export const SUN_COLOR = new THREE.Color().setRGB(1.0, 0.62, 0.34, THREE.LinearSRGBColorSpace);
+export const SUN_INTENSITY = 5.1;
 export const ENV_INTENSITY = 1.0;
 export const FOG_DENSITY = 1 / 200; // per metre at sea level
 
@@ -59,9 +59,10 @@ vec3 odSkyBase(vec3 d, float glowScale) {
   float az = odSunSide(d);
 
   // Anti-solar side: dusty blue-grey dome, pink "belt" above a blue-grey earth-shadow band.
-  vec3 away = mix(vec3(0.410, 0.475, 0.650), vec3(0.290, 0.360, 0.550), smoothstep(0.3, 0.95, e));
-  away = mix(vec3(0.680, 0.500, 0.520), away, smoothstep(0.06, 0.34, e));
-  away = mix(vec3(0.400, 0.420, 0.540), away, smoothstep(0.0, 0.06, e));
+  vec3 away = mix(vec3(0.450, 0.500, 0.660), vec3(0.300, 0.370, 0.560), smoothstep(0.35, 0.95, e));
+  away = mix(vec3(0.640, 0.560, 0.610), away, smoothstep(0.16, 0.5, e));
+  away = mix(vec3(0.800, 0.620, 0.620), away, smoothstep(0.02, 0.2, e));
+  away = mix(vec3(0.640, 0.600, 0.650), away, smoothstep(0.0, 0.035, e));
 
   // Solar side, a broad graded band: red-orange at the horizon -> deep orange (~6 deg)
   // -> orange-gold (~15 deg) -> pale yellow -> clean blue-grey.
@@ -99,8 +100,8 @@ vec3 odApplyFog(vec3 col, vec3 offs, float density) {
   fOd *= mix(1.0, 0.3, smoothstep(0.3, 0.95, dot(fDir, OD_SUN)));
   // down-sun the near air is barely visible: facades 50-150 m away stay crisp and warm
   // (and the sunlit towers behind them, 150-400 m, stay warm rather than lilac boxes)
-  fOd *= mix(1.0, 0.3, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - smoothstep(120.0, 220.0, fDist)));
-  fOd *= mix(1.0, 0.55, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * smoothstep(120.0, 220.0, fDist) * (1.0 - smoothstep(350.0, 700.0, fDist)));
+  fOd *= mix(1.0, 0.45, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * (1.0 - smoothstep(100.0, 180.0, fDist)));
+  fOd *= mix(1.0, 1.0, smoothstep(0.2, 0.8, -dot(normalize(fDir.xz + 1e-5), normalize(OD_SUN.xz))) * smoothstep(120.0, 220.0, fDist) * (1.0 - smoothstep(350.0, 700.0, fDist)));
   return mix(col, odHaze(fDir), 1.0 - exp(-fOd));
 }
 `;
@@ -165,11 +166,11 @@ vec4 odClouds(vec3 d, float detail) {
   float th = 0.53 - 0.04 * low;
   float nn = n + (fine - 0.5) * 0.07;
   // soft, feathered puff edges (no hard sticker outlines near the horizon)
-  float dens = smoothstep(th - 0.03 - 0.03 * low, th + 0.09, nn) * low;
+  float dens = smoothstep(th - 0.008 - 0.012 * low, th + 0.03, nn) * low;
   dens *= smoothstep(0.0, 0.02, d.y);                    // melt into horizon haze
-  float thick = smoothstep(th + 0.03, th + 0.13, nn);
+  float thick = smoothstep(th + 0.01, th + 0.1, nn);
   float lit = clamp((n - n2) * 14.0 + 0.5, 0.0, 1.0);    // sun-facing side of the puff
-  float under = clamp((n - nb) * 7.0 + 0.3, 0.0, 1.0) * thick;   // bottom of a thick puff
+  float under = clamp((n - nb) * 9.0 + 0.45, 0.0, 1.0) * thick;   // bottom of a thick puff
   float wv = 0.35 + 0.65 * odNoise(q * 3.3 + 2.0);       // rim width varies along the edge
 
   float mu = max(dot(d, OD_SUN), 0.0);
@@ -180,13 +181,14 @@ vec4 odClouds(vec3 d, float detail) {
   // Away from the sun: sunlit pink-peach tops over shaded lavender-grey bases.
   // Away from the sun: peach-orange sun-facing sides, lavender-grey shaded bodies and
   // darker undersides.
-  vec3 cA = mix(vec3(0.44, 0.36, 0.40), vec3(1.1, 0.62, 0.3), smoothstep(0.2, 0.8, lit) * (0.65 + 0.35 * thin));
-  cA *= 1.0 - 0.35 * under;
+  vec3 cA = mix(vec3(0.40, 0.35, 0.42), vec3(1.15, 0.78, 0.48), smoothstep(0.35, 0.75, lit) * (0.55 + 0.45 * thin));
+  cA *= 1.0 - 0.6 * under;
+  cA += vec3(1.0, 0.7, 0.38) * 0.28 * smoothstep(0.55, 0.9, lit) * (1.0 - thick) * (1.0 - under);   // bright sun-facing rim
   // Backlit, near the sun: thick bodies slate-purple with soft internal gradients;
   // only the sun-facing edge forward-scatters, orange-gold, in a rim of varying width.
-  vec3 edge = vec3(1.0, 0.42, 0.08) * (1.4 + 1.5 * hg);
-  vec3 body = mix(vec3(0.30, 0.22, 0.27), vec3(0.17, 0.13, 0.19), thick) * (1.0 - 0.3 * under);
-  float rim = smoothstep(0.4, 0.9, lit) * pow(thin, 1.1 * (1.6 - wv));
+  vec3 edge = vec3(1.0, 0.6, 0.24) * (1.1 + 1.3 * hg);
+  vec3 body = mix(vec3(0.30, 0.23, 0.28), vec3(0.14, 0.11, 0.16), thick) * (1.0 - 0.5 * under);
+  float rim = smoothstep(0.5, 0.85, lit) * pow(thin, 1.4 * (1.6 - wv));
   vec3 cS = mix(body, edge, rim) + vec3(0.9, 0.35, 0.08) * 0.35 * hg * thin * (1.0 - rim);
   vec3 col = mix(cA, cS, near);
 
@@ -296,6 +298,22 @@ function installGroundBounce() {
   {
     vec3 odBn = inverseTransformDirection( normal, viewMatrix );
     reflectedLight.indirectDiffuse += diffuseColor.rgb * vec3( 0.2, 0.14, 0.09 ) * max( -odBn.y, 0.0 );
+    // Looking toward the low sun, the faces you see are turned away from it: they get only
+    // the dim anti-solar sky, and rough ground seen against the light forward-scatters little
+    // (sand, grass and leaves are back-scatterers). Photos read them near-silhouette.
+    const vec3 odBs = ${`vec3(${sunDir.x.toFixed(4)}, ${sunDir.y.toFixed(4)}, ${sunDir.z.toFixed(4)})`};
+    vec3 odVw = inverseTransformDirection( -vViewPosition, viewMatrix );
+    float odTow = smoothstep( 0.3, 0.9, dot( normalize( odVw.xz + 1e-5 ), normalize( odBs.xz ) ) );
+    float odAwayN = smoothstep( 0.15, -0.45, dot( odBn, odBs ) );
+    float odUp = smoothstep( 0.5, 0.9, odBn.y );
+    float odK = odTow * max( odAwayN, 0.7 * odUp );
+    reflectedLight.indirectDiffuse *= 1.0 - 0.6 * odK;
+    reflectedLight.indirectSpecular *= 1.0 - 0.35 * odK;
+    reflectedLight.directDiffuse *= 1.0 - 0.45 * odTow * odUp;
+    // (no grazing forward-specular sheen off rough ground: grains and blades self-shadow it)
+    float odRuf = odTow * odUp * smoothstep( 0.55, 0.8, material.roughness );
+    reflectedLight.directSpecular *= 1.0 - 0.85 * odRuf;
+    reflectedLight.indirectSpecular *= 1.0 - 0.75 * odRuf;
   }
 #endif`;
 }

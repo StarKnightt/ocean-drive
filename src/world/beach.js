@@ -161,8 +161,9 @@ function sandMaterial(detailTex, surf) {
         float sdShoe(vec2 d, float ang) {
           float c = cos(ang), s = sin(ang);
           float u = d.x * c + d.y * s, v = -d.x * s + d.y * c;
-          float r = min(length(vec2((u + 0.07) / 0.055, v / 0.042)), length(vec2((u - 0.06) / 0.075, v / 0.05)));
-          return -(1.0 - smoothstep(0.25, 1.25, r)) + 0.4 * exp(-pow((r - 1.35) / 0.28, 2.0)) * (u > 0.0 ? 1.3 : 0.7);
+          float r = min(length(vec2((u + 0.07) / 0.06, v / 0.05)), length(vec2((u - 0.06) / 0.08, v / 0.06)));
+          r *= 0.85 + 0.3 * surfN(d * 23.0 + ang);   // collapsed, ragged walls
+          return -(1.0 - smoothstep(0.0, 1.7, r)) + 0.25 * exp(-pow((r - 1.7) / 0.5, 2.0)) * (u > 0.0 ? 1.3 : 0.7);
         }
         float sdPrints(vec2 p, float cell, float dens, float seed, float depthK, float scaleK) {
           vec2 g = p / cell;
@@ -181,8 +182,19 @@ function sandMaterial(detailTex, surf) {
           return h;
         }
         float sdH(vec2 p, float busy) {
-          return sdPrints(p, 0.72, 0.62 * busy, 11.0, 0.022, 1.0) + sdPrints(p + 0.37, 1.35, 0.5 * busy, 47.0, 0.012, 1.35);
-        }`)
+          return sdPrints(p, 0.85, 0.6 * busy, 11.0, 0.013, 1.35) + sdPrints(p + 0.37, 1.6, 0.5 * busy, 47.0, 0.008, 1.8);
+        }
+        // trodden paths: from the beach accesses to the tower and on to the water, wandering
+        float odSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)); }
+        float odPaths(vec2 p) {
+          vec2 q = p + vec2(0.0, (surfN(p * 0.045) - 0.5) * 9.0);
+          float d = min(odSeg(q, vec2(13.0, -30.0), vec2(45.0, 5.0)), odSeg(q, vec2(13.0, 32.0), vec2(45.0, 5.0)));
+          d = min(d, min(odSeg(q, vec2(45.0, 5.0), vec2(90.0, -3.0)), odSeg(q, vec2(13.0, -30.0), vec2(86.0, -48.0))));
+          d = min(d, odSeg(q, vec2(13.0, 32.0), vec2(86.0, 50.0)));
+          return exp(-d * d / 12.0);
+        }
+        // low-frequency lumps of churned sand (m)
+        float odLumps(vec2 p) { return (surfN(p * 1.7) * 0.5 + surfN(p * 0.55 + 3.0) + surfN(p * 4.3 + 7.0) * 0.2) * 0.022; }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         float odX = vOdW.x, odZ = vOdW.z;
         // churned sand: the baked tile at two rotated scales so it never visibly repeats
@@ -196,7 +208,7 @@ function sandMaterial(detailTex, surf) {
         float odGlass = smoothstep(${f(SHORE_X - 2.4)}, ${f(SHORE_X - 1.0)}, odX + 0.4 * sin(odZ * 0.37));
         float odRake = smoothstep(${f(SAND.x0 + 0.5)}, ${f(SAND.x0 + 1.0)}, odX) * (1.0 - smoothstep(${f(SAND.x0 + 12)}, ${f(SAND.x0 + 14)}, odX));
         // relief strength: trodden dry sand > raked > damp > swash-smoothed wet sand
-        float odBusy = smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4);
+        float odBusy = smoothstep(0.2, 0.8, surfN(vOdW.xz * 0.07) * 0.7 + surfN(vOdW.xz * 0.23 + 5.0) * 0.4) * (0.12 + 0.88 * odPaths(vOdW.xz));
         float odW = mix(1.0, 0.35, odRake) * (1.0 - 0.3 * odDamp) * (1.0 - 0.75 * odWet);
         float odPrintK = (0.25 + 0.75 * odBusy) * (1.0 - odRake * 0.8) * (1.0 - odWet);
         diffuseColor.rgb *= 0.8 + 0.4 * (odDa.a * 0.5 + odDb.a * 0.5);
@@ -204,7 +216,7 @@ function sandMaterial(detailTex, surf) {
         float odWx = ${f(WET_LINE_X - 0.9)} + 0.5 * sin(odZ * 0.047) + 0.25 * sin(odZ * 0.19 + 1.0);
         float odWd = abs(odX - odWx) / (0.45 + 0.3 * surfN(vec2(odZ * 0.08, 3.0)));
         float odWr = (1.0 - smoothstep(0.55, 1.0, odWd)) * (0.55 + 0.45 * smoothstep(0.3, 0.6, surfN(vec2(odX * 1.4, odZ * 0.45)) * 0.7 + surfN(vec2(odZ * 2.3, odX * 3.1)) * 0.5));
-        vec3 odWc = mix(vec3(0.17, 0.07, 0.03), vec3(0.42, 0.22, 0.08), surfN(vec2(odZ * 5.0, odX * 5.0)));
+        vec3 odWc = mix(vec3(0.17, 0.13, 0.06), vec3(0.42, 0.32, 0.14), surfN(vec2(odZ * 5.0, odX * 5.0)));
         diffuseColor.rgb = mix(diffuseColor.rgb, odWc, odWr);
         // tire tracks of the lifeguard truck
         float odTx = 57.0 + 4.0 * sin(odZ / 37.0) + 1.5 * sin(odZ / 13.0 + 1.0);
@@ -232,6 +244,10 @@ function sandMaterial(detailTex, surf) {
           odS.x += odTs * 0.5 * odTnear;
           odS.y += odTrack * odTaa * 0.45 * cos(6.2832 * (odZ + odTd * 0.8) / 0.11);
           float odLit = odDa.b * odDb.b;
+          {
+            float le = 0.04, l0 = odLumps(vOdW.xz);
+            odS += vec2(odLumps(vOdW.xz + vec2(le, 0.0)) - l0, odLumps(vOdW.xz + vec2(0.0, le)) - l0) / le * (1.0 - 0.7 * odWet) * (1.0 - 0.5 * odRake);
+          }
           float odDist = length(vOdW - cameraPosition);
           float odNear = (1.0 - smoothstep(25.0, 45.0, odDist)) * odPrintK;
           if (odNear > 0.01) {
@@ -262,8 +278,12 @@ function sandMaterial(detailTex, surf) {
           float odAway = smoothstep(0.2, -1.0, odG) * odGraze;
           // warm grains down-sun; the lilac sky fill is kept modest against the sun term
           reflectedLight.directDiffuse *= 1.0 + 0.8 * odAway;
-          reflectedLight.indirectDiffuse *= vec3(0.62, 0.57, 0.52) * mix(1.0, 0.85, odAway);
-          reflectedLight.directSpecular *= 1.0 - smoothstep(0.0, 0.2, odWet);
+          reflectedLight.indirectDiffuse *= vec3(0.7, 0.66, 0.63) * mix(1.0, 0.85, odAway);
+          float odToward = smoothstep(0.0, 0.85, odG) * odGraze;
+          reflectedLight.directDiffuse *= mix(vec3(1.0), vec3(0.5, 0.47, 0.55), odToward);
+          reflectedLight.indirectDiffuse *= mix(vec3(1.0), vec3(0.72, 0.72, 0.9), odToward);
+          reflectedLight.directSpecular *= (1.0 - smoothstep(0.0, 0.2, odWet)) * (1.0 - 0.9 * odToward);
+          reflectedLight.indirectSpecular *= 1.0 - 0.85 * odToward * (1.0 - smoothstep(0.0, 0.3, odWet));
         }
         #endif`)
       // wet sand: glassy film mirroring the gold sky; a soft sun glow, no hard streak
@@ -274,7 +294,7 @@ function sandMaterial(detailTex, surf) {
           float odNv = max(-odI.y, 0.02);
           vec3 odR = reflect(odI, vec3(0.0, 1.0, 0.0));
           float odF = 0.02 + 0.98 * pow(1.0 - odNv, 5.0);
-          float odRefl = odWet * (0.08 + 0.3 * odF) + odGlass * (0.3 + 0.5 * odF);
+          float odRefl = (odWet * (0.08 + 0.3 * odF) + odGlass * (0.3 + 0.5 * odF)) * (1.0 - 0.55 * smoothstep(0.4, 0.95, dot(normalize(odR.xz + 1e-5), normalize(OD_SUN.xz))));
           vec3 odRb = normalize(vec3(odR.x, odR.y * 0.6 + 0.01, odR.z));   // film ripples smear it toward the gold horizon
           outgoingLight = mix(outgoingLight, (odSkyBase(odRb, 0.0) - odSunGlow(dot(odRb, OD_SUN), 0.65, 0.0)) * 0.6, min(odRefl, 0.85));
           vec3 odV = -odI;
@@ -283,8 +303,9 @@ function sandMaterial(detailTex, surf) {
           vec2 odRt = vec2(-odFw.y, odFw.x);
           float odSx = dot(odH.xz, odRt) / odH.y, odSz = dot(odH.xz, odFw) / odH.y;
           // broad, soft gold glow (the wet grains scatter the sun into a patch)
-          float odGl = exp(-(odSx * odSx / (2.0 * 0.08 * 0.08) + odSz * odSz / (2.0 * 0.1 * 0.1)));
-          vec3 odSp = directLight.color * vec3(1.0, 0.62, 0.3) * odGl * (0.06 * odWet + 0.4 * odGlass);
+          float odGl = exp(-(odSx * odSx / (2.0 * 0.03 * 0.03) + odSz * odSz / (2.0 * 0.06 * 0.06)));
+          float odSpk = smoothstep(0.55, 0.8, surfN(vOdW.xz * 41.0) * surfN(vOdW.xz * 97.0 + 3.0) * 1.9);
+          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * odSpk * (0.4 * odWet + 1.6 * odGlass);
           outgoingLight += odSp / (1.0 + dot(odSp, vec3(0.2126, 0.7152, 0.0722)) / 1.5);
         }
         #endif
@@ -382,7 +403,8 @@ function swashSheet(surf) {
         float lace = odFoam(p, t);
         float edge = exp(-max(s, 0.0) / (0.1 + 0.12 * fresh)) * smoothstep(-0.02, 0.01, s);
         // lacy leading edge, thin bubble trails behind it
-        float trail = smoothstep(0.6, 0.9, odNoise(vec2(p.x * 0.8, p.y * 7.0 + p.x * 1.3)));
+        vec2 tq = p * 1.4 + vec2(odNoise(p * 0.6 + 2.0), odNoise(p * 0.6 + 6.0)) * 2.2;
+        float trail = smoothstep(0.62, 0.9, odNoise(tq));
         float foam = max(edge * mix(0.45, 1.0, lace), max(lace, trail * 0.7) * exp(-max(s, 0.0) / 1.4) * 0.75);
         foam *= 0.35 + 0.65 * fresh;
         vec3 skyUp = odSky(vec3(0.0, 1.0, 0.0), 2.0);
@@ -507,7 +529,7 @@ function buildTower(scene, colliders) {
     col(x - 0.12, x + 0.12, 0, D - 0.2, z - 0.12, z + 0.12);
   }
   // bold X bracing (above the skirt panel)
-  const yb0 = 1.55;
+  const yb0 = 0.95;
   for (const z of [-1.86, 1.86]) {
     add(beam([-1.8, yb0, z], [0.7, D - 0.35, z], 0.15, NAVY));
     add(beam([0.7, yb0, z], [-1.8, D - 0.35, z], 0.15, NAVY));
@@ -516,7 +538,7 @@ function buildTower(scene, colliders) {
   }
   for (const x of [-1.86, 3.26]) { add(beam([x, yb0, -1.8], [x, D - 0.35, 1.8], 0.15, NAVY)); add(beam([x, yb0, 1.8], [x, D - 0.35, -1.8], 0.15, NAVY)); }
   // solid painted skirt panel around the stilts: vertical pink / white stripes, teal trim
-  const skY0 = 0.45, skY1 = 1.5, sw0 = 0.3;
+  const skY0 = 0.3, skY1 = 0.85, sw0 = 0.3;
   for (const z of [-1.92, 1.92]) {
     for (let x = -1.9, i = 0; x < 3.3; x += sw0, i++) add(boxAt(x, Math.min(x + sw0, 3.3), skY0, skY1, z - 0.03, z + 0.03, i % 2 ? WHITE : PINK));
     add(boxAt(-1.95, 3.35, skY1, skY1 + 0.08, z - 0.05, z + 0.05, TEAL));
@@ -839,9 +861,10 @@ function duneVegetation(scene, rnd, colliders) {
     if (rnd() > 0.5 + 0.5 * dens) continue;
     const x = SAND.x0 + 1.0 + Math.pow(rnd(), 0.8) * (fenceX - SAND.x0 - 1.6);
     const r = rnd();
-    if (r < 0.35) grape.push([x, z, 0.8 + rnd() * 1.0]);
-    else if (r < 0.5) palms.push([x, z, 0.8 + rnd() * 0.7]);
-    for (let k = 0, n = 2 + Math.floor(rnd() * 6); k < n; k++) oats.push([x + (rnd() - 0.5) * 2.2, z + (rnd() - 0.5) * 2.2, 0.6 + rnd() * 0.6]);
+    const big = 0.55 + 1.5 * rnd() * rnd() + 0.5 * dens;
+    if (r < 0.35) grape.push([x, z, big]);
+    else if (r < 0.5) palms.push([x, z, 0.6 + rnd() * 0.9]);
+    for (let k = 0, n = 1 + Math.floor(rnd() * rnd() * 9); k < n; k++) oats.push([x + (rnd() - 0.5) * 2.6, z + (rnd() - 0.5) * 2.6, 0.45 + rnd() * 0.85]);
   }
   const place = (geo, mat, items, sy = 1) => {
     const im = new THREE.InstancedMesh(geo, mat, items.length);
@@ -856,27 +879,34 @@ function duneVegetation(scene, rnd, colliders) {
     scene.add(im);
   };
   const leafMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: THREE.DoubleSide });
-  place(seaGrapeGeometry(rnd), leafMat, grape);
-  place(palmettoGeometry(rnd), leafMat, palms);
-  place(seaOatGeometry(rnd), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide }), oats);
+  const oatMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide });
+  // three shape variants of each plant so neighbouring clumps never match
+  const split = (items, k) => items.filter((_, i) => i % 3 === k);
+  for (let k = 0; k < 3; k++) {
+    place(seaGrapeGeometry(rnd), leafMat, split(grape, k));
+    place(palmettoGeometry(rnd), leafMat, split(palms, k));
+    place(seaOatGeometry(rnd), oatMat, split(oats, k));
+  }
 
   // rope-and-post dune fence
   const fence = [];
   let prev = null;
-  for (let z = -220; z <= 220; z += 2.4) {
+  for (let z = -220; z <= 220; z += 1.9 + rnd() * 1.1) {
     if (path(z)) { prev = null; continue; }
-    const x = fenceX + 0.15 * Math.sin(z * 0.07), y = ground(x, z);
-    fence.push(colorize(new THREE.CylinderGeometry(0.05, 0.055, 1.0, 7).translate(x, y + 0.42, z), 0x8d8478));
+    const x = fenceX + 0.15 * Math.sin(z * 0.07) + (rnd() - 0.5) * 0.25, y = ground(x, z);
+    const ph = 0.9 + rnd() * 0.22, lx = (rnd() - 0.5) * 0.16, lz = (rnd() - 0.5) * 0.16;
+    fence.push(colorize(new THREE.CylinderGeometry(0.045 + rnd() * 0.015, 0.055, ph, 7).translate(0, ph / 2 - 0.08, 0).rotateX(lz).rotateZ(lx).translate(x, y, z), new THREE.Color(0x8d8478).multiplyScalar(0.8 + rnd() * 0.35).getHex()));
+    const top = [x - Math.sin(lx) * (ph - 0.2), y + ph - 0.2, z + Math.sin(lz) * (ph - 0.2)];
     if (prev) {
-      const pts = [];
+      const pts = [], sag = 0.05 + rnd() * 0.2;
       for (let i = 0; i <= 8; i++) {
         const f = i / 8;
-        pts.push(new THREE.Vector3(prev[0] + (x - prev[0]) * f, prev[1] + (y - prev[1]) * f + 0.82 - 0.12 * Math.sin(f * Math.PI), prev[2] + (z - prev[2]) * f));
+        pts.push(new THREE.Vector3(prev[3][0] + (top[0] - prev[3][0]) * f, prev[3][1] + (top[1] - prev[3][1]) * f - sag * Math.sin(f * Math.PI), prev[3][2] + (top[2] - prev[3][2]) * f));
       }
       fence.push(colorize(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4), 0xd6c6a0));
     }
     if (prev && Math.abs(z) < 100) colliders.push({ min: { x: Math.min(x, prev[0]) - 0.08, y, z: prev[2] }, max: { x: Math.max(x, prev[0]) + 0.08, y: y + 0.9, z } });
-    prev = [x, y, z];
+    prev = [x, y, z, top];
   }
   const fm = new THREE.Mesh(mergeGeometries(fence.map(prep)), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
   fm.castShadow = true;
@@ -897,12 +927,13 @@ function wrackClumps(scene, rnd) {
     const z = (rnd() - 0.5) * 400;
     const wx = WET_LINE_X - 0.9 + 0.5 * Math.sin(z * 0.047) + 0.25 * Math.sin(z * 0.19 + 1);
     // most on the wrack band, some strays scattered down toward the swash
-    const x = i % 5 === 0 ? wx + rnd() * (WET_LINE_X + 1.5 - wx) : wx + (rnd() - 0.5) * 1.1;
+    const x = i % 9 === 0 ? wx + rnd() * (WET_LINE_X + 1.0 - wx) : wx + (rnd() - 0.5) * 0.9;
     const s = 0.5 + rnd() * rnd() * 1.6;
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6.28);
-    m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) + 0.005, z), q, new THREE.Vector3(s * (1 + rnd()), s * (0.5 + rnd() * 0.6), s));
+    m4.compose(new THREE.Vector3(x, sandHeight(x) + sandDetail(x, z) - 0.004, z), q, new THREE.Vector3(s * (1.2 + rnd()), s * (0.3 + rnd() * 0.35), s * (1 + rnd() * 0.6)));
     im.setMatrixAt(i, m4);
-    im.setColorAt(i, c.setRGB(0.24 + rnd() * 0.2, 0.1 + rnd() * 0.09, 0.04 + rnd() * 0.04, THREE.SRGBColorSpace));
+    const gold = rnd();
+    im.setColorAt(i, c.setRGB(0.26 + gold * 0.22, 0.2 + gold * 0.15, 0.08 + gold * 0.05, THREE.SRGBColorSpace));
   }
   im.receiveShadow = true;
   im.castShadow = true;
