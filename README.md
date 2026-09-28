@@ -36,7 +36,8 @@ from any sub-path; every push to `main` deploys it to GitHub Pages through
 The Playwright scripts in `tools/` need the dev server running: `shots.mjs` captures the five
 fixed critic cameras, `walk-test.mjs` walks the route from the sidewalk to the water,
 `ride-test.mjs` and `vehicle-sim-test.mjs` check the bike, the ATV and the convertible (`car-ride-test.mjs`
-runs the convertible's enter / drive / exit flow in Node), and `mobile-test.mjs` runs
+runs the convertible's enter / drive / exit flow in Node; `traffic-sim-test.mjs` and
+`traffic-visual-test.mjs` check the traffic in Node), and `mobile-test.mjs` runs
 the touch controls on an emulated phone.
 
 ![The hotel fronts from the park: MARISOL, ORCHIDEA and the convertible at the curb](media/01-hotel-fronts.jpg)
@@ -89,6 +90,9 @@ jump, ride and mute.
 - Birds: pelicans in a line over the water, gulls that flee when you walk at them, sanderlings
   chasing the surf, grackles on the patios, a frigatebird and cormorants.
 - A beach cruiser to ride, a lifeguard ATV and the 1950s convertible to drive (V8 synthesized live).
+- Traffic: a few cars cruising the drive at 20–30 km/h, keeping their distance, stopping for
+  anyone on a crosswalk, for the 11 ST signal (which cycles) and for you in the lane, with
+  brake lights, positional engines and a horn when blocked. None in the `?shot` harness frames.
 
 ![The waterline: glitter path, breakers and the wrack line](media/03-waterline.jpg)
 

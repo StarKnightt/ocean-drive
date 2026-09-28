@@ -4,7 +4,7 @@
 //   audio.start();                     // call from a user gesture (no-op in ?shot= mode)
 //   audio.update(dt, camera);          // THREE camera, or update(dt, {x,y,z}, headingRad)
 //   audio.footstep('sand');            // manual step; audio.setAutoSteps(false) to disable auto steps
-//   audio.onCarPass((car) => ...);     // car = { id, x, y, dir, speed, t0, duration, z (live), active }
+//   audio.traffic(cars);               // per frame: the traffic cars in earshot get positional engines
 import * as Layout from '../world/layout.js';
 import { rr } from './dsp.js';
 import { createEngine } from './engine.js';
@@ -15,6 +15,7 @@ import { createCars } from './car.js';
 import { createMusic } from './music.js';
 import { createFootsteps } from './footsteps.js';
 import { createVehicleAudio } from './vehicles.js';
+import { createTrafficAudio } from './traffic.js';
 import { surfaceAt } from './surface.js';
 import { PALM_CLUSTERS } from '../world/palms.js';
 
@@ -66,7 +67,7 @@ function buildScene(env, reduced) {
     gulls: createGulls(env),
     // fewer simultaneous voices on small devices: every other palm-cluster rustle source
     wind: createWind(env, reduced ? PALMS.filter((_, i) => i % 2 === 0) : PALMS),
-    cars: createCars(env),
+    traffic: createTrafficAudio(env, { voices: reduced ? 2 : 3 }),
     music: createMusic(env, PATIO),
     steps: createFootsteps(env),
     vehicles: createVehicleAudio(env),
@@ -77,9 +78,9 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
   const reduced = voices === 'reduced';
   let ctx = null, env = null, parts = null, timer = null;
   let muted = false, vol = volume, auto = autoSteps;
-  let nextWave = 0, nextGull = 0, nextCar = 0, spatialAcc = 0;
+  let nextWave = 0, nextGull = 0, spatialAcc = 0, trafficCars = [];
   const L = { x: 0, y: EYE, z: 0, fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 };
-  const carCbs = new Set(), waveCbs = new Set();
+  const waveCbs = new Set();
   const walk = { x: null, z: null, acc: 0, still: 0 };
   let gullSource = null;   // BIRDS hook: calls come from real gulls
 
@@ -96,7 +97,6 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     }
     if (nextGull < now) nextGull = now + rr(1, 4);
     while (nextGull < ahead) { parts.gulls.callAt(nextGull, L); nextGull += reduced ? rr(10, 30) : rr(5, 20); }
-    if (now >= nextCar) { parts.cars.spawn(); nextCar = now + rr(40, 70); }
   }
 
   function applyVolume(tc = 0.08) {
@@ -116,10 +116,9 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
         Object.assign(env.listener, L);
         applyListener(ctx, L, true);
         parts = buildScene(env, reduced);
-        parts.cars.onPass((c) => carCbs.forEach((cb) => cb(c)));
         parts.gulls.setSource(gullSource);   // BIRDS hook
         const now = ctx.currentTime;
-        nextWave = now + 0.8; nextGull = now + rr(2, 6); nextCar = now + rr(10, 25);
+        nextWave = now + 0.8; nextGull = now + rr(2, 6);
         timer = setInterval(tick, 50);
         tick();
         applyVolume(0.6);
@@ -134,7 +133,7 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
       if (!ctx || ctx.state !== 'running') return;
       Object.assign(env.listener, { x: L.x, y: L.y, z: L.z });
       applyListener(ctx, L, false);
-      parts.cars.update(L);
+      parts.traffic.update(trafficCars, L);
       spatialAcc += dt;
       if (spatialAcc >= 0.05) {
         spatialAcc = 0;
@@ -157,14 +156,12 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     setVolume(v) { vol = Math.max(0, Math.min(1, v)); applyVolume(); },
     get muted() { return muted; },
 
-    // Car hook for visuals: cb(car) fires when a car starts its pass; car.z is live.
-    onCarPass(cb) { carCbs.add(cb); return () => carCbs.delete(cb); },
     // Wave hook for visuals: cb({ t, now, k, size, runup, z }) per scheduled break;
     // t - now = seconds until the wave starts (crash at t + 2.15k)
     onWave(cb) { waveCbs.add(cb); return () => waveCbs.delete(cb); },
-    onCarEnd(cb) { return parts ? parts.cars.onEnd(cb) : () => {}; },
-    getCars() { return parts ? parts.cars.list() : []; },
-    spawnCar(opts) { return parts ? parts.cars.spawn(opts) : null; },
+    // traffic (world/traffic.js): the cars' states once per frame; horn(h) = { x, z, classic }
+    traffic(cars) { trafficCars = cars; },
+    horn(h) { if (ctx && ctx.state === 'running') parts.traffic.horn(h); },
     // BIRDS hooks: fn(L) -> { x, y, z, vx, vy, vz } of a visible gull (or null) voices each
     // gull call; wingFlutter(p) plays the wingbeats of a gull taking off near the listener
     setGullSource(fn) { gullSource = fn; parts?.gulls.setSource(fn); },
@@ -172,7 +169,7 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
 
     get context() { return ctx; },
     stats() {
-      return { state: ctx?.state ?? 'none', spatials: env?.spatials.size ?? 0, cars: parts?.cars.list().length ?? 0, time: ctx?.currentTime ?? 0 };
+      return { state: ctx?.state ?? 'none', spatials: env?.spatials.size ?? 0, cars: trafficCars.length, time: ctx?.currentTime ?? 0 };
     },
     dispose() { clearInterval(timer); ctx?.close(); ctx = null; },
   };

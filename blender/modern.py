@@ -238,7 +238,9 @@ def side_patch(part, caster, fn, na, nb, side, mat, lift=0.003):
 
 
 # ---------------------------------------------------------------------------
-def wheel(part, kind, lod, side, center):
+def wheel(part, kind, lod, side, center, fixed=None, at=None):
+    """one wheel around center; fixed / at: the part and wheel centre for the parts that don't
+    spin with it (the brake caliper)"""
     k = K[kind]
     R, rim, w = k['R'], k['rim'], k['tw']
     ax = Vector((side, 0, 0))
@@ -297,7 +299,7 @@ def wheel(part, kind, lod, side, center):
             sweep(part, path, [(-wdt, -0.012), (wdt, -0.012), (wdt * 0.8, 0.008), (-wdt * 0.8, 0.008)], mat='alloy', up=ax, scales=[(1.0, 1.0), (0.85, 1.0), (1.1, 1.0)])
     lathe(part, [(0.075, face - 0.02), (0.07, face - 0.005), (0.055, face + 0.002), (0.03, face + 0.004), (0.0, face + 0.004)], 24, center, ax, mat='alloy')
     # caliper peeking through the spokes
-    box(part, center + Vector((-side * 0.0, 0.0, 0.0)) + ax * (w * 0.02) + Vector((0, 0.07, rim * 0.5)), (0.04, 0.09, 0.07), mat='trim')
+    box(fixed or part, (at if at is not None else center) + ax * (w * 0.02) + Vector((0, 0.07, rim * 0.5)), (0.04, 0.09, 0.07), mat='trim')
 
 
 # ---------------------------------------------------------------------------
@@ -558,9 +560,15 @@ def build(kind, lod, coll):
             rr.append([V(s, y - 0.02 * (s / 0.6) ** 2, u) for s in [0.6 - 1.2 * j / 6 for j in range(7)]])
         f = ext.grid(rr, mat='interior')
         orient(ext, f, lambda c: c + Vector((0, 0, 1)))
-    for sg, u, nm in ((1, k['uF'], 'FL'), (-1, k['uF'], 'FR'), (1, k['uR'], 'RL'), (-1, k['uR'], 'RR')):
-        wheel(ext, kind, lod, sg, V(sg * k['track'], hub_h, u))
     root = empty(kind + tag, (0, 0, 0), size=0.3)
+    # each wheel its own mesh on a pivot at the hub (the traffic cars spin them)
+    for sg, u, nm in ((1, k['uF'], 'FL'), (-1, k['uF'], 'FR'), (1, k['uR'], 'RL'), (-1, k['uR'], 'RR')):
+        loc = V(sg * k['track'], hub_h, u)
+        wp = Part(f'{kind}_wheel_{nm}{tag}_mesh')
+        wheel(wp, kind, lod, sg, Vector((0, 0, 0)), fixed=ext, at=loc)
+        wob = wp.object(sharp=40)
+        piv = empty(f'{kind}_wheel_{nm}{tag}', loc, root, size=0.15)
+        wob.parent = piv
     ghob = gh.object(sharp=40)
     exob = ext.object(sharp=40)
     glob = glass.object(sharp=30)

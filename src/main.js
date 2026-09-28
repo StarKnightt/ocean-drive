@@ -18,6 +18,7 @@ import { buildPeople } from './world/people.js'; // PEOPLE: jogger, beach walker
 import { QUALITY, IS_TOUCH } from './quality.js';
 import { createTouchControls } from './player/touch.js';
 import { createVehicles } from './vehicles/index.js';
+import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './renderer/memory.js';
 import { createGpuTimer } from './renderer/gpu-timer.js';
 
@@ -116,6 +117,8 @@ await loadStep(0.5, 'Laying Ocean Drive…'); // LOADER
 buildStreet(scene);
 await loadStep(0.55, 'Parking the cars…'); // LOADER
 const cars = await buildCarsGlb(scene, renderer);
+const traffic = buildTraffic(scene, { kit: cars.traffic, shot: SHOT });
+window.__traffic = traffic;
 await loadStep(0.6, 'Pouring the ocean…'); // LOADER
 const surf = createSurf({ frozen: SHOT, anchorTime: FROZEN_TIME });
 const beach = buildBeach(scene, surf);
@@ -161,9 +164,9 @@ audio.setAutoSteps(false);   // the walker drives the footsteps
 await nextFrame();
 const people = buildPeople(scene, {
   beach, hotels, walker: controls, shot: SHOT, mode: params.get('people'),
-  getCars: () => (SHOT ? [] : audio.getCars()),   // the cyclist waits for a clear road
+  getCars: () => traffic.cars,   // the cyclist waits for a clear road
 });
-walkWorld.circles.push(...people.colliders);
+walkWorld.circles.push(...people.colliders, ...traffic.colliders);
 window.__people = people;
 
 // --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
@@ -171,13 +174,29 @@ await nextFrame();
 const vehicles = createVehicles(scene, {
   walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
   staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c)),
-  dynamicCircles: people.colliders,
+  dynamicCircles: [...people.colliders, ...traffic.colliders],
   requestShadow,
   getTouch: () => touch,
-  car: cars.drive ?? null, movers: cars.movers ?? [],
+  car: cars.drive ?? null,
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
+
+// TRAFFIC inputs: pedestrians (who have right of way on the crosswalks) and obstacles in
+// the lanes (the player on foot, every ride vehicle, the cyclist)
+function trafficPeds() {
+  const out = [];
+  if (!vehicles.riding) out.push({ x: controls.pos.x, z: controls.pos.y });
+  for (const p of Object.values(people.people ?? {})) if (p.visible && p.name !== 'cyclist') out.push({ x: p.x, z: p.z });
+  return out;
+}
+function trafficObstacles() {
+  const out = [];
+  if (!vehicles.riding) out.push({ x: controls.pos.x, z: controls.pos.y, r: 0.35, v: 0 });
+  for (const e of vehicles.list) for (const c of e.v.circlesWorld) out.push({ x: c.x, z: c.z, r: c.r, v: e.v.ridden ? Math.max(0, e.v.lon) : 0 });
+  for (const p of Object.values(people.people ?? {})) if (p.name === 'cyclist' && p.state === 'ride') out.push({ x: p.x, z: p.z, r: 0.5, v: p.speed });
+  return out;
+}
 
 // footstep surface: audio's map, refined by the beach (deck, stairs, damp sand, swash)
 function stepSurface(x, z, feetY) {
@@ -435,7 +454,12 @@ function frame(t) {
   palms.update(elapsed);
   birds.update(dt, camera); // BIRDS
   people.update(dt, camera); // PEOPLE
-  cars.update(dt, SHOT ? null : audio.getCars(), camera);
+  cars.update(dt, null, camera);
+  if (!SHOT) {
+    traffic.update(dt, { camera, peds: trafficPeds(), obstacles: trafficObstacles() }); // TRAFFIC
+    audio.traffic(traffic.audioList());
+    for (const h of traffic.honks()) audio.horn(h);
+  }
 
   renderer.info.reset();
   const now = t / 1000;

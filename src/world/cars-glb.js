@@ -183,6 +183,7 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     lens: coat({ color: 0xdfe6ea, metalness: 0.9, roughness: 0.06, envMapIntensity: 1.0 }, 'lens'),
     amber: coat({ color: 0xd98a2e, roughness: 0.18, emissive: 0x2a1200 }, 'amber'),
     tail: coat({ color: 0x9a1016, roughness: 0.16, emissive: 0x2a0304 }, 'tail'),
+    makeTail: () => coat({ color: 0x9a1016, roughness: 0.16, emissive: 0x2a0304 }, 'tail'),
     plate: std({ color: 0xe6e2d2, roughness: 0.55 }),
     interior: std({ color: 0x3a3b3e, roughness: 0.7, envMapIntensity: 0.9 }),
     seat: std({ color: 0x2a2b2e, roughness: 0.62, envMapIntensity: 0.9 }),
@@ -517,6 +518,43 @@ function mergeList(list) {
 }
 
 // ---------------------------------------------------------------------------
+// Traffic cars (world/traffic.js): modern models cloned from the parked fleet GLB, each with
+// its wheel pivots, both LODs, its own paint and tail-lamp materials, plus the classic
+// convertible copies. Geometry is shared with the GLB; no shadow casting (a contact blob).
+const WHEEL_RADII = { sedan: 0.335, hatch: 0.315, suv: 0.37, pickup: 0.39, coupe: 0.34 };
+function trafficKit(scene, gltf, M, env, pool, probe) {
+  const kinds = gltf ? KINDS.filter((k) => gltf.scene.getObjectByName(k)) : [];
+  const box = new THREE.Box3();
+  gltf?.scene.updateMatrixWorld(true);
+  const lens = Object.fromEntries(kinds.map((k) => [k, box.setFromObject(gltf.scene.getObjectByName(k)).max.z - box.min.z]));
+  return {
+    kinds, lens, classics: pool, paints: PAINTS, heroPaints: MOVER_PAINTS,
+    lod1At: LOD1_AT.parked,
+    // one instance of `kind` for a traffic slot (paint and tail are the slot's materials)
+    makeModern(kind, paint, tail) {
+      const root = new THREE.Group();
+      const levels = [kind, kind + '_L1'].map((n, k) => {
+        const c = gltf.scene.getObjectByName(n).clone(true);
+        c.position.set(0, 0, 0);
+        applyMaterials(c, M, paint, paint);
+        c.traverse((o) => { if (o.isMesh) { o.castShadow = false; if (o.material === M.tail) o.material = tail; } });
+        c.visible = k === 0;
+        root.add(c);
+        return c;
+      });
+      const wheels = levels.map((lv, k) => ['FL', 'FR', 'RL', 'RR'].map((w) => lv.getObjectByName(`${kind}_wheel_${w}${k ? '_L1' : ''}`)).filter(Boolean));
+      root.add(blobMesh(2.2, lens[kind] + 0.5));
+      root.visible = false;
+      scene.add(root);
+      probe.hide.push(root);
+      return { root, levels, wheels, wheelR: WHEEL_RADII[kind] ?? 0.34, len: lens[kind] };
+    },
+    paint: (color) => paintMaterial(env, color, 'hero'),   // (the hero's program: nothing new to compile)
+    tail: () => M.makeTail(),
+    setLevel,
+  };
+}
+
 export async function buildCarsGlb(scene, renderer) {
   // ?cars=procedural: the old procedural set (comparison / fallback check)
   if (new URLSearchParams(location.search).get('cars') === 'procedural') return buildCars(scene);
@@ -536,21 +574,23 @@ export async function buildCarsGlb(scene, renderer) {
   const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.9 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.9 }, hero: true }];
   const fleet = parkedGltf ? buildFleet(scene, parkedGltf, M) : null;
   colliders.push(...(fleet ? fleet.colliders : buildParkedProcedural(scene)));
-  // moving copies for the audio car passes (no shadow casting, like the procedural ones)
+  // classic copies for the traffic (world/traffic.js): no shadow casting (a contact blob),
+  // each with its own tail-lamp material so its brake lights are its own
   const pool = MOVER_PAINTS.map((c, i) => {
     const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i), paint2, M);
-    m.car.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    const tail = M.makeTail();
+    m.car.traverse((o) => { if (o.isMesh) { o.castShadow = false; if (o.material === M.tail) o.material = tail; } });
     m.car.visible = false;
     scene.add(m.car);
-    return { ...m, id: null, spin: 0 };
+    return { ...m, tail, id: null, spin: 0 };
   });
-  const movers = carMovers(scene, pool);
   const all = [hero, ...pool];
   probe.hide.push(hero.car, ...pool.map((m) => m.car));
   if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
+    traffic: trafficKit(scene, parkedGltf, M, env, pool, probe),
     // the drivable hero (vehicles/index.js): start pose in sim terms, pose from the sim, eye
     drive: {
       pose: { x: CAR.x, z: CAR.z, yaw: Math.PI },
@@ -559,7 +599,6 @@ export async function buildCarsGlb(scene, renderer) {
       root: hero.car,
     },
     update(dt, cars, camera) {
-      movers(dt, cars);
       if (!camera) return;
       probe.follow(camera.position);
       for (const m of all) {

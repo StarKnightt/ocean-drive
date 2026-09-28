@@ -1230,9 +1230,11 @@ export function buildPeople(scene, { beach, hotels, getCars = () => [], walker =
           if (this.state === 'wait') {
             this.timer -= dt;
             if (this.timer <= 0) {
-              if (cars.length) this.timer = 2;   // a car is passing: wait for a clear road
+              // set off from one end of the stretch, unless a car is about to pass there
+              const dir = rnd() < 0.5 ? 1 : -1, z0 = -dir * 125;
+              if (cars.some((k) => Math.abs(k.z - z0) < 35)) this.timer = 2;
               else {
-                this.state = 'ride'; this.dir = rnd() < 0.5 ? 1 : -1; this.z = -this.dir * 125; this.speed = this.v0 = 3.9 + rnd() * 0.7;
+                this.state = 'ride'; this.dir = dir; this.z = z0; this.speed = this.v0 = 3.9 + rnd() * 0.7;
               }
             }
           } else {

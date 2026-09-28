@@ -138,15 +138,14 @@ await shot('5-wading');
 const deep = await walkTo(120, 15, { maxT: 20 });
 report.checks.wadeLimit = { x: deep.x, depth: +(-1 - deep.ground).toFixed(3) };
 
-// 5. moving car follows the audio car
+// 5. traffic: cars on the drive, moving, with voices
 const car = await page.evaluate(async () => {
-  const a = window.__audio;
-  const c = a.spawnCar({ dir: 1, zStart: -40 });
+  const T = window.__traffic;
+  const a = T.state();
   await new Promise((r) => setTimeout(r, 1500));
-  const list = a.getCars();
-  const k = list.find((q) => q.id === c?.id) ?? list[0];
-  const m = window.__cars.movers.find((q) => q.userData.audioId === k?.id);
-  return { audio: k ? { id: k.id, x: k.x, z: +k.z.toFixed(2), progress: k.progress } : null, visual: m ? { visible: m.visible, x: +m.position.x.toFixed(2), z: +m.position.z.toFixed(2) } : null, cars: list.length, state: a.stats() };
+  const b = T.state();
+  const moved = b.filter((q) => { const p = a.find((o) => o.id === q.id); return p && !q.hidden && Math.abs(q.z - p.z) > 0.5; }).length;
+  return { cars: b, moved, signal: T.signal, audio: window.__audio.stats() };
 });
 report.checks.car = car;
 report.errors = errors;

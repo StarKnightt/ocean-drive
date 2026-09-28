@@ -880,6 +880,19 @@ function furniture() {
 // The extended blocks: lamps, bins, pay stations, drains, benches and hydrants beyond the
 // original ranges, plus the intersection furniture (street-name blades, stop signs, one
 // signal). One merged mesh per block so far blocks can be culled.
+// the 11 ST signal's lit lenses: set('green' | 'yellow' | 'red', crossState)
+const LAMP = { red: 0, yellow: 1, green: 2 };
+export const SIGNAL_LIGHTS = {
+  od: null, cross: null,
+  set(od, cross) {
+    for (const [group, state] of [['od', od], ['cross', cross]]) {
+      const ms = SIGNAL_LIGHTS[group];
+      if (!ms) continue;
+      ms.forEach((m, i) => { m.visible = i === LAMP[state]; });
+    }
+  },
+};
+
 function districtFurniture(mat, G) {
   const rnd = mulberry32(112);
   const H = CURB_HEIGHT, hx = SIDEWALK_W.x1 - 0.55, px = SIDEWALK_E.x0 + 0.55;
@@ -954,15 +967,21 @@ function districtFurniture(mat, G) {
     m.userData.cullBlock = true;
     out.push(m);
   }
-  // lit signal lenses (green along Ocean Drive, red for the cross street)
+  // lit signal lenses: one mesh per lamp colour for the Ocean Drive heads and one per colour
+  // for the cross-street heads; SIGNAL_LIGHTS.set() shows the lit one (world/traffic.js
+  // runs the cycle; until then Ocean Drive shows green, the cross street red)
   if (lit.length) {
-    const lens = [];
-    for (const q of lit) {
-      const hex = q.lamp === 2 ? 0x7dffb0 : 0xff4f3c;
-      const g = colored(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 14).rotateX(Math.PI / 2).translate(0, 0.35 - q.lamp * 0.35, 0.14), hex);
-      lens.push(g.rotateY(q.rot).translate(q.x, q.y, q.z));
+    const HEX = [0xff4f3c, 0xffb43a, 0x7dffb0];
+    for (const group of ['od', 'cross']) {
+      const heads = lit.filter((q) => (q.lamp === 2) === (group === 'od'));
+      SIGNAL_LIGHTS[group] = HEX.map((hex, lamp) => {
+        const lens = heads.map((q) => colored(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 14).rotateX(Math.PI / 2).translate(0, 0.35 - lamp * 0.35, 0.14), hex).rotateY(q.rot).translate(q.x, q.y, q.z));
+        const m = new THREE.Mesh(mergeGeometries(lens), new THREE.MeshBasicMaterial({ vertexColors: true }));
+        m.visible = group === 'od' ? lamp === 2 : lamp === 0;
+        out.push(m);
+        return m;
+      });
     }
-    out.push(new THREE.Mesh(mergeGeometries(lens), new THREE.MeshBasicMaterial({ vertexColors: true })));
   }
   out.push(crossSigns(blades, stops));
   return out;
