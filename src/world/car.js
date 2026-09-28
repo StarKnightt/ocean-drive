@@ -287,10 +287,22 @@ export function groundReflect(mat, key, maxRadiance = 0, ground = 1) {
   mat.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
-        `return envMapColor.rgb * envMapIntensity * mix(vec3(${g}), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));`));
+        // (the probe holds the sun disc: capped so rough paint doesn't smear it into a glowing blob;
+        // the sun's own highlight comes from the direct light)
+        `return min(envMapColor.rgb, vec3(2.2)) * envMapIntensity * mix(vec3(${g}), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));`));
+    // the coat's sun highlight: small and hard. (three widens it by the screen-space normal
+    // variation, which on the long curved panels turns the sun into a soft blob)
+    s.fragmentShader = s.fragmentShader.replace('#include <lights_physical_fragment>',
+      THREE.ShaderChunk.lights_physical_fragment.replace('material.clearcoatRoughness += geometryRoughness;', 'material.clearcoatRoughness += 0.15 * geometryRoughness;'));
+    // ...and GGX's long tail under the 5x sun, once capped, saturates into a wide flat disc:
+    // the direct coat term is squeezed (x^2 / (x + 400)) so only the core stays over the cap
+    s.fragmentShader = s.fragmentShader.replace('#include <lights_physical_pars_fragment>',
+      THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+        'clearcoatSpecularDirect += ccIrradiance * BRDF_GGX_Clearcoat( directLight.direction, geometryViewDir, geometryClearcoatNormal, material );',
+        '{ vec3 ccS = ccIrradiance * BRDF_GGX_Clearcoat( directLight.direction, geometryViewDir, geometryClearcoatNormal, material ); clearcoatSpecularDirect += ccS * ccS / ( ccS + vec3( 400.0 ) ); }'));
     if (maxRadiance) clampChunk(s, maxRadiance);
   };
-  mat.customProgramCacheKey = () => 'car-refl-' + key + maxRadiance + '-' + ground;
+  mat.customProgramCacheKey = () => 'car-refl2-' + key + maxRadiance + '-' + ground;
 }
 
 // keep small bright parts (chrome, whitewalls, lenses) under the bloom threshold (4.0):

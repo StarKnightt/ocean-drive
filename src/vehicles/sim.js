@@ -59,7 +59,7 @@ export const SPECS = {
     roll: { pavement: 0.2, grass: 1, wetsand: 1, sand: 1 },
     accel: 2.2, accelHard: 2.9, brake: 6.5, handbrake: 4.2, revAccel: 1.6, revMax: 3.4, engineBrake: 0.45,
     steerMax: 0.46, steerV: 7.5, steerRate: 4, grip: { hard: 6, soft: 6 }, bounce: 0.06,
-    waterK: 0.1, eye: [-0.42, 1.24, 0.24],
+    waterK: 0.1, eye: [-0.42, 1.29, 0.24],
     idle: 620, redline: 4400, ratios: [0, 224, 135, 89],
   },
 };
@@ -187,18 +187,24 @@ export function syncCircles(v) {
 
 const _h = [0, 0, 0, 0];
 // world: { groundAt, waterDepthAt?, swashAt?, bounds, grid, dynamic: () => circles[] }
-export function blockedAt(v, x, z, yaw, world, airY = 0) {
+// turnOnly: a rotation in place (after a slide), which may dip a corner a few cm deeper
+export function blockedAt(v, x, z, yaw, world, airY = 0, turnOnly = false) {
   const S = v.spec, B = world.bounds;
   const s = Math.sin(yaw), c = Math.cos(yaw);
   // wheels: steps up and deep water
   wheelHeights(v, world, x, z, yaw, _h);
+  let deepest = Infinity, now = Infinity;
   for (let i = 0; i < S.wheels.length; i++) {
     const [px, pz] = wheelPoint(v, i, x, z, yaw);
     const lim = (v.kind === 'bike' && nearAccess(pz, 0.3) && px > 10 && px < 13 ? S.accessStep : S.maxStep) + airY;
     if (_h[i] - v.wheelH[i] > lim) return 'step';
     if (S.maxGround != null && _h[i] > S.maxGround) return 'curb';
-    if (SEA_LEVEL - _h[i] > S.maxDepth && _h[i] < v.wheelH[i]) return 'deep';   // (heading back out is fine)
+    if (SEA_LEVEL - _h[i] > S.maxDepth) deepest = Math.min(deepest, _h[i]);
+    now = Math.min(now, v.wheelH[i]);
   }
+  // past the wading depth the deepest wheel may not get any deeper (heading back out is
+  // fine); turning at the limit may swing a corner up to 5 cm further, so it can turn back
+  if (turnOnly ? SEA_LEVEL - deepest > S.maxDepth + 0.05 : deepest < now) return 'deep';
   const gy = v.groundY;
   for (const [lz, r] of S.circles) {
     const cx = x + lz * s, cz = z + lz * c;
@@ -335,13 +341,17 @@ function substep(v, input, h, world, hard) {
   const Y = v.yaw;
   if (!blockedAt(v, nx, nz, yaw, world, air)) { v.x = nx; v.z = nz; v.yaw = yaw; }
   else if (!blockedAt(v, nx, nz, Y, world, air)) { v.x = nx; v.z = nz; }
-  else if (!blockedAt(v, nx, v.z, Y, world, air)) { v.bump = Math.max(v.bump, Math.abs(vz)); vz = 0; v.x = nx; }
-  else if (!blockedAt(v, v.x, nz, Y, world, air)) { v.bump = Math.max(v.bump, Math.abs(vx)); vx = 0; v.z = nz; }
-  else {
+  else if (!blockedAt(v, nx, v.z, Y, world, air)) {
+    v.bump = Math.max(v.bump, Math.abs(vz)); vz = 0; v.x = nx;
+    if (!blockedAt(v, v.x, v.z, yaw, world, air, true)) v.yaw = yaw;
+  } else if (!blockedAt(v, v.x, nz, Y, world, air)) {
+    v.bump = Math.max(v.bump, Math.abs(vx)); vx = 0; v.z = nz;
+    if (!blockedAt(v, v.x, v.z, yaw, world, air, true)) v.yaw = yaw;
+  } else {
     v.bump = Math.max(v.bump, Math.hypot(vx, vz));
     const k = S.bounce ?? 0.25;
     vx *= -k; vz *= -k;
-    if (!blockedAt(v, v.x, v.z, yaw, world, air)) v.yaw = yaw;
+    if (!blockedAt(v, v.x, v.z, yaw, world, air, true)) v.yaw = yaw;
   }
   v.vx = vx; v.vz = vz;
   wheelHeights(v, world, v.x, v.z, v.yaw, v.wheelH);

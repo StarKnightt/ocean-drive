@@ -650,7 +650,8 @@ def windscreen(part_chrome, part_glass, caster, lod):
         c = tm + V(0, -0.085, -0.07)
         sweep(part_chrome, [tm + V(0, -0.004, -0.012), tm + V(0, -0.04, -0.04), c + V(0, 0.02, 0.0)],
               [(0.0055 * math.cos(a), 0.0055 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(1, 0, 0))
-        tilt = Matrix.Rotation(-0.2, 3, 'X')
+        # aimed at the driver's eye (0.42 m to the left, level with it): shows the road behind
+        tilt = Matrix.Rotation(0.35, 3, 'Y') @ Matrix.Rotation(-0.03, 3, 'X')
         box(part_chrome, c, (0.23, 0.068, 0.03), mat='chrome', bevel=0.012, rot=tilt)
         box(part_chrome, c + tilt @ V(0, 0, -0.016), (0.205, 0.05, 0.004), mat='chrome', rot=tilt)
 

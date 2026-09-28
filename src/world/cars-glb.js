@@ -55,13 +55,17 @@ function createProbe(renderer, scene) {
     cam.updateMatrixWorld(true);
   };
   // render with the cars hidden, the sun's shadow map left as it is
+  const skies = () => scene.children.filter((o) => o.material?.name === 'Sky' && o.material.uniforms?.uCore);
   const hidden = (hide, fn) => {
     const vis = hide.map((o) => o.visible);
     for (const o of hide) o.visible = false;
+    const sky = skies();
+    for (const o of sky) o.material.uniforms.uCore.value = 0;
     const shadowUpdate = renderer.shadowMap.needsUpdate;
     renderer.shadowMap.needsUpdate = false;
     fn();
     renderer.shadowMap.needsUpdate = shadowUpdate;
+    for (const o of sky) o.material.uniforms.uCore.value = 1;
     hide.forEach((o, i) => { o.visible = vis[i]; });
   };
   const probe = {
@@ -115,7 +119,7 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
   m.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
-        'return envMapColor.rgb * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+        'return min(envMapColor.rgb, vec3(2.2)) * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
     s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
       `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
          diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)});
@@ -131,7 +135,7 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
 // the coat's small hard spot, and the output is capped under the bloom threshold
 function paintMaterial(env, color, key) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.4, metalness: 0.0, specularIntensity: 0.45, clearcoat: 1, clearcoatRoughness: 0.045,
+    color, roughness: 0.45, metalness: 0.0, specularIntensity: 0.18, clearcoat: 1, clearcoatRoughness: 0.05,
     envMap: env, envMapIntensity: 1.0,
   });
   groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4);

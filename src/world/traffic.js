@@ -9,7 +9,7 @@ import { createTrafficSim, crossSignalState, END_Z } from './traffic-sim.js';
 import { SIGNAL_LIGHTS } from './street.js';
 import { QUALITY } from '../quality.js';
 
-const COUNT = { high: 5, medium: 4, low: 2 }[QUALITY.tier] ?? 4;
+const COUNT = { high: 8, medium: 6, low: 3 }[QUALITY.tier] ?? 6;
 const CULL = 300;             // m: cars further away are hidden
 const CLASSIC = 0.2;          // share of respawns that come back as a classic convertible
 const CIRCLES = [-1.8, -0.9, 0, 0.9, 1.8];
@@ -18,15 +18,24 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
   const colliders = [];   // live circles, filled per slot below
   if (shot || !kit || (!kit.kinds.length && !kit.classics.length)) {
     SIGNAL_LIGHTS.set('green', 'red');
-    return { colliders, cars: [], sim: null, update() {}, state: () => [], honks: () => [] };
+    return { colliders, cars: [], sim: null, update() {}, state: () => [], honks: () => [], audioList: () => [] };
   }
   const classicsFree = new Set(kit.classics);
+  // with none on the road the next car is a classic (the seeded share alone can go minutes
+  // without one); the opening fleet's second car is one
+  let picks = 0, simCars = null;
   const pickModel = (rnd) => {
-    if ((rnd() < CLASSIC && classicsFree.size) || !kit.kinds.length) return { model: 'classic', len: 5.76, classic: true };
+    const none = simCars && !simCars.some((c) => c.classic && !c.hidden);
+    const classic = picks++ === 1 || none || rnd() < CLASSIC;
+    if ((classic && classicsFree.size) || !kit.kinds.length) return { model: 'classic', len: 5.76, classic: true };
+    return pickModern(rnd);
+  };
+  const pickModern = (rnd) => {
     const kind = kit.kinds[Math.floor(rnd() * kit.kinds.length)];
     return { model: kind, len: kit.lens[kind] + 0.1, color: kit.paints[Math.floor(rnd() * kit.paints.length)] };
   };
   const sim = createTrafficSim({ count: COUNT, seed, pickModel });
+  simCars = sim.cars;
 
   // per slot: its paint and tail materials, a lazily built instance per model, collider circles
   const slots = sim.cars.map((c) => ({
@@ -49,7 +58,7 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
         s.inst = { root: m.car, levels: m.levels, wheels: [m.wheels.slice(0, 4), m.wheels.slice(4, 8)], wheelR: m.wheelR, sway: m.sway, tail: m.tail, classic: true };
       } else {
         // (no free classic: this one comes back modern)
-        Object.assign(c, { classic: false }, pickModel(() => 0.99));
+        Object.assign(c, { classic: false }, pickModern(() => 0.99));
       }
     }
     if (!s.inst) {

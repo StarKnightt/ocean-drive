@@ -35,6 +35,9 @@ function detect() {
   const software = /SwiftShader|llvmpipe|softpipe|Microsoft Basic Render/i.test(r);
   const discrete = /NVIDIA|GeForce|Quadro|RTX|GTX|Radeon RX|Radeon Pro|Radeon \(TM\) RX|FirePro|Arc\(TM\) A|Intel.*Arc/i.test(r);
   const integrated = /Intel|UHD|Iris|Apple|Adreno|Mali|PowerVR|Radeon\(TM\) Graphics|Radeon Graphics|Vega \d+ Graphics/i.test(r);
+  // current desktop cards (GeForce RTX / GTX 16xx, Radeon RX 6000+): room for the big sun map
+  const strong = discrete && /RTX\s?[2-9]\d{2,3}|RTX\s?A\d{4}|GTX 16\d\d|Radeon (\(TM\) )?RX [6-9]\d{3}/i.test(r) &&
+    !/Laptop|Max-Q|Mobile/i.test(r);
   let tier;
   if (phone || software) tier = 'low';
   else if (tablet) tier = 'medium';
@@ -44,16 +47,16 @@ function detect() {
   // a desktop with a strong GPU but a tiny CPU / little memory still builds fine at 'high';
   // anything that can't hold the big shadow map drops a tier
   if (tier === 'high' && gpu.maxTex < 8192) tier = 'medium';
-  return { tier, gpu, why: { phone, tablet, software, discrete, integrated, cores, mem, minSide, dpr: devicePixelRatio } };
+  return { tier, gpu, strong, why: { phone, tablet, software, discrete, strong, integrated, cores, mem, minSide, dpr: devicePixelRatio } };
 }
 
 // maxPixels caps the rendered pixel count (not just the DPR): a 4K / high-DPI screen at the
 // 'high' DPR cap was ~8 MP per frame with MSAA half-float targets, enough to push a single
-// GPU frame past the Windows driver timeout. shadowFilter 'lite' = 20 blocker + 25 PCF
-// samples per pixel; 'full' = 54 + 64 (?ultra only).
+// GPU frame past the Windows driver timeout; 'high' allows up to 2560x1440 native.
+// shadowFilter 'lite' = 20 blocker + 25 PCF samples per pixel; 'full' = 54 + 64 (?ultra only).
 const TIERS = {
   high: {
-    maxDpr: 1.5, maxPixels: 2.1e6, renderScale: 1, msaa: 4, fxaa: false, bloom: true,
+    maxDpr: 1.5, maxPixels: 3.7e6, renderScale: 1, msaa: 4, fxaa: false, bloom: true,
     shadowMap: [4096, 1024], shadowTaps: 5, shadowFilter: 'lite', cloudOctaves: 5,
     oceanGrid: { rings: 400, segs: 320 }, sandRows: 440, sandDetail: 1024, printFade: [35, 60],
     wrack: 9000, farFoliage: 1, signAtlas: 1, hotelFar: Infinity, shadowStep: 0.5, audioVoices: 'full',
@@ -77,6 +80,11 @@ const forced = params.get('shot') === '1' ? 'high' : params.get('quality');
 const tier = TIERS[forced] ? forced : d.tier;
 
 export const QUALITY = { tier, detected: d.tier, gpu: d.gpu, why: d.why, ...TIERS[tier] };
+// a strong desktop GPU driving up to ~1080p native: the 8192 sun map (same filter)
+const screenPx = screen.width * screen.height * devicePixelRatio ** 2;
+if (tier === 'high' && params.get('shot') !== '1' && d.strong && screenPx <= 2.3e6 && d.gpu.maxTex >= 8192 && !params.has('lowshadow')) {
+  QUALITY.shadowMap = [8192, 2048];
+}
 // ?ultra: the original 'high' look (8192 sun map, full contact-hardening filter), for
 // strong desktop GPUs; the pixel budget still applies
 if (tier === 'high' && params.has('ultra') && !params.has('lowshadow') && d.gpu.maxTex >= 8192) {

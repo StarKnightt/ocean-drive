@@ -49,7 +49,7 @@ async function rideTo(x, z, { hard = true, maxT = 60, stopAt = 1.2 } = {}) {
   return page.evaluate(({ x, z, hard, maxT, stopAt }) => {
     const V = window.__vehicles, v = V.current;
     const bySurf = {};
-    let t = 0, bumps = 0, maxBump = 0, stuck = 0, reverses = 0;
+    let t = 0, bumps = 0, maxBump = 0, stuck = 0, reverses = 0; const trace = [];
     while (t < maxT) {
       const dx = x - v.x, dz = z - v.z, d = Math.hypot(dx, dz);
       if (d < stopAt) break;
@@ -65,6 +65,7 @@ async function rideTo(x, z, { hard = true, maxT = 60, stopAt = 1.2 } = {}) {
       }
       if (r.maxBump > 0.5) { bumps++; maxBump = Math.max(maxBump, r.maxBump); }
       t += 0.1;
+      if (Math.round(t * 10) % 20 === 0) trace.push([+t.toFixed(0), +v.x.toFixed(1), +v.z.toFixed(1), +v.yaw.toFixed(2), +v.lon.toFixed(2), r.log.at(-1)?.surf]);
       stuck = Math.abs(v.lon) < 0.2 && t > 1 ? stuck + 1 : 0;
       // stuck against something: back off with the wheel turned the other way, like a rider would
       if (stuck > 8) {
@@ -75,7 +76,8 @@ async function rideTo(x, z, { hard = true, maxT = 60, stopAt = 1.2 } = {}) {
       }
     }
     V.simulate([], 0.1);
-    return { at: [+v.x.toFixed(2), +v.z.toFixed(2)], t: +t.toFixed(1), reached: Math.hypot(x - v.x, z - v.z) < stopAt + 0.3, bySurf, bumps, maxBump: +maxBump.toFixed(2), reverses, speed: +v.lon.toFixed(2) };
+    const reached = Math.hypot(x - v.x, z - v.z) < stopAt + 0.3;
+    return { at: [+v.x.toFixed(2), +v.z.toFixed(2)], t: +t.toFixed(1), reached, bySurf, bumps, maxBump: +maxBump.toFixed(2), reverses, speed: +v.lon.toFixed(2), ...(reached ? {} : { trace }) };
   }, { x, z, hard, maxT, stopAt });
 }
 async function brake(sec = 3) { await page.evaluate((s) => window.__vehicles.simulate(['KeyS'], s), sec); }
@@ -252,7 +254,10 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   const steer = await page.evaluate(() => { const V = window.__vehicles; V.simulate(['KeyW', 'KeyD'], 1.2); return +V.current.steer.toFixed(3); });
   check('D steers right', steer > 0.05, { steer });
   await shot('16-car-steering', 0);
-  // down the drive to the south end at speed, then brake
+  // down the drive to the south end at speed, then brake (traffic sent off to the loop ends
+  // first: this measures the car, not the 25 km/h cruiser ahead of it)
+  await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } });
+  await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
   r = await rideTo(-19.75, 300, { maxT: 60, stopAt: 3 });
   report.checks.carDrive = r;
   check('car reaches ~60-70 km/h on the road', (r.bySurf.pavement ?? 0) * 3.6 > 58 && (r.bySurf.pavement ?? 99) * 3.6 < 76, r);

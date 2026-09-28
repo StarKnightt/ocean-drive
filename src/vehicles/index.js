@@ -18,7 +18,7 @@ export const PARKED = {
   atv: { x: TOWER.x + 1.2, z: TOWER.z + 4.8, yaw: 0.35 - Math.PI },
 };
 const REACH = { bike: 2.5, atv: 2.9, car: 3.4 };   // m to the nearest collider circle centre
-const RIDE_PITCH = { bike: -13, atv: -9, car: -7 };   // deg, the view settles to this on mounting
+const RIDE_PITCH = { bike: -13, atv: -9, car: -5 };   // deg, the view settles to this on mounting
 const CAR_LOOK = { yaw: 1.85, up: 0.5, down: -0.85 };   // rad: head turn limits in the driver's seat
 const STARTER = 1.05;   // s of cranking before the V8 catches
 const BASE_FOV = 50;

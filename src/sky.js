@@ -110,6 +110,9 @@ vec3 odApplyFog(vec3 col, vec3 offs, float density) {
 
 export const SKY_FULL_GLSL = /* glsl */ `
 ${SKY_BASE_GLSL}
+#ifndef OD_CORE
+#define OD_CORE 1.0
+#endif
 
 float odHash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -209,7 +212,7 @@ vec4 odClouds(vec3 d, float detail) {
 // mode 0: visible sky (sun disc). mode 1: skylight environment. mode 2: water reflection.
 vec3 odSky(vec3 d, float mode) {
   vec3 hd = normalize(vec3(d.x, max(d.y, 0.0), d.z));
-  vec3 col = odSkyBase(hd, mode < 0.5 ? 1.0 : 0.0);
+  vec3 col = odSkyBase(hd, mode < 0.5 ? OD_CORE : 0.0);
   vec4 cl = odClouds(d, mode > 1.5 ? 0.0 : 1.0);
   col = mix(col, cl.rgb, cl.a);
   // water: the sun's aureole reaches it only through the glitter (spec lobe), not as a broad tint
@@ -257,8 +260,13 @@ function makeSkyMaterial(mode) {
         vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         gl_Position = p.xyww;
       }`,
+    // uCore: the photographed sun's blown core (0 in the cars' reflection probe, whose paint
+    // and chrome get the sun from the direct light instead)
+    uniforms: { uCore: { value: 1 } },
     fragmentShader: /* glsl */ `
       varying vec3 vDir;
+      uniform float uCore;
+      #define OD_CORE uCore
       ${SKY_FULL_GLSL}
       void main() {
         gl_FragColor = vec4(odSky(normalize(vDir), ${mode.toFixed(1)}), 1.0);

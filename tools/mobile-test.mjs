@@ -96,6 +96,46 @@ for (const name of names) {
   check(await page.evaluate(() => window.__audio.muted), 'mute button mutes');
   await page.touchscreen.tap(mb.x, mb.y);
 
+  // the convertible: Drive button, stick throttle + steer, Brake label, Exit
+  {
+    const car = () => page.evaluate(() => { const v = window.__vehicles.list.find((e) => e.kind === 'car').v; return { x: v.x, z: v.z, yaw: v.yaw, lon: v.lon, steer: v.steer, on: v.engineOn, ridden: v.ridden }; });
+    const btn = (s) => page.evaluate((s) => { const b = document.querySelector(s), r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: b.textContent, show: b.classList.contains('show') }; }, s);
+    const c0 = await car();
+    await page.evaluate(() => {
+      const v = window.__vehicles.list.find((e) => e.kind === 'car').v;
+      const x = v.x - 2.4, z = v.z;
+      window.__walker.teleport(x, z, (Math.atan2(v.x - x, -(v.z - z)) * 180) / Math.PI, -18);
+    });
+    await sleep(500);
+    const rb = await btn('#touch .ride');
+    check(rb.show && rb.text === 'Drive', `Drive button near the convertible ${JSON.stringify({ show: rb.show, text: rb.text })}`);
+    await page.touchscreen.tap(rb.x, rb.y);
+    await sleep(1800);
+    let c = await car();
+    const labels = { ride: (await btn('#touch .ride')).text, jump: await page.evaluate(() => document.querySelector('#touch .jump span').textContent) };
+    check(c.ridden && c.on && labels.ride === 'Exit' && labels.jump === 'Brake', `tap Drive: seated, V8 running, Exit/Brake labels ${JSON.stringify({ ridden: c.ridden, on: c.on, ...labels })}`);
+    await page.screenshot({ path: path.join(outDir, `${slug}-car-driver.png`) });
+    await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
+    await touch('touchStart', [[jx, jy, 4]]);
+    for (let i = 1; i <= 6; i++) { await touch('touchMove', [[jx, jy - i * 9, 4]]); await sleep(16); }
+    await sleep(2500);
+    c = await car();
+    check(c.lon > 3, `stick forward drives the car ${c.lon.toFixed(2)} m/s`);
+    await page.screenshot({ path: path.join(outDir, `${slug}-car-driving.png`) });
+    for (let i = 1; i <= 6; i++) { await touch('touchMove', [[jx + i * 8, jy - 54, 4]]); await sleep(16); }
+    await sleep(500);
+    c = await car();
+    check(c.steer > 0.05, `stick right steers right ${c.steer.toFixed(3)}`);
+    await touch('touchEnd', []);
+    const eb = await btn('#touch .ride');
+    await page.touchscreen.tap(eb.x, eb.y);
+    for (let i = 0; i < 40 && (await car()).ridden; i++) await sleep(200);
+    c = await car();
+    const w = await page.evaluate(() => ({ active: window.__walker.active, riding: window.__vehicles.riding }));
+    check(!c.ridden && !w.riding && w.active && Math.abs(c.lon) < 0.3, `tap Exit brakes and gets out ${JSON.stringify({ ...w, lon: +c.lon.toFixed(2) })}`);
+    await page.evaluate((p) => { window.__vehicles.place(p.x, p.z, p.yaw, 'car'); for (const t of window.__traffic.cars) t.hidden = false; }, c0);
+  }
+
   // landscape
   await page.setViewportSize({ width: vp.height, height: vp.width });
   await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')));

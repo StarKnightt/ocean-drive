@@ -84,6 +84,15 @@ check('ATV cannot climb the access steps', r.x > 13.3, r);
 r = run('atv', { x: 84, z: 60, yaw: yawFor(90) }, { throttle: 1, steer: 0, hard: true }, 20);
 const atvDepth = SEA_LEVEL - groundHeight(r.x + 1.1, r.z);
 check('ATV splashes in but stops before 0.32 m', atvDepth < 0.36 && r.x > 91 && r.end < 1, { ...r, depthAhead: +atvDepth.toFixed(3) });
+// sliding along the wading limit, throttle held: steering still turns it back to the beach
+for (const kind of ['atv', 'bike']) {
+  const west = yawFor(270);
+  r = run(kind, { x: 86, z: 60, yaw: yawFor(60) }, (v, t) => {
+    const err = Math.atan2(Math.sin(west - v.yaw), Math.cos(west - v.yaw));
+    return { throttle: 1, steer: t < 16 ? 0 : err > 0.06 ? -1 : err < -0.06 ? 1 : 0, hard: true };
+  }, 32);
+  check(`${kind} at the wading limit steers back out`, r.x < 93, r);
+}
 r = run('atv', { x: 65, z: 80, yaw: yawFor(180) }, { throttle: 1, steer: 0, hard: true }, 6);
 check('ATV at speed does not tunnel through a 10 cm wall', r.z < 99.95 - 1.1, r);
 r = run('atv', { x: 50, z: -335, yaw: yawFor(180) }, { throttle: 1, steer: 0, hard: true }, 95);
