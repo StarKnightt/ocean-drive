@@ -86,20 +86,20 @@ def spec_for(kind):
                     return 'trim'
             if h < k['zb'] + 0.12 and abs(s) > 0.5:
                 return 'trim'
-        if abs(u) > half - 0.35 and h < k['zbe'] + 0.06 and not k.get('vintage'):
+        if abs(u) > half - 0.3 and h < k['zbe'] - 0.035 and not k.get('vintage'):
             return 'trim'
         return None
     opens = [(zR, zA, 0.42 if kind != 'pickup' else 0.55)]
     if 'bed' in k:
         opens.append(k['bed'])
     return dict(
-        half=half, W0=k['W0'], ruF=0.42 if not k.get('vintage') else 0.3, pF=3.0 if not k.get('vintage') else 4.5,
-        ruR=0.34, pR=3.4 if not k.get('vintage') else 4.5,
+        half=half, W0=k['W0'], ruF=0.46 if not k.get('vintage') else 0.3, pF=2.6 if not k.get('vintage') else 4.5,
+        ruR=0.38, pR=3.0 if not k.get('vintage') else 4.5,
         zb=lambda u: k['zb'] + (k['zbe'] - k['zb']) * smoothstep(half - 0.5, half, abs(u)),
         hs=hs, hc=lambda u: hs(u) + (0.012 if kind != 'pickup' else 0.0),
         hk=lambda u: hs(u) - (0.12 if kind != 'coupe' else 0.2),
         amp=lambda u: k.get('amp', 0.006) * (1 - smoothstep(half - 0.35, half - 0.1, abs(u))),
-        sin=lambda u: 0.5, rs=0.07 if not k.get('vintage') else 0.05, rb=0.07, tumble=0.022 if not k.get('vintage') else 0.012,
+        sin=lambda u: 0.5, rs=0.1 if not k.get('vintage') else 0.05, rb=0.09, tumble=0.03 if not k.get('vintage') else 0.012,
         crown=0.02, opens=opens, wall_mat='interior', floor_mat='dark', width=width, deform=deform, classify=classify,
         lip=0.075,
     )
@@ -242,11 +242,11 @@ def wheel(part, kind, lod, side, center):
     k = K[kind]
     R, rim, w = k['R'], k['rim'], k['tw']
     ax = Vector((side, 0, 0))
-    segs = 32 if lod == 0 else 16
+    segs = 28 if lod == 0 else 16
     if lod == 0:
         prof = [(rim - 0.004, -w * 0.78), (rim + 0.012, -w * 0.9), (lerp(rim, R, 0.45), -w), (lerp(rim, R, 0.85), -w * 0.97),
                 (R - 0.008, -w * 0.85), (R - 0.001, -w * 0.72)]
-        for g in (-0.33, 0.0, 0.33):
+        for g in (-0.25, 0.25):
             a = w * g
             prof += [(R, a - 0.012), (R - 0.007, a - 0.004), (R - 0.007, a + 0.004), (R, a + 0.012)]
         prof += [(R - 0.001, w * 0.72), (R - 0.008, w * 0.85), (lerp(rim, R, 0.85), w * 0.97), (lerp(rim, R, 0.45), w),
@@ -260,7 +260,7 @@ def wheel(part, kind, lod, side, center):
         a = (co.x - center.x) * side
         if white and a > w * 0.9 and lerp(rim, R, 0.42) < r < lerp(rim, R, 0.62):
             return (0.9, 0.89, 0.85)
-        return (0.035, 0.035, 0.036)
+        return (0.018, 0.018, 0.019)
     f = lathe(part, prof, segs, center, ax, mat='tyre')
     part.paint_color(f, col)
     # barrel + brake disc (dark) behind the spokes
@@ -316,12 +316,16 @@ def interior(part, kind, lod):
     for s in front:
         T = Matrix.Translation(V(s, 0, 0))
         sh = 0.26 if kind != 'coupe' else 0.72
-        cushion(part, sh, fu - 0.5, fu, fl + 0.02, seat_top, 1, T, bolster=0.06, mat='interior')
-        cushion(part, sh, fu - 0.62, fu - 0.5, seat_top - 0.04, seat_top + 0.55, 1, T @ rot_about_s(-0.22, (0, seat_top, fu - 0.5)), pleat_dir=(1, 0), bolster=0.06, mat='interior')
+        cushion(part, sh, fu - 0.5, fu, fl + 0.02, seat_top, 1, T, bolster=0.06, mat='seat')
+        cushion(part, sh, fu - 0.62, fu - 0.5, seat_top - 0.04, seat_top + 0.55, 1, T @ rot_about_s(-0.22, (0, seat_top, fu - 0.5)), pleat_dir=(1, 0), bolster=0.06, mat='seat')
+        if kind != 'coupe':
+            Mh = T @ rot_about_s(-0.22, (0, seat_top, fu - 0.5))
+            box(part, Mh @ V(0, seat_top + 0.66, fu - 0.57), (0.26, 0.16, 0.08), mat='seat', bevel=0.03)
+            box(part, Mh @ V(0, seat_top + 0.57, fu - 0.57), (0.1, 0.04, 0.03), mat='trim')
     ru = min(fu - 0.95, zR + 0.12 + 0.58)
     if ru < fu - 0.7 and kind != 'pickup':
-        cushion(part, 0.68, ru - 0.46, ru, fl + 0.02, seat_top - 0.02, 1, I, mat='interior')
-        cushion(part, 0.68, ru - 0.58, ru - 0.46, seat_top - 0.06, seat_top + 0.48, 1, rot_about_s(-0.25, (0, seat_top, ru - 0.46)), pleat_dir=(1, 0), mat='interior')
+        cushion(part, 0.68, ru - 0.46, ru, fl + 0.02, seat_top - 0.02, 1, I, mat='seat')
+        cushion(part, 0.68, ru - 0.58, ru - 0.46, seat_top - 0.06, seat_top + 0.48, 1, rot_about_s(-0.25, (0, seat_top, ru - 0.46)), pleat_dir=(1, 0), mat='seat')
     # dashboard slab under the windscreen, wheel on the driver's side
     rings = []
     prof = [(zA + 0.02, belt + 0.01), (zA - 0.2, belt + 0.03), (zA - 0.3, belt - 0.02), (zA - 0.3, belt - 0.2), (zA - 0.15, belt - 0.3), (zA + 0.02, belt - 0.3)]
@@ -343,7 +347,7 @@ def build(kind, lod, coll):
     S = spec_for(kind)
     B = Body(S, lod)
     half = S['half']
-    step, n_end = (0.066, 9) if lod == 0 else (0.16, 4)
+    step, n_end = (0.078, 9) if lod == 0 else (0.16, 4)
     ex = []
     for (a, b, _f) in S['opens']:
         ex += [a - 0.0015, a + 0.0015, b - 0.0015, b + 0.0015]
@@ -365,6 +369,13 @@ def build(kind, lod, coll):
         if not k.get('vintage'):
             gw, g0, g1 = k['grille']
             cut.append(cutter_box(V(0, (g0 + g1) / 2, half), (gw * 2, g1 - g0, 0.34), bevel=0.02))
+            # bumper covers: a horizontal seam across each end, split from the fenders at the arches
+            for sgn, wz in ((1, k['uF']), (-1, k['uR'])):
+                hb = k['zbe'] + 0.1
+                cut.append(cutter_box(V(0, hb, sgn * (half - 0.1)), (2.4, G, 0.5)))
+                ua = wz + sgn * (k['arch'] + 0.04)
+                for s_ in (-1, 1):
+                    cut.append(fence([(s_ * 0.55, ua), (s_ * 1.3, ua)], k['zb'] + 0.05, hb, G))
         if 'bed' not in k:
             hood_u = k['zA'] + 0.06
             cut.append(fence([(-0.9, hood_u), (0.9, hood_u)], k['cowl'] - 0.1, k['cowl'] + 0.2, G))
@@ -381,20 +392,57 @@ def build(kind, lod, coll):
     if not vint:
         (s0, h0, h1), (s1, h2, h3) = k['head']
         for sg in (-1, 1):
-            surface_patch(ext, caster, lambda a, b, sg=sg: (sg * lerp(s0, s1, a), lerp(lerp(h0, h2, a ** 1.5), lerp(h1, h3, a), b)), na, 2, True, 'lens')
+            shape = lambda a, b, sg=sg: (sg * lerp(s0, s1, a), lerp(lerp(h0, h2, a ** 1.5), lerp(h1, h3, a), b))
+            surface_patch(ext, caster, shape, na, 2, True, 'trim', lift=0.002)
+            if lod == 0:
+                surface_patch(ext, caster, lambda a, b: shape(a, 0.1 + 0.8 * b), na, 2, True, 'glass', lift=0.016)
+                for fa in (0.28, 0.62):
+                    ps, ph = shape(fa, 0.55)
+                    l2, n2 = caster.hit((ps, ph, 5), (0, 0, -1))
+                    if l2:
+                        rr = min(0.034, (lerp(h1, h3, fa) - lerp(h0, h2, fa ** 1.5)) * 0.36)
+                        c = l2 + n2 * 0.002
+                        f = lathe(ext, [(rr * 1.25, 0.0), (rr * 1.1, 0.004), (rr * 0.8, -0.002), (rr * 0.4, -0.008), (0.0, -0.01)], 20, c, n2, mat='chrome')
+                        bmesh.ops.reverse_faces(ext.bm, faces=f)
+                        lathe(ext, [(rr * 0.72, 0.0), (rr * 0.6, 0.006), (rr * 0.35, 0.01), (0.0, 0.0115)], 16, c, n2, mat='lens')
+                pts = []
+                for i in range(9):
+                    ps, ph = shape(0.05 + 0.9 * i / 8, 0.12)
+                    l2, n2 = caster.hit((ps, ph, 5), (0, 0, -1))
+                    if l2:
+                        pts.append(l2 + n2 * 0.006)
+                if len(pts) > 2:
+                    sweep(ext, pts, [(-0.004, -0.002), (0.004, -0.002), (0.004, 0.002), (-0.004, 0.002)], mat='ivory', up=(0, -1, 0))
+            else:
+                surface_patch(ext, caster, shape, na, 2, True, 'lens', lift=0.004)
         gw, g0, g1 = k['grille']
         if lod == 0:
             for sg in (-1, 1):
                 pass
             # slats inside the recess cut in build(); a gloss-black surround ring
             loc, nor = caster.hit((0, g1 + 0.02, 5), (0, 0, -1))
-            u0 = C(loc)[2] - 0.04
-            nb = max(3, int((g1 - g0) / 0.035))
-            for i in range(nb + 1):
-                h = lerp(g0 + 0.012, g1 - 0.012, i / nb)
-                box(ext, V(0, h, u0), (gw * 2 - 0.03, 0.008, 0.03), mat='trim')
-            for i in range(9):
-                box(ext, V(lerp(-gw + 0.02, gw - 0.02, i / 8), (g0 + g1) / 2, u0 + 0.005), (0.008, g1 - g0 - 0.02, 0.02), mat='trim')
+            u0 = C(loc)[2] - 0.035
+            box(ext, V(0, (g0 + g1) / 2, u0 - 0.03), (gw * 2, g1 - g0, 0.01), mat='trim')
+            nr = max(3, int((g1 - g0) / 0.04))
+            for i in range(nr):
+                h = lerp(g0 + 0.02, g1 - 0.02, (i + 0.5) / nr)
+                nc = int(gw * 2 / 0.06)
+                for j in range(nc):
+                    sx = lerp(-gw + 0.03, gw - 0.03, (j + 0.5 * (i % 2)) / max(1, nc - 0.5))
+                    if abs(sx) > gw - 0.025:
+                        continue
+                    box(ext, V(sx, h, u0 - 0.008), (0.044, 0.026, 0.012), mat='grille', rot=Matrix.Rotation(math.radians(45), 3, 'Y'))
+            pts = []
+            for i in range(21):
+                a = 2 * math.pi * i / 20
+                ps, ph = gw * 1.0 * math.cos(a), (g0 + g1) / 2 + (g1 - g0) * 0.5 * math.sin(a)
+                ps = max(-gw, min(gw, ps * 1.15))
+                ph = max(g0, min(g1, (ph - (g0 + g1) / 2) * 1.15 + (g0 + g1) / 2))
+                l2, n2 = caster.hit((ps, ph + (0.012 if ph > (g0 + g1) / 2 else -0.012), 5), (0, 0, -1))
+                if l2:
+                    pts.append(l2 + n2 * 0.003)
+            if len(pts) > 4:
+                sweep(ext, pts, [(-0.006, 0), (0, 0.006), (0.006, 0), (0, -0.002)], mat='chrome' if k.get('belt_chrome') else 'alloy', up=(0, -1, 0))
             if k.get('belt_chrome'):
                 pts = []
                 for i in range(13):
@@ -406,7 +454,7 @@ def build(kind, lod, coll):
                     sweep(ext, pts, [(-0.006, 0), (0, 0.006), (0.006, 0), (0, -0.002)], mat='chrome', up=(0, -1, 0))
         else:
             surface_patch(ext, caster, lambda a, b: (lerp(-gw, gw, a), lerp(g0, g1, b)), na, 2, True, 'trim', lift=0.002)
-        surface_patch(ext, caster, lambda a, b: (lerp(-gw * 1.25, gw * 1.25, a), lerp(k['zbe'] - 0.02, k['zbe'] + 0.05, b)), na, 1, True, 'trim', lift=0.002)
+        surface_patch(ext, caster, lambda a, b: (lerp(-gw * 0.9, gw * 0.9, a), lerp(k['zbe'] + 0.005, k['zbe'] + 0.045, b)), na, 1, True, 'grille', lift=0.002)
     else:
         # vintage: round headlamps, chrome grille bars, chrome bumpers
         for sg in (-1, 1):
@@ -414,7 +462,7 @@ def build(kind, lod, coll):
                 loc, nor = caster.hit((sg * ds, 0.66, 5), (0, 0, -1))
                 if loc:
                     f = len(ext.bm.faces)
-                    headlamp(ext, loc - Vector((0, 0.004, 0)), V(0, 0, 1), lod, segs=22 if lod == 0 else 10)
+                    headlamp(ext, loc - Vector((0, 0.004, 0)), V(0, 0, 1), lod, segs=22 if lod == 0 else 10, visor=False)
                     ext.transform(list(ext.bm.faces)[f:], Matrix.Translation(loc) @ Matrix.Scale(0.78, 4) @ Matrix.Translation(-loc))
         # full-width grille carrying the quad lamps, chrome surround
         pts = []
@@ -470,8 +518,9 @@ def build(kind, lod, coll):
             mz = k['zA'] - 0.14
             xb = (S['W0'] - S['tumble'] - S['rs']) * B.plan(mz)
             mc = V(sg * (xb + 0.16), k['belt'] + 0.1, mz)
-            box(ext, mc, (0.2, 0.12, 0.09), mat='paint' if not vint else 'chrome', bevel=0.035)
-            box(ext, V(sg * (xb + 0.04), k['belt'] + 0.06, mz), (0.12, 0.035, 0.05), mat='trim')
+            box(ext, mc, (0.19, 0.11, 0.085), mat='paint' if not vint else 'chrome', bevel=0.04)
+            box(ext, mc + V(0, 0, -0.044), (0.16, 0.085, 0.006), mat='chrome', bevel=0.002)
+            box(ext, V(sg * (xb + 0.05), k['belt'] + 0.05, mz + 0.01), (0.1, 0.028, 0.04), mat='trim', bevel=0.01)
             if vint:
                 continue
         wy = k['cowl'] + 0.03

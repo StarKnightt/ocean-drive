@@ -16,6 +16,7 @@ import {
 } from './car.js';
 
 const HERO_PAINT = 0x86cfc1;
+const HERO_PAINT2 = 0xf1eee4;   // the two-tone side sweep
 const MOVER_PAINTS = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0];
 const WHEEL_R = 0.36;
 // distance (m) at which the hero / parked cars drop to LOD1
@@ -36,20 +37,64 @@ export function preloadCars() {
 }
 
 // ---------------------------------------------------------------------------
+// Local reflection probe: the sky PMREM (scene.environment) is a dim, compressed skylight
+// made for diffuse fill, so paint and chrome mirrored nothing. A low-res cube capture of the
+// street itself (hotel fronts, palms, sky, the dark road) is PMREM-filtered into the cars'
+// envMap: once at load, and again whenever the viewer has moved PROBE.step metres along the
+// drive. The render target is reused, so its texture (and every car program) stays the same.
+const PROBE = { high: { size: 256, step: 50 }, medium: { size: 128, step: 50 }, low: { size: 64, step: 80 } }[QUALITY.tier] ?? { size: 128, step: 50 };
+function createProbe(renderer, scene) {
+  const cubeRT = new THREE.WebGLCubeRenderTarget(PROBE.size, { type: THREE.HalfFloatType });
+  const cam = new THREE.CubeCamera(0.3, 2500, cubeRT);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  let out = null;
+  const probe = {
+    hide: [], z: null, captures: 0,
+    get texture() { return out.texture; },
+    // skyOnly: the load-time capture, before the world's shaders are compiled (asynchronously,
+    // in main.js): only the sky dome, so it compiles nothing; the first frame re-captures all
+    capture(z, skyOnly = false) {
+      const x = CAR.x + 2.7;
+      cam.position.set(x, roadHeight(x) + 0.95, z);
+      const hide = skyOnly ? scene.children.filter((o) => !o.isLight && o.material?.name !== 'Sky') : probe.hide;
+      const vis = hide.map((o) => o.visible);
+      for (const o of hide) o.visible = false;
+      const shadowUpdate = renderer.shadowMap.needsUpdate;
+      renderer.shadowMap.needsUpdate = false;
+      cam.update(renderer, scene);
+      renderer.shadowMap.needsUpdate = shadowUpdate;
+      hide.forEach((o, i) => { o.visible = vis[i]; });
+      out = pmrem.fromCubemap(cubeRT.texture, out);
+      probe.z = z;
+      probe.captures++;
+    },
+    // along the drive the probe follows the viewer (clamped to the modelled district)
+    follow(p) {
+      const z = THREE.MathUtils.clamp(p.z, DISTRICT.zMin, DISTRICT.zMax);
+      if (probe.z === null || Math.abs(z - probe.z) > PROBE.step) probe.capture(z);
+    },
+  };
+  return probe;
+}
+
+// ---------------------------------------------------------------------------
 // runtime materials by the Blender material name
-function glassMaterial(env, { color, opacity, edge, key }) {
+function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.02, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: 2.2,
-    clearcoat: 1, clearcoatRoughness: 0.02, depthWrite: false, side: THREE.DoubleSide,
+    color, roughness: 0.015, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: 1.0,
+    clearcoat: 1, clearcoatRoughness: 0.015, depthWrite: false, side: THREE.DoubleSide,
   });
-  // Fresnel: glass seen edge-on turns into a mirror of the sky
+  // Fresnel: glass seen edge-on turns into a mirror of the sky (and, for the hero's
+  // screen, the greenish tint of the glass thickness)
+  const tint = edgeTint ? new THREE.Color(edgeTint) : null;
   m.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
-        'return envMapColor.rgb * envMapIntensity * mix(vec3(0.13, 0.12, 0.115), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+        'return envMapColor.rgb * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
     s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
-      `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 4.0);
-         diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)}); }
+      `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
+         diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)});
+         ${tint ? `outgoingLight = mix(outgoingLight, outgoingLight * vec3(${tint.r.toFixed(3)}, ${tint.g.toFixed(3)}, ${tint.b.toFixed(3)}), fr);` : ''} }
        outgoingLight = min(outgoingLight, vec3(${CAR_MAX_RADIANCE.toFixed(2)}));
 #include <opaque_fragment>`);
   };
@@ -57,61 +102,74 @@ function glassMaterial(env, { color, opacity, edge, key }) {
   return m;
 }
 
+// clearcoat over a rougher base: the base's specular is kept low so the sun's highlight is
+// the coat's small hard spot, and the output is capped under the bloom threshold
 function paintMaterial(env, color, key) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.34, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.035, envMap: env, envMapIntensity: 1.55,
+    color, roughness: 0.4, metalness: 0.0, specularIntensity: 0.45, clearcoat: 1, clearcoatRoughness: 0.045,
+    envMap: env, envMapIntensity: 1.0,
   });
-  groundReflect(m, 'glb-paint-' + key);
+  groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4);
   return m;
 }
 
-function makeMaterials(env, vinylNor, carpetNor) {
+function makeMaterials(env, sky, vinylNor, carpetNor) {
   const std = (o, key, clamp = false) => {
-    const m = new THREE.MeshStandardMaterial({ envMap: env, ...o });
+    const m = new THREE.MeshStandardMaterial({ envMap: sky, ...o });
     if (clamp) clampRadiance(m, 'glb-' + key);
     return m;
   };
-  const chrome = std({ color: 0xffffff, metalness: 1, roughness: 0.07, envMapIntensity: 1.3 });
-  groundReflect(chrome, 'glb-chrome', CAR_MAX_RADIANCE, 2.4);
-  const alloy = std({ color: 0xb9bdc1, metalness: 1, roughness: 0.28, envMapIntensity: 1.0 });
-  groundReflect(alloy, 'glb-alloy', CAR_MAX_RADIANCE, 2.4);
+  const chrome = std({ color: 0xffffff, metalness: 1, roughness: 0.035, envMap: env, envMapIntensity: 1.0 });
+  groundReflect(chrome, 'glb-chrome', CAR_MAX_RADIANCE, 1.2);
+  const alloy = std({ color: 0xb9bdc1, metalness: 1, roughness: 0.24, envMap: env, envMapIntensity: 1.0 });
+  groundReflect(alloy, 'glb-alloy', CAR_MAX_RADIANCE, 1.6);
   for (const t of [vinylNor, carpetNor]) {
     if (!t) continue;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = 4;
   }
-  const vinyl = (color) => new THREE.MeshStandardMaterial({
-    color, roughness: 0.42, envMap: env, envMapIntensity: 0.9,
-    ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.6, 0.6) } : {}),
-  });
+  if (carpetNor) carpetNor.repeat.set(3, 3);
+  const vinyl = (color) => {
+    const m = new THREE.MeshPhysicalMaterial({
+      color, roughness: 0.36, clearcoat: 0.35, clearcoatRoughness: 0.25, envMap: env, envMapIntensity: 0.8,
+      ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.5, 0.5) } : {}),
+    });
+    clampRadiance(m, 'glb-vinyl');
+    return m;
+  };
+  const coat = (o, key) => {
+    const m = new THREE.MeshPhysicalMaterial({ clearcoat: 1, envMap: env, ...o });
+    clampRadiance(m, 'glb-' + key);
+    return m;
+  };
   return {
     chrome, alloy,
-    glass: glassMaterial(env, { color: 0xd6ebe6, opacity: 0.1, edge: 0.85, key: 'clear' }),
-    tint: glassMaterial(env, { color: 0x0b1013, opacity: 0.72, edge: 0.9, key: 'tint' }),
-    tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.82, envMapIntensity: 0.5 }, 'tyre', true),
-    trim: std({ color: 0x141516, roughness: 0.5, envMapIntensity: 0.7 }),
+    glass: glassMaterial(env, { color: 0xe4f2ec, opacity: 0.12, edge: 0.95, key: 'clear', edgeTint: 0x9fd8bf }),
+    tint: glassMaterial(env, { color: 0x1c2428, opacity: 0.42, edge: 0.97, key: 'tint' }),
+    tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.8, envMapIntensity: 0.5 }, 'tyre', true),
+    trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
+    grille: coat({ color: 0x0e0f10, roughness: 0.3, clearcoatRoughness: 0.08, envMapIntensity: 0.9 }, 'grille'),
     dark: std({ color: 0x0b0b0c, roughness: 0.85, envMapIntensity: 0.3 }),
-    vinyl: vinyl(0xf0e6d0),
-    vinyl2: vinyl(0x9fd5c8),
-    carpet: std({ color: 0x5f7a75, roughness: 1, envMapIntensity: 1.0, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(0.9, 0.9) } : {}) }),
-    ivory: new THREE.MeshPhysicalMaterial({ color: 0xf1e9d6, roughness: 0.22, clearcoat: 0.6, envMap: env, envMapIntensity: 1.0 }),
-    lens: (() => {
-      const m = new THREE.MeshPhysicalMaterial({ color: 0xc4ccd0, metalness: 0.75, roughness: 0.1, clearcoat: 1, envMap: env, envMapIntensity: 1.1 });
-      clampRadiance(m, 'glb-lens');
-      return m;
-    })(),
-    amber: new THREE.MeshPhysicalMaterial({ color: 0xd98a2e, roughness: 0.18, clearcoat: 1, emissive: 0x2a1200, envMap: env }),
-    tail: new THREE.MeshPhysicalMaterial({ color: 0x8e0f14, roughness: 0.18, clearcoat: 1, emissive: 0x2a0304, envMap: env }),
+    vinyl: vinyl(0xf3ecdc),
+    vinyl2: vinyl(0x7fc4b4),
+    canvas: std({ color: 0xd8d0bb, roughness: 0.92, envMapIntensity: 0.9, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(0.45, 0.45) } : {}) }),
+    carpet: std({ color: 0x35504c, roughness: 1, envMapIntensity: 1.0, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(1.4, 1.4) } : {}) }),
+    ivory: coat({ color: 0xf1e9d6, roughness: 0.22, clearcoat: 0.6, envMapIntensity: 1.0 }, 'ivory'),
+    lens: coat({ color: 0xdfe6ea, metalness: 0.9, roughness: 0.06, envMapIntensity: 1.0 }, 'lens'),
+    amber: coat({ color: 0xd98a2e, roughness: 0.18, emissive: 0x2a1200 }, 'amber'),
+    tail: coat({ color: 0x9a1016, roughness: 0.16, emissive: 0x2a0304 }, 'tail'),
     plate: std({ color: 0xe6e2d2, roughness: 0.55 }),
-    interior: std({ color: 0x232426, roughness: 0.75, envMapIntensity: 0.9 }),
+    interior: std({ color: 0x3a3b3e, roughness: 0.7, envMapIntensity: 0.9 }),
+    seat: std({ color: 0x2a2b2e, roughness: 0.62, envMapIntensity: 0.9 }),
   };
 }
 
-function applyMaterials(root, M, paint) {
+function applyMaterials(root, M, paint, paint2) {
   root.traverse((o) => {
     if (!o.isMesh) return;
     const name = o.material.name;
     if (name === 'paint') o.material = paint;
+    else if (name === 'paint2') o.material = paint2;
     else if (name === 'gauge') {
       o.material.envMap = M.chrome.envMap;
       o.material.roughness = 0.35;
@@ -132,13 +190,13 @@ function blobMesh(w, l) {
 }
 
 // hero / mover instance: both LODs under one group, wheels found by name
-function heroInstance(gltf, paint, M) {
+function heroInstance(gltf, paint, paint2, M) {
   const g = new THREE.Group();
   const levels = ['convertible', 'convertible_L1'].map((n) => {
     const src = gltf.scene.getObjectByName(n);
     const c = src.clone(true);
     c.position.set(0, 0, 0);
-    applyMaterials(c, M, paint);
+    applyMaterials(c, M, paint, paint2);
     g.add(c);
     return c;
   });
@@ -149,7 +207,7 @@ function heroInstance(gltf, paint, M) {
     steering.push(lv.getObjectByName(`steering_wheel${sfx}`));
   });
   levels[1].visible = false;
-  g.add(blobMesh(2.3, 5.9));
+  g.add(blobMesh(2.35, 6.1));
   g.userData = {
     levels, wheels, steering,
     seatAnchor: levels[0].getObjectByName('driver_seat'), eyeAnchor: levels[0].getObjectByName('driver_eye'),
@@ -168,7 +226,10 @@ function setLevel(inst, k) {
 // ---------------------------------------------------------------------------
 // parked fleet
 const KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe'];
-const PAINTS = [0xb9bcbf, 0xe4e4e0, 0x1c1d1f, 0x1f2c44, 0x4a4d52, 0x8a1e1e, 0xb8a98a, 0xa6a9ac, 0x2e3033];
+// silver, white, black, navy, gunmetal, red, champagne, pearl white, dark green, light blue,
+// burgundy, graphite, sand beige, teal grey
+const PAINTS = [0xb9bcbf, 0xe4e4e0, 0x1c1d1f, 0x1f2c44, 0x4a4d52, 0x8a1e1e, 0xc9b78f, 0xf2efe6, 0x1f3a2c,
+  0x9dbad3, 0x5a1622, 0x3a3d42, 0xb5a488, 0x51686b];
 
 // float copy of the attributes a batch needs, in the car's space
 function bake(mesh, root, keep) {
@@ -216,14 +277,19 @@ function parkedLayout(kinds) {
   const spots = [];
   const kindOf = (k) => kinds[k] ? k : Object.keys(kinds)[0];
   for (const [z, col, k] of [[-1.5, 0xb9bcbf, 'sedan'], [-24, 0x1f2c44, 'suv'], [-31.5, 0x8a1e1e, 'hatch'], [58, 0xe4e4e0, 'pickup']]) {
-    spots.push({ kind: kindOf(k), x: CAR.x + 0.05, z, yaw: 0, color: col });
+    spots.push({ kind: kindOf(k), x: CAR.x + 0.05, z, yaw: 0, color: col, fixed: true });
   }
   const taken = [-1.5, -24, -31.5, 58];
   const row = (z0, z1, seed, clip, avoid) => {
     const rnd = (() => { let a = seed; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
     const types = ['sedan', 'sedan', 'hatch', 'suv', 'suv', 'pickup', 'coupe'].map(kindOf);
+    let prev = null;
     for (let z = z0; z < z1;) {
-      const kind = types[Math.floor(rnd() * types.length)], L = kinds[kind].L;
+      // never the same model twice in a row
+      let kind = types[Math.floor(rnd() * types.length)];
+      for (let t = 0; t < 6 && kind === prev; t++) kind = types[Math.floor(rnd() * types.length)];
+      prev = kind;
+      const L = kinds[kind].L;
       const zc = z + L / 2;
       z += L + 0.7 + rnd() * 1.6;
       if (clip && zc + L / 2 > z1) break;
@@ -246,6 +312,18 @@ function parkedLayout(kinds) {
     if (zb - za < 8) continue;
     row(za, zb, 9100 + i * 77, true, false);
   }
+  // colours: none shared with the two nearest cars on either side, and a different model
+  // from the neighbour (the authored spots are fitted in among the rows)
+  spots.sort((a, b) => a.z - b.z);
+  const rc = (() => { let a = 4242; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
+  spots.forEach((s, i) => {
+    const near = [spots[i - 1], spots[i - 2]].filter((n) => n && s.z - n.z < 14);
+    if (!s.fixed && near[0] && near[0].kind === s.kind) {
+      const alt = KINDS.find((k) => kinds[k] && k !== s.kind && Math.abs(kinds[k].L - kinds[s.kind].L) < 0.35 && k !== spots[i + 1]?.kind);
+      if (alt) s.kind = alt;
+    }
+    for (let t = 0; t < 20 && near.some((n) => n.color === s.color); t++) s.color = PAINTS[Math.floor(rc() * PAINTS.length)];
+  });
   return spots;
 }
 
@@ -256,7 +334,7 @@ function buildFleet(scene, gltf, M) {
   // one BatchedMesh per material holding every kind's LOD0 + LOD1 geometry
   const mats = new Set();
   for (const k of Object.values(kinds)) for (const lv of k.lods) for (const m of Object.keys(lv)) mats.add(m);
-  const fleetPaint = paintMaterial(scene.environment, 0xffffff, 'fleet');
+  const fleetPaint = paintMaterial(M.chrome.envMap, 0xffffff, 'fleet');
   const batches = {};
   for (const mat of mats) {
     const geos = {};
@@ -336,7 +414,7 @@ function buildFleet(scene, gltf, M) {
     return changed;
   };
   registerLodHook(update);
-  return { colliders, cars, batches, update };
+  return { colliders, cars, batches, blobs, update };
 }
 
 function mergeList(list) {
@@ -364,23 +442,27 @@ function mergeList(list) {
 }
 
 // ---------------------------------------------------------------------------
-export async function buildCarsGlb(scene) {
+export async function buildCarsGlb(scene, renderer) {
   // ?cars=procedural: the old procedural set (comparison / fallback check)
   if (new URLSearchParams(location.search).get('cars') === 'procedural') return buildCars(scene);
   const [heroGltf, parkedGltf, vinylNor, carpetNor] = await preloadCars();
   if (!heroGltf) return buildCars(scene);
-  const env = scene.environment;
-  const M = makeMaterials(env, vinylNor, carpetNor);
+  const probe = createProbe(renderer, scene);
+  probe.capture(CAR.z, true);
+  probe.z = null;
+  const env = probe.texture;
+  const M = makeMaterials(env, scene.environment, vinylNor, carpetNor);
+  const paint2 = paintMaterial(env, HERO_PAINT2, 'hero2');
   // hero: parked at the west curb, facing south (the direction of the west lane), top down
-  const hero = heroInstance(heroGltf, paintMaterial(env, HERO_PAINT, 'hero'), M);
+  const hero = heroInstance(heroGltf, paintMaterial(env, HERO_PAINT, 'hero'), paint2, M);
   seat(hero.car, CAR.x, CAR.z, 0);
   scene.add(hero.car);
-  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
+  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.9 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.9 } }];
   const fleet = parkedGltf ? buildFleet(scene, parkedGltf, M) : null;
   colliders.push(...(fleet ? fleet.colliders : buildParkedProcedural(scene)));
   // moving copies for the audio car passes (no shadow casting, like the procedural ones)
   const pool = MOVER_PAINTS.map((c, i) => {
-    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i), M);
+    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i), paint2, M);
     m.car.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     m.car.visible = false;
     scene.add(m.car);
@@ -388,12 +470,15 @@ export async function buildCarsGlb(scene) {
   });
   const movers = carMovers(scene, pool);
   const all = [hero, ...pool];
+  probe.hide.push(hero.car, ...pool.map((m) => m.car));
+  if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
   return {
-    hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, glb: true,
+    hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
     update(dt, cars, camera) {
       movers(dt, cars);
       if (!camera) return;
+      probe.follow(camera.position);
       for (const m of all) {
         if (!m.car.visible) continue;
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);

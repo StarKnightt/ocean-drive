@@ -35,6 +35,10 @@ def lerp(a, b, t):
 # materials (approximate Principled values; the runtime swaps in its own shaders by name)
 MAT_DEFS = {
     'paint': dict(color=(0.42, 0.78, 0.70), rough=0.25, coat=1.0),
+    'paint2': dict(color=(0.93, 0.92, 0.88), rough=0.25, coat=1.0),
+    'canvas': dict(color=(0.72, 0.68, 0.58), rough=0.9),
+    'grille': dict(color=(0.01, 0.01, 0.012), rough=0.3),
+    'seat': dict(color=(0.05, 0.05, 0.055), rough=0.65),
     'chrome': dict(color=(0.96, 0.96, 0.96), rough=0.05, metal=1.0),
     'glass': dict(color=(0.85, 0.93, 0.92), rough=0.02, alpha=0.25),
     'tint': dict(color=(0.03, 0.04, 0.045), rough=0.03, alpha=0.8),

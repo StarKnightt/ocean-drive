@@ -115,7 +115,7 @@ const palms = buildPalms(scene);
 await loadStep(0.5, 'Laying Ocean Drive…'); // LOADER
 buildStreet(scene);
 await loadStep(0.55, 'Parking the cars…'); // LOADER
-const cars = await buildCarsGlb(scene);
+const cars = await buildCarsGlb(scene, renderer);
 await loadStep(0.6, 'Pouring the ocean…'); // LOADER
 const surf = createSurf({ frozen: SHOT, anchorTime: FROZEN_TIME });
 const beach = buildBeach(scene, surf);

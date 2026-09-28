@@ -317,15 +317,15 @@ function sandMaterial(detailTex, surf) {
           vec2 odRt = vec2(-odFw.y, odFw.x);
           float odSx = dot(odH.xz, odRt) / odH.y, odSz = dot(odH.xz, odFw) / odH.y;
           // broad, soft gold glow (the wet grains scatter the sun into a patch)
-          float odGl = exp(-(odSx * odSx / (2.0 * 0.03 * 0.03) + odSz * odSz / (2.0 * 0.06 * 0.06)));
+          float odGl = exp(-(odSx * odSx / (2.0 * 0.035 * 0.035) + odSz * odSz / (2.0 * 0.04 * 0.04)));
           float odSpk = smoothstep(0.55, 0.8, surfN(vOdW.xz * 41.0) * surfN(vOdW.xz * 97.0 + 3.0) * 1.9);
-          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * 0.3 * mix(0.3, 1.0, surfN(vOdW.xz * vec2(5.0, 12.0))) * odGlass * smoothstep(0.5, 0.95, odGlass);
+          vec3 odSp = directLight.color * vec3(1.0, 0.7, 0.42) * odGl * 0.3 * mix(0.3, 1.0, surfN(vOdW.xz * vec2(5.0, 12.0))) * odGlass * smoothstep(0.75, 1.0, odGlass) * odWet;   // only on the glassy strip: none on the dry sand
           outgoingLight += odSp / (1.0 + dot(odSp, vec3(0.2126, 0.7152, 0.0722)) / 1.5);
         }
         #endif
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'beach-sand-v2';
+  mat.customProgramCacheKey = () => 'beach-sand-v3';
   return mat;
 }
 
@@ -633,11 +633,12 @@ function buildTower(scene, colliders, TW = TOWER) {
   }
   col(cb.x0, cb.x1, D, yC, cb.z0, cb.z1);
 
-  // roof: overhanging slab, teal fascia; soffit is its own material (painted boards)
+  // roof: overhanging slab, teal fascia (freshly painted: no weathering, it reads as a
+  // clean band from the deck); soffit is its own material (painted boards)
   const rf = T.roof, ry = yC;
-  add(boxAt(rf.x0, rf.x1, ry + 0.14, ry + 0.3, rf.z0, rf.z1, WHITE));
-  for (const z of [rf.z0, rf.z1]) add(boxAt(rf.x0 - 0.02, rf.x1 + 0.02, ry + 0.04, ry + 0.3, z - 0.03, z + 0.03, TEAL));
-  for (const x of [rf.x0, rf.x1]) add(boxAt(x - 0.03, x + 0.03, ry + 0.04, ry + 0.3, rf.z0, rf.z1, TEAL));
+  addR(boxAt(rf.x0, rf.x1, ry + 0.14, ry + 0.3, rf.z0, rf.z1, WHITE));
+  for (const z of [rf.z0, rf.z1]) addR(boxAt(rf.x0 - 0.02, rf.x1 + 0.02, ry + 0.04, ry + 0.3, z - 0.03, z + 0.03, TEAL));
+  for (const x of [rf.x0, rf.x1]) addR(boxAt(x - 0.03, x + 0.03, ry + 0.04, ry + 0.3, rf.z0, rf.z1, TEAL));
   // porch posts holding the west overhang
   for (const z of [-1.93, 1.93]) { add(boxAt(-1.25, -1.13, D, ry + 0.05, z - 0.06, z + 0.06, WHITE)); col(-1.26, -1.12, D, ry, z - 0.07, z + 0.07); }
 
