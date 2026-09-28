@@ -2,3 +2,6 @@ node_modules
 dist
 shots
 .perf/
+blender/_raw/
+__pycache__/
+*.blend1

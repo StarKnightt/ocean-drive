@@ -5,7 +5,7 @@ import { buildPlaceholders } from './world/placeholders.js';
 import { buildHotels } from './world/hotels.js';
 import { buildPalms, PALM_TREES } from './world/palms.js';
 import { buildStreet, STREET_COLLIDERS } from './world/street.js';
-import { buildCars } from './world/car.js';
+import { buildCarsGlb, preloadCars } from './world/cars-glb.js'; // Blender-modelled cars (procedural fallback)
 import { createOcean } from './world/ocean.js';
 import { createSurf } from './world/surf.js';
 import { buildBeach } from './world/beach.js';
@@ -102,6 +102,7 @@ const SHADOW_GAP = 0.2;
 let shadowWanted = true, shadowAt = -Infinity;
 const requestShadow = () => { shadowWanted = true; };
 
+preloadCars();   // the car models download while the world builds
 await loadStep(0.1, 'Raising the sun…'); // LOADER
 const sky = await createSky(renderer, scene, { requestShadow });
 bootMark('sky');
@@ -113,8 +114,8 @@ await loadStep(0.4, 'Planting palms…'); // LOADER
 const palms = buildPalms(scene);
 await loadStep(0.5, 'Laying Ocean Drive…'); // LOADER
 buildStreet(scene);
-await nextFrame();
-const cars = buildCars(scene);
+await loadStep(0.55, 'Parking the cars…'); // LOADER
+const cars = await buildCarsGlb(scene);
 await loadStep(0.6, 'Pouring the ocean…'); // LOADER
 const surf = createSurf({ frozen: SHOT, anchorTime: FROZEN_TIME });
 const beach = buildBeach(scene, surf);
@@ -432,7 +433,7 @@ function frame(t) {
   palms.update(elapsed);
   birds.update(dt, camera); // BIRDS
   people.update(dt, camera); // PEOPLE
-  cars.update(dt, SHOT ? null : audio.getCars());
+  cars.update(dt, SHOT ? null : audio.getCars(), camera);
 
   renderer.info.reset();
   const now = t / 1000;

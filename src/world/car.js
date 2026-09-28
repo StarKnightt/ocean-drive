@@ -8,7 +8,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { CAR, roadHeight, CROSS, CROSS_STREETS, crossLegs, DISTRICT } from './layout.js';
 import { registerLod } from './lod.js';
 
-const blockedBay = (zc, hl) => CROSS_STREETS.some((c) => {
+export const blockedBay = (zc, hl) => CROSS_STREETS.some((c) => {
   if (Math.abs(zc - c.z) < CROSS.hw + CROSS.R + hl + 0.5) return true;
   return !c.far && crossLegs(c.z).some(([a, b]) => zc + hl > a - 0.5 && zc - hl < b + 0.5);
 });
@@ -139,7 +139,7 @@ function pleatTexture() {
   return t;
 }
 
-function blobTexture() {
+export function blobTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
   const c = cv.getContext('2d');
@@ -153,7 +153,7 @@ function blobTexture() {
 
 // shared (paint-independent) materials and geometry
 let SHARED = null;
-function shared() {
+export function shared() {
   if (SHARED) return SHARED;
   const chrome = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.07, envMapIntensity: 1.3, side: THREE.DoubleSide });
   groundReflect(chrome, 'chrome', CAR_MAX_RADIANCE);
@@ -272,7 +272,8 @@ function shared() {
 }
 
 // place a car on the cambered road: height at its centre, rolled to the cross slope
-function seat(obj, x, z, rotY) {
+// (shared with the Blender-modelled cars in cars-glb.js)
+export function seat(obj, x, z, rotY) {
   const slope = (roadHeight(x + 0.9) - roadHeight(x - 0.9)) / 1.8;
   obj.position.set(x, roadHeight(x), z);
   obj.rotation.set(0, rotY, 0);
@@ -281,25 +282,26 @@ function seat(obj, x, z, rotY) {
 
 // the cube env has no ground: the lower half of the reflection is the dark street,
 // which gives the paint and chrome a crisp horizon line
-function groundReflect(mat, key, maxRadiance = 0) {
+export function groundReflect(mat, key, maxRadiance = 0, ground = 1) {
+  const g = [0.13, 0.12, 0.115].map((v) => (v * ground).toFixed(3)).join(', ');
   mat.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
-        'return envMapColor.rgb * envMapIntensity * mix(vec3(0.13, 0.12, 0.115), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+        `return envMapColor.rgb * envMapIntensity * mix(vec3(${g}), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));`));
     if (maxRadiance) clampChunk(s, maxRadiance);
   };
-  mat.customProgramCacheKey = () => 'car-refl-' + key + maxRadiance;
+  mat.customProgramCacheKey = () => 'car-refl-' + key + maxRadiance + '-' + ground;
 }
 
 // keep small bright parts (chrome, whitewalls, lenses) under the bloom threshold (4.0):
 // their sun/sky glints otherwise bloom into glowing orbs
-const CAR_MAX_RADIANCE = 3.0;
+export const CAR_MAX_RADIANCE = 3.0;
 function clampChunk(s, m) {
   s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
     `outgoingLight = min(outgoingLight, vec3(${m.toFixed(2)}));
 #include <opaque_fragment>`);
 }
-function clampRadiance(mat, key) {
+export function clampRadiance(mat, key) {
   mat.onBeforeCompile = (s) => clampChunk(s, CAR_MAX_RADIANCE);
   mat.customProgramCacheKey = () => 'car-clamp-' + key;
 }
@@ -651,14 +653,10 @@ function parkedFleet(scene, taken, { z0 = -88, z1 = 90, seed = 7331, parent = sc
   return colliders;
 }
 
-export function buildCars(scene) {
-  const S0 = shared();
-  for (const m of [S0.chrome, S0.hubMat, S0.glass, S0.lens]) m.envMap = scene.environment;
-  // hero: parked at the west curb, facing south (the direction of the west lane), top down
-  const hero = makeCar({ paint: 0x86cfc1, flatten: true, cast: true });
-  seat(hero.car, CAR.x, CAR.z, 0);
-  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
-  // a few ordinary parked cars along the lane, gaps between, the hero spot kept clear
+// procedural parked cars: a few single spots, the authored block's fleet and one row per
+// extended block (distance culled). Returns their colliders.
+export function buildParkedProcedural(scene) {
+  const colliders = [];
   for (const [z, col, type] of [[-1.5, 0xb9bcbf, 'sedan'], [-24, 0x1f2c44, 'suv'], [-31.5, 0x8a1e1e, 'hatch'], [58, 0xe4e4e0, 'pickup']]) {
     const s = makeSedan(col, scene.environment, type);
     seat(s, CAR.x + 0.05, z, 0);
@@ -666,9 +664,7 @@ export function buildCars(scene) {
     const hl = MODERN[type].L / 2 + 0.05;
     colliders.push({ min: { x: CAR.x + 0.05 - 1.0, y: 0, z: z - hl }, max: { x: CAR.x + 0.05 + 1.0, y: MODERN[type].top, z: z + hl } });
   }
-  scene.add(hero.car);
-  const fleet = parkedFleet(scene, [-1.5, -24, -31.5, 58]);
-  colliders.push(...fleet);
+  colliders.push(...parkedFleet(scene, [-1.5, -24, -31.5, 58]));
   // the extended blocks: one row per block, clear of the intersections, culled by distance
   const stops = [DISTRICT.zMin - 4, ...CROSS_STREETS.filter((c) => !c.far && Math.abs(c.z) > 100).map((c) => c.z), -79, 79, DISTRICT.zMax + 4].sort((a, b) => a - b);
   for (let i = 0; i < stops.length - 1; i++) {
@@ -681,32 +677,41 @@ export function buildCars(scene) {
     scene.add(g);
     registerLod(g, za, zb, 'cars');
   }
+  return colliders;
+}
 
-  // moving cars: one mesh per sounding audio car (hidden when none is passing)
+// moving cars: one mesh per sounding audio car (hidden when none is passing)
+export function carMovers(scene, pool) {
+  return (dt, cars) => {
+    const live = (cars || []).filter((k) => k.active && k.progress > 0 && k.progress < 1);
+    for (const m of pool) if (!live.some((k) => k.id === m.id)) m.id = null;
+    for (const c of live) {
+      const m = pool.find((q) => q.id === c.id) ?? pool.find((q) => q.id === null);
+      if (!m) continue;
+      m.id = c.id;
+      seat(m.car, c.x, c.z, c.dir > 0 ? 0 : Math.PI);
+      m.spin += (c.speed * dt) / (m.wheelR ?? WHEEL_R);
+      for (const w of m.wheels) w.rotation.x = m.spin;
+    }
+    for (const m of pool) { m.car.visible = m.id !== null; m.car.userData.audioId = m.id; }
+  };
+}
+
+// The fully procedural set (fallback when the GLB cars can't load).
+export function buildCars(scene) {
+  const S0 = shared();
+  for (const m of [S0.chrome, S0.hubMat, S0.glass, S0.lens]) m.envMap = scene.environment;
+  // hero: parked at the west curb, facing south (the direction of the west lane), top down
+  const hero = makeCar({ paint: 0x86cfc1, flatten: true, cast: true });
+  seat(hero.car, CAR.x, CAR.z, 0);
+  scene.add(hero.car);
+  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.75 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.75 } }];
+  colliders.push(...buildParkedProcedural(scene));
   const pool = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0].map((paint) => {
     const m = makeCar({ paint, flatten: false, cast: false });
     m.car.visible = false;
     scene.add(m.car);
     return { ...m, id: null, spin: 0 };
   });
-  const mover = pool[0];
-  return {
-    hero: hero.car,
-    mover: mover.car,
-    movers: pool.map((m) => m.car),
-    colliders,
-    update(dt, cars) {
-      const live = (cars || []).filter((k) => k.active && k.progress > 0 && k.progress < 1);
-      for (const m of pool) if (!live.some((k) => k.id === m.id)) m.id = null;
-      for (const c of live) {
-        const m = pool.find((q) => q.id === c.id) ?? pool.find((q) => q.id === null);
-        if (!m) continue;
-        m.id = c.id;
-        seat(m.car, c.x, c.z, c.dir > 0 ? 0 : Math.PI);
-        m.spin += (c.speed * dt) / WHEEL_R;
-        for (const w of m.wheels) w.rotation.x = m.spin;
-      }
-      for (const m of pool) { m.car.visible = m.id !== null; m.car.userData.audioId = m.id; }
-    },
-  };
+  return { hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, update: carMovers(scene, pool) };
 }
