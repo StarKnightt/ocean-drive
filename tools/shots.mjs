@@ -15,7 +15,7 @@ export const SHOTS = [
   { id: 1, name: 'sidewalk-north', pos: [-25.5, 1.7, 35], heading: 345, pitch: 3 },
   { id: 2, name: 'hotel-fronts-from-park', pos: [-12, 1.7, 12], heading: 282, pitch: 7 },
   { id: 3, name: 'park-to-ocean-sun', pos: [5, 1.7, -14], heading: 102, pitch: 1, eyeAboveGround: 1.7 },
-  { id: 4, name: 'tower-top-looking-back', pos: [45, 4.4, 5], heading: 262, pitch: -2 },
+  { id: 4, name: 'tower-top-looking-back', pos: [45, 4.4, 5], heading: 262, pitch: -6 },
   { id: 5, name: 'waterline-waves', pos: [86, 1.7, -8], heading: 125, pitch: -6, eyeAboveGround: 1.7 },
 ];
 

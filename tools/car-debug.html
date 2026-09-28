@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- Every parked model x LOD in isolation, straight from the GLB (no batching).
+     http://localhost:5173/tools/car-debug.html?view=front|rear|side|top  (window.__ready, window.__info) -->
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#8a96a0;overflow:hidden}
+.l{position:fixed;color:#fff;font:12px system-ui;text-shadow:0 1px 2px #000;transform:translate(-50%,0)}</style></head>
+<body><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const q = new URLSearchParams(location.search);
+const file = q.get('file') || '/models/parked.glb';
+const view = q.get('view') || 'front';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2); sun.position.set(5, 10, 7); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x55585c }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const gltf = await loader.loadAsync(file);
+const kinds = (q.get('kinds') || 'sedan,hatch,suv,pickup,coupe,wagon,crossover').split(',').filter((k) => gltf.scene.getObjectByName(k));
+const info = {};
+const glass = new THREE.MeshPhysicalMaterial({ color: 0x223344, transparent: true, opacity: 0.45, roughness: 0.05, side: THREE.DoubleSide, depthWrite: false });
+kinds.forEach((kind, i) => ['', '_L1'].forEach((sfx, k) => {
+  const src = gltf.scene.getObjectByName(kind + sfx);
+  if (!src) return;
+  const c = src.clone(true);
+  c.position.set((i - (kinds.length - 1) / 2) * 3.2, 0, k * 8);
+  const mats = {};
+  c.traverse((o) => {
+    if (!o.isMesh) return;
+    const n = o.material.name;
+    mats[n] = (mats[n] ?? 0) + o.geometry.attributes.position.count;
+    if (n === 'glass' || n === 'tint') o.material = glass;
+    if (n === 'paint') o.material = new THREE.MeshStandardMaterial({ color: 0xc8a878, roughness: 0.3, metalness: 0.2 });
+  });
+  scene.add(c);
+  c.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(c);
+  const wheels = [];
+  c.traverse((o) => { if (/wheel/.test(o.name) && !o.isMesh) wheels.push(o.name); });
+  info[kind + sfx] = { mats, box: [b.min.toArray().map((v) => +v.toFixed(2)), b.max.toArray().map((v) => +v.toFixed(2))], wheels, children: c.children.map((o) => o.name) };
+  const lab = document.createElement('div'); lab.className = 'l'; lab.textContent = kind + (sfx || ' L0');
+  lab.dataset.x = c.position.x; lab.dataset.z = c.position.z; document.body.appendChild(lab);
+}));
+const W = kinds.length * 3.2;
+const cam = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 500);
+const poses = { front: [0, 3.5, -W * 1.05, 0, 0.6, 4], rear: [0, 3.5, W * 1.05 + 8, 0, 0.6, 4], side: [W * 1.1, 3, 4, 0, 0.6, 4], top: [0, W * 1.3, 4.01, 0, 0, 4], q34: [-W * 0.7, 4, -W * 0.6, 0, 0.6, 4] };
+const p = poses[view];
+cam.position.set(p[0], p[1], p[2]); cam.lookAt(p[3], p[4], p[5]);
+renderer.render(scene, cam);
+for (const l of document.querySelectorAll('.l')) {
+  const v = new THREE.Vector3(+l.dataset.x, 2.2, +l.dataset.z).project(cam);
+  l.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; l.style.top = ((1 - v.y) / 2 * innerHeight) + 'px';
+}
+window.__info = info; window.__ready = true;
+</script></body></html>

@@ -25,7 +25,8 @@ def hs(u):
         t = (u - OPEN[1]) / (HALF - OPEN[1])
         return 0.935 - 0.05 * t ** 1.6
     base = 0.935 - 0.01 * math.sin(math.pi * clamp((u - OPEN[1]) / (-1.0 - OPEN[1])))
-    return base + 0.115 * smoothstep(-0.55, -2.62, u) ** 1.25
+    # the fin: rises from behind the door over the rear wheel to a sharp peak at the tail
+    return base + 0.19 * smoothstep(-0.8, -2.66, u) ** 1.15
 
 
 def hc(u):
@@ -39,12 +40,21 @@ def hc(u):
     return 0.92
 
 
+SPEAR_U = -0.25   # where the two spears meet: the point of the contrast panel
+
+
 def hk(u):
-    """the side crease / chrome spear: above the front arch, dipping behind the door and
-    kicking back up over the rear wheel; the two-tone colour sits above it on the rear half"""
-    base = 0.83 + 0.012 * smoothstep(0.0, -1.5, u)
-    dip = 0.17 * smoothstep(0.35, -0.5, u) * (1 - smoothstep(-0.62, -1.28, u))
-    return base - dip
+    """the side crease and lower chrome spear: level from the nose to mid-door, then dropping
+    away under the contrast panel and rising again with the fin"""
+    if u >= SPEAR_U:
+        return 0.815 - 0.015 * smoothstep(1.6, 2.6, u)
+    return 0.815 - 0.085 * smoothstep(SPEAR_U, -1.35, u) + 0.07 * smoothstep(-1.35, -2.6, u) ** 1.3
+
+
+def hp(u):
+    """upper edge of the contrast panel (the upper spear): meets hk at SPEAR_U, then runs
+    just under the fin crest"""
+    return lerp(hk(u), hs(u) - 0.045, smoothstep(SPEAR_U, -0.95, u))
 
 
 def deform(s, h, u):
@@ -73,19 +83,23 @@ def deform(s, h, u):
 
 
 def classify(s, h, u):
-    # two-tone: ivory above the spear on the rear half and the fins
-    if u < 0.32 and abs(s) > 0.7 and h > hk(u) + 0.004 and h > 0.55:
+    # two-tone: the contrast wedge between the spears, inside the fin (the fin crest and the
+    # shoulder above it stay body colour)
+    if u < SPEAR_U and abs(s) > 0.7 and hk(u) + 0.004 < h < hp(u) - 0.004:
         return 'paint2'
     return None
 
 
 SPEC = dict(
     half=HALF, W0=0.995, ruF=0.28, pF=5.0, ruR=0.30, pR=4.2,
-    zb=lambda u: 0.30 + 0.12 * smoothstep(HALF - 0.55, HALF, abs(u)),
+    # (the skin reaches down behind the bumpers: no dark underside shows under them)
+    zb=lambda u: 0.30 + 0.035 * smoothstep(HALF - 0.55, HALF, abs(u)),
     hs=hs, hc=hc, hk=hk,
-    amp=lambda u: 0.02 * (1 - smoothstep(2.25, 2.6, u)) * (1 - smoothstep(-2.3, -2.6, u)),
+    amp=lambda u: 0.032 * (1 - smoothstep(2.25, 2.6, u)) * (1 - smoothstep(-2.3, -2.6, u)),
     sin=lambda u: lerp(0.36, 0.15, smoothstep(-0.8, -1.9, u)) if u < 0 else 0.36,
     rs=0.05, rb=0.06, tumble=0.028, crown=0.012, deform=deform, classify=classify,
+    # raised quarter over the rear wheel, a lighter swell over the front one
+    width=lambda u: 1.0 + 0.024 * math.exp(-((u - WB_R) / 0.55) ** 2) + 0.01 * math.exp(-((u - WB_F) / 0.5) ** 2),
     opens=[(OPEN[0], OPEN[1], FLOOR)], wall_mat='vinyl2', floor_mat='dark',
 )
 
@@ -161,7 +175,8 @@ def resample(pts, step):
 def bumper(part, caster, front, lod):
     """massive wraparound chrome bar; the rear one dips in the middle round a plate recess"""
     h = 0.44 if front else 0.47
-    path2 = resample(plan_outline(Body(SPEC, 0), front, 0.07 if front else 0.06, 24), 0.075 if lod == 0 else 0.16)
+    # tucked against the skin (not a bar standing off it), wrapping well round the corners
+    path2 = resample(plan_outline(Body(SPEC, 0), front, 0.045 if front else 0.04, 24, back=0.42), 0.075 if lod == 0 else 0.16)
     path = []
     for p in path2:
         hh = h
@@ -221,9 +236,10 @@ def headlamp(part, center, axis, lod, segs=None, visor=True):
             th = math.radians(8 + 164 * k / n)
             d = side * math.cos(th) + up * math.sin(th)
             e = math.sin(th) ** 0.6
-            rings.append([center + d * 0.108 + axis * -0.03, center + d * 0.124 + axis * 0.0,
-                          center + d * (0.124 + 0.004 * e) + axis * (0.03 + 0.05 * e), center + d * (0.114 + 0.002 * e) + axis * (0.04 + 0.055 * e),
-                          center + d * 0.108 + axis * (0.03 + 0.045 * e)])
+            # deep hooded eyebrow: reads from a 3/4 front view
+            rings.append([center + d * 0.108 + axis * -0.03, center + d * 0.128 + axis * 0.0,
+                          center + d * (0.13 + 0.008 * e) + axis * (0.035 + 0.085 * e), center + d * (0.118 + 0.004 * e) + axis * (0.045 + 0.09 * e),
+                          center + d * 0.108 + axis * (0.035 + 0.075 * e)])
         f = part.grid(rings, mat='chrome', uv_tile=1, wrap_j=True)
 
         def ref(c):
@@ -371,7 +387,7 @@ def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1),
         ring = []
         for (pu, ph), (nu, nh) in zip(prof, nrm):
             w = max(0.0, nu * pleat_dir[0] + nh * pleat_dir[1])
-            d = (0.011 * pl - 0.004) * w * (1 if abs(s) < inner else 0.6)
+            d = (0.018 * pl - 0.007) * w * (1 if abs(s) < inner else 0.6)
             qu, qh = pu + nu * d, ph + nh * d
             qu, qh = cu + (qu - cu) * k_end, ch + (qh - ch) * k_end
             ring.append(M @ V(s, qh, qu))
@@ -425,7 +441,7 @@ def build_interior(part, lod):
         ring = []
         for j in range(ns + 1):
             s = 0.86 - 1.72 * j / ns
-            h = FLOOR + 0.015 + 0.1 * math.exp(-(s / 0.2) ** 2) * smoothstep(-1.25, -0.5, u) + 0.22 * smoothstep(0.23, 0.63, u)
+            h = FLOOR + 0.015 + 0.15 * math.exp(-(s / 0.21) ** 2) * smoothstep(-1.25, -0.5, u) + 0.22 * smoothstep(0.23, 0.63, u)
             ring.append(V(s, h, u))
         rings.append(ring)
     f = part.grid(rings, mat='carpet', uv_tile=0.5)
@@ -454,7 +470,8 @@ def build_interior(part, lod):
         for k in range(nk + 1):
             a = math.pi * k / nk
             u = -1.55 + 0.25 * math.cos(a)
-            fold = 0.006 * math.sin(s * 11.0 + 0.7) * math.sin(a) if lod == 0 else 0.0
+            # loose fabric: a few soft folds running fore-aft, sharper creases over the frame bows
+            fold = (0.014 * math.sin(s * 8.5 + 0.7) + 0.006 * math.sin(s * 23.0 + 1.9) ** 3) * math.sin(a) ** 1.5 if lod == 0 else 0.0
             h = hc(u) + 0.012 + (0.085 * kk + 0.008) * math.sin(a) ** 0.7 + fold * kk
             ring.append(V(s, h, u))
         rings.append(ring)
@@ -491,6 +508,10 @@ def build_interior(part, lod):
             nd_ = (upv * math.cos(0.9) + upv.cross(nrm) * math.sin(0.9)).normalized()
             sweep(part, [c + nrm * 0.003, c + nrm * 0.003 + nd_ * r * 0.78], [(0.0022, 0.0006), (0, 0.0012), (-0.0022, 0.0006), (0, 0)], mat='tail', up=nrm)
         lathe(part, [(0.0, 0.0), (0.02, 0.0), (0.02, 0.02), (0.0, 0.02)], 24, V(0.42, 0.893, 0.575) - nrm * 0.004, nrm, mat='chrome')
+        # instrument pod: a painted hood over the three dials, chrome-edged
+        pod = [V(s_, 1.004 - 0.035 * ((s_ - 0.42) / 0.24) ** 2, 0.598) for s_ in [0.17 + 0.5 * k / 16 for k in range(17)]]
+        sweep(part, pod, [(-0.03, -0.006), (0.03, -0.006), (0.03, 0.006), (-0.03, 0.006)], mat='paint', up=(0, 0, 1))
+        sweep(part, [q + V(0, -0.006, -0.031) for q in pod], [(0.004 * math.cos(a), 0.004 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='chrome', up=(0, 0, 1))
         # radio face and knobs, glovebox
         box(part, V(0, 0.905, 0.575), (0.24, 0.07, 0.012), mat='chrome', bevel=0.004)
         for k in range(5):
@@ -645,6 +666,11 @@ def windscreen(part_chrome, part_glass, caster, lod):
             quad = [[B[k].lerp(t, j / 3) for j in range(4)], [rb.lerp(rt, j / 3) for j in range(4)]]
             part_glass.grid(quad, mat='glass', uv_tile=1)
             sweep(part_chrome, [t, rt, rb], [(0.006 * math.cos(a), 0.006 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(sg, 0, 0))
+        # driver's outside mirror on the screen post, just above the base
+        pb = pos(0, 0.1)
+        arm = [pb + V(0.004, 0, 0), pb + V(0.045, 0.02, -0.01), pb + V(0.07, 0.07, -0.02)]
+        sweep(part_chrome, arm, [(0.0065 * math.cos(a), 0.0065 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(0, 0, 1))
+        lathe(part_chrome, [(0.0, -0.03), (0.048, -0.02), (0.053, 0.0), (0.05, 0.006), (0.0, 0.008)], 24, arm[-1] + V(0.012, 0.035, 0.0), V(0.15, 0.08, -1).normalized(), mat='chrome')
         # chrome rear-view mirror hanging from the header
         tm = T[n // 2]
         c = tm + V(0, -0.085, -0.07)
@@ -654,6 +680,42 @@ def windscreen(part_chrome, part_glass, caster, lod):
         tilt = Matrix.Rotation(0.35, 3, 'Y') @ Matrix.Rotation(-0.03, 3, 'X')
         box(part_chrome, c, (0.23, 0.068, 0.03), mat='chrome', bevel=0.012, rot=tilt)
         box(part_chrome, c + tilt @ V(0, 0, -0.016), (0.205, 0.05, 0.004), mat='chrome', rot=tilt)
+
+
+def arches(part, lod):
+    """inside the wheel openings: a grey fender liner round each tyre, an inner wall behind
+    it, a coil spring (front) or leaf spring (rear) and the drum backing plate, so the arches
+    read as wheel wells catching bounce light rather than black holes"""
+    na = 18 if lod == 0 else 7
+    for wz, ar, front in ((WB_F, 0.445, True), (WB_R, 0.435, False)):
+        hh, r = HUB_H + 0.01, ar - 0.012
+        for sg in (-1, 1):
+            xs = (0.58, 0.76, 0.95) if lod == 0 else (0.58, 0.95)
+            rings, ths = [], [math.radians(-14 + 208 * k / na) for k in range(na + 1)]
+            for th in ths:
+                rings.append([V(sg * x, hh + r * math.sin(th), wz + r * math.cos(th)) for x in xs])
+            f = part.grid(rings, mat='interior')
+            orient(part, f, lambda c: V(C(c)[0], hh + 2 * (C(c)[1] - hh), wz + 2 * (C(c)[2] - wz)))
+            # inner wall closing the well (a fan under the liner)
+            wall = [[V(sg * 0.58, hh + r * 0.15 * math.sin(th), wz + r * 0.15 * math.cos(th)),
+                     V(sg * 0.58, hh + r * math.sin(th), wz + r * math.cos(th))] for th in ths]
+            f = part.grid(wall, mat='interior')
+            orient(part, f, lambda c, sg=sg: c - Vector((sg, 0, 0)))
+            if lod:
+                continue
+            # drum backing plate behind the wheel
+            lathe(part, [(0.0, 0.0), (0.2, 0.0), (0.205, 0.03), (0.19, 0.04)], 20, V(sg * (TRACK - 0.11), HUB_H, wz), V(sg, 0, 0), mat='dark')
+            if front:
+                # coil spring between the lower arm and the frame, the arm itself
+                n, turns = 40, 6
+                pts = [V(sg * (0.52 + 0.06 * math.cos(2 * math.pi * turns * k / n)), HUB_H + 0.02 + 0.3 * k / n,
+                         wz - 0.06 + 0.06 * math.sin(2 * math.pi * turns * k / n)) for k in range(n + 1)]
+                sweep(part, pts, [(0.009 * math.cos(a), 0.009 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='dark', up=(0, 0, 1))
+                box(part, V(sg * 0.5, HUB_H - 0.04, wz), (0.36, 0.05, 0.12), mat='dark', bevel=0.012)
+            else:
+                # leaf spring pack under the axle
+                for k in range(3):
+                    box(part, V(sg * 0.56, HUB_H - 0.1 - 0.012 * k, wz), (0.07, 0.01, 1.1 - 0.25 * k), mat='dark')
 
 
 def trims(part, caster, lod):
@@ -673,6 +735,18 @@ def trims(part, caster, lod):
                 t = k / n
                 sc.append(max(0.25, min(1.0, t * 10, (1 - t) * 6)))
         sweep(part, pts, prof_spear, mat='chrome', up=(sg, 0, 0), scales=[(s, 1.0) for s in sc])
+        # upper spear: from the point where it meets the lower one, framing the contrast
+        # panel under the fin crest
+        pts, sc = [], []
+        m = 24 if lod == 0 else 8
+        for k in range(m + 1):
+            u = SPEAR_U - 0.01 + (-HALF + 0.14 - SPEAR_U + 0.01) * k / m
+            loc, nor = caster.hit((sg * 2, hp(u) - 0.002, u), (-sg, 0, 0))
+            if loc:
+                pts.append(loc + nor * 0.002)
+                sc.append(max(0.3, min(1.0, k / 3 + 0.3, (m - k) / 3)))
+        if len(pts) > 2:
+            sweep(part, pts, prof_spear, mat='chrome', up=(sg, 0, 0), scales=[(s * 0.85, 1.0) for s in sc])
         # rocker strip between the arches
         pts = []
         for k in range(n // 2 + 1):
@@ -707,6 +781,19 @@ def trims(part, caster, lod):
             if len(pts) > 2:
                 sweep(part, pts, [(-0.014, 0), (-0.009, 0.008), (0, 0.012), (0.009, 0.008), (0.014, 0), (0, -0.002)],
                       mat='paint', up=(sg, 0, 0))
+                # thin chrome edge rolled into the opening, inside the painted lip
+                pts = []
+                for k in range(na + 1):
+                    th = math.radians(-8 + 196 * k / na)
+                    so, co = math.sin(th), math.cos(th)
+                    if HUB_H + 0.01 + (ar - 0.004) * so < 0.31:
+                        continue
+                    # skin just outside the opening, then 16 mm into it
+                    loc, nor = caster.hit((sg * 2, HUB_H + 0.01 + (ar + 0.03) * so, wz + (ar + 0.03) * co), (-sg, 0, 0))
+                    if loc:
+                        pts.append(V(C(loc)[0] - sg * 0.012, HUB_H + 0.01 + (ar - 0.004) * so, wz + (ar - 0.004) * co))
+                if len(pts) > 2:
+                    sweep(part, pts, [(-0.005, 0), (0, 0.004), (0.005, 0), (0, -0.002)], mat='chrome', up=(sg, 0, 0))
         if lod == 0:
             # push-button door handle
             loc, nor = caster.hit((sg * 2, 0.895, -0.5), (-sg, 0, 0))
@@ -756,7 +843,7 @@ def trims(part, caster, lod):
               mat='chrome', closed_path=True, up=(0, -1, 0), cap=False)
         for h in (GR_H - 0.06, GR_H - 0.02, GR_H + 0.02, GR_H + 0.06):
             bar = [V(-GR_W + 0.03 + (2 * GR_W - 0.06) * j / 16, h, us - 0.05 - 0.02 * (j / 8 - 1) ** 2) for j in range(17)]
-            sweep(part, bar, [(0.012 * math.cos(a), 0.007 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='chrome', up=(0, -1, 0))
+            sweep(part, bar, [(0.017 * math.cos(a), 0.011 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(0, -1, 0))
         for j in range(15):
             s = -GR_W + 0.06 + (2 * GR_W - 0.12) * j / 14
             box(part, V(s, GR_H, us - 0.07 - 0.02 * (s / GR_W) ** 2), (0.006, 0.17, 0.03), mat='chrome')
@@ -778,17 +865,19 @@ def trims(part, caster, lod):
         if l2 and lod == 0:
             lathe(part, [(0.0, -0.005), (0.032, -0.005), (0.034, 0.004), (0.026, 0.012), (0.0, 0.016)], 20, l2, n2, mat='amber')
             lathe(part, [(0.031, -0.004), (0.042, 0.002), (0.04, 0.01), (0.034, 0.012)], 20, l2, n2, mat='chrome')
-    # tail: lamps in chrome housings at the fin ends, backup lamps, plate in a recess
+    # tail: tall lamps built into the fin ends (a chrome frame round a red lens, the fin tip
+    # hooding it), backup lamps, plate in a recess
     for sg in (-1, 1):
-        loc, nor = caster.hit((sg * 0.87, 0.94, -4), (0, 0, 1))
+        lh = hs(-HALF + 0.05) - 0.14
+        loc, nor = caster.hit((sg * 0.86, lh, -4), (0, 0, 1))
         if loc:
             ax = nor
             c0 = loc - ax * 0.02
-            f1 = lathe(part, [(0.05, -0.08), (0.062, -0.05), (0.067, -0.01), (0.066, 0.012), (0.06, 0.022), (0.05, 0.022)],
+            f1 = lathe(part, [(0.05, -0.08), (0.062, -0.05), (0.067, -0.01), (0.066, 0.014), (0.061, 0.026), (0.052, 0.026)],
                        28 if lod == 0 else 12, c0, ax, mat='chrome')
-            f2 = lathe(part, [(0.0, 0.036), (0.034, 0.03), (0.05, 0.02), (0.052, 0.012)], 28 if lod == 0 else 12, c0, ax, mat='tail')
-            f3 = lathe(part, [(0.0, 0.042), (0.013, 0.038), (0.016, 0.03)], 16 if lod == 0 else 8, c0, ax, mat='chrome')
-            Mz = Matrix.Translation(c0) @ Matrix.Diagonal((0.9, 1.0, 1.7, 1.0)) @ Matrix.Translation(-c0)
+            f2 = lathe(part, [(0.0, 0.04), (0.034, 0.034), (0.05, 0.024), (0.053, 0.016)], 28 if lod == 0 else 12, c0, ax, mat='tail')
+            f3 = lathe(part, [(0.0, 0.046), (0.013, 0.042), (0.016, 0.034)], 16 if lod == 0 else 8, c0, ax, mat='chrome')
+            Mz = Matrix.Translation(c0) @ Matrix.Diagonal((0.85, 1.0, 1.95, 1.0)) @ Matrix.Translation(-c0)
             part.transform(f1 + f2 + f3, Mz)
         if lod == 0:
             loc, nor = caster.hit((sg * 0.6, 0.66, -4), (0, 0, 1))
@@ -808,11 +897,6 @@ def trims(part, caster, lod):
         if loc:
             lathe(part, [(0.0, 0.0), (0.028, 0.0), (0.026, 0.012), (0.0, 0.016)], 16, loc, nor, mat='chrome')
         lathe(part, [(0.028, -0.2), (0.03, 0.0), (0.024, 0.006), (0.022, -0.1)], 16, V(-0.55, 0.26, -HALF - 0.05), V(0, 0, -1), mat='chrome')
-        # driver's side mirror on the door top
-        loc, nor = caster.hit((0.95, 2, 0.48), (0, -1, 0))
-        if loc:
-            sweep(part, [loc - Vector((0, 0, 0.01)), loc + Vector((0.01, 0, 0.1))], [(0.006 * math.cos(a), 0.006 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], up=(1, 0, 0))
-            lathe(part, [(0.0, -0.03), (0.045, -0.02), (0.05, 0.0), (0.0, 0.004)], 20, loc + Vector((0.012, 0, 0.13)), V(0, 0.1, -1).normalized(), mat='chrome')
 
 
 def build(lod, coll):
@@ -827,6 +911,7 @@ def build(lod, coll):
     glass = Part('glass' + tag)
     windscreen(extra, glass, caster, lod)
     build_interior(extra, lod)
+    arches(extra, lod)
     # dark chassis core between the wheels only (nothing shows under the overhangs)
     box(extra, V(0, 0.31, (WB_F + WB_R) / 2), (1.2, 0.06, WB_F - WB_R - 1.0), mat='dark')
     ex = extra.object(sharp=40)

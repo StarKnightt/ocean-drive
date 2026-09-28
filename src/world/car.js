@@ -143,9 +143,13 @@ export function blobTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
   const c = cv.getContext('2d');
-  c.filter = 'blur(3px)';
-  c.fillStyle = 'rgba(0,0,0,0.97)';
-  c.fillRect(30, 12, 68, 104);
+  // darkest right under the body, fading out well inside the quad (road colour at the edges)
+  c.filter = 'blur(9px)';
+  c.fillStyle = 'rgba(0,0,0,0.42)';
+  c.fillRect(38, 20, 52, 88);
+  c.filter = 'blur(5px)';
+  c.fillStyle = 'rgba(0,0,0,0.38)';
+  c.fillRect(46, 30, 36, 68);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
@@ -282,9 +286,14 @@ export function seat(obj, x, z, rotY) {
 
 // the cube env has no ground: the lower half of the reflection is the dark street,
 // which gives the paint and chrome a crisp horizon line
-export function groundReflect(mat, key, maxRadiance = 0, ground = 1) {
+// coat: gain on the clearcoat's environment reflection. At the flanks' near-normal incidence
+// the coat's 4 % of the dim probe vanishes under the sunlit base colour, so paint gets more
+// (the upper body then carries the sky band, the lower flanks the dark street)
+export function groundReflect(mat, key, maxRadiance = 0, ground = 1, coat = 1) {
   const g = [0.13, 0.12, 0.115].map((v) => (v * ground).toFixed(3)).join(', ');
   mat.onBeforeCompile = (s) => {
+    if (coat !== 1) s.fragmentShader = s.fragmentShader.replace('( clearcoatSpecularDirect + clearcoatSpecularIndirect ) * material.clearcoat',
+      `( clearcoatSpecularDirect + clearcoatSpecularIndirect * ${coat.toFixed(2)} ) * material.clearcoat`);
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
         // (the probe holds the sun disc: capped so rough paint doesn't smear it into a glowing blob;
@@ -302,7 +311,7 @@ export function groundReflect(mat, key, maxRadiance = 0, ground = 1) {
         '{ vec3 ccS = ccIrradiance * BRDF_GGX_Clearcoat( directLight.direction, geometryViewDir, geometryClearcoatNormal, material ); clearcoatSpecularDirect += ccS * ccS / ( ccS + vec3( 400.0 ) ); }'));
     if (maxRadiance) clampChunk(s, maxRadiance);
   };
-  mat.customProgramCacheKey = () => 'car-refl2-' + key + maxRadiance + '-' + ground;
+  mat.customProgramCacheKey = () => 'car-refl2-' + key + maxRadiance + '-' + ground + '-' + coat;
 }
 
 // keep small bright parts (chrome, whitewalls, lenses) under the bloom threshold (4.0):

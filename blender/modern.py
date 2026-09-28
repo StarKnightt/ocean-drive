@@ -10,7 +10,7 @@ from carlib import (V, C, Part, smoothstep, lerp, clamp, sweep, lathe, box, orie
 from body import Body, stations, plan_outline
 from hero import cushion, rot_about_s, headlamp
 
-KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe']
+KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crossover']
 
 K = {
     'sedan': dict(L=4.80, W0=0.915, uF=1.42, uR=-1.42, R=0.335, rim=0.235, tw=0.112, track=0.80, arch=0.39,
@@ -42,6 +42,20 @@ K = {
                   zA=0.62, zRf=0.0, zRr=-0.95, zR=-1.5, top=1.36, Wt=0.7, pillars=[], sg=(-1.12, 0.46),
                   doors=[0.62, -0.74], rake=0.04, trake=0.02, rim_style='vintage', vintage=True, amp=0.012,
                   tail_l=((0.6, 0.66), (0.9, 0.8)), glass='glass', frit='trim'),
+    # long-roof estate: the sedan's nose, the roof carried to a near-vertical tailgate
+    'wagon': dict(L=4.86, W0=0.905, uF=1.43, uR=-1.47, R=0.33, rim=0.225, tw=0.11, track=0.79, arch=0.385,
+                  belt=0.965, cowl=0.94, nose=0.73, deck=1.0, tail=0.95, zb=0.25, zbe=0.36,
+                  zA=0.98, zRf=0.2, zRr=-1.98, zR=-2.27, top=1.47, Wt=0.66, pillars=[-0.12, -1.26], sg=(-2.12, 0.8),
+                  doors=[0.93, -0.12, -1.2], rake=0.17, trake=0.02, rim_style='five', rails=True,
+                  head=((0.4, 0.63, 0.735), (0.8, 0.68, 0.765)), tail_l=((0.56, 0.84), (0.86, 1.04)),
+                  grille=(0.36, 0.47, 0.62)),
+    # compact crossover: shorter and lower than the SUV, a raked tailgate, clad arches
+    'crossover': dict(L=4.45, W0=0.93, uF=1.36, uR=-1.36, R=0.355, rim=0.23, tw=0.112, track=0.81, arch=0.415,
+                      belt=1.05, cowl=1.02, nose=0.88, deck=1.02, tail=0.99, zb=0.31, zbe=0.41,
+                      zA=1.08, zRf=0.34, zRr=-1.38, zR=-1.95, top=1.63, Wt=0.72, pillars=[-0.12, -1.02], sg=(-1.8, 0.95),
+                      doors=[1.06, -0.1, -1.08], rake=0.14, trake=0.06, rim_style='six', clad=True, rails=True,
+                      head=((0.46, 0.8, 0.9), (0.84, 0.83, 0.935)), tail_l=((0.58, 0.94), (0.9, 1.07)),
+                      grille=(0.42, 0.56, 0.78)),
 }
 
 
@@ -395,18 +409,20 @@ def build(kind, lod, coll):
         (s0, h0, h1), (s1, h2, h3) = k['head']
         for sg in (-1, 1):
             shape = lambda a, b, sg=sg: (sg * lerp(s0, s1, a), lerp(lerp(h0, h2, a ** 1.5), lerp(h1, h3, a), b))
-            surface_patch(ext, caster, shape, na, 2, True, 'trim', lift=0.002)
+            surface_patch(ext, caster, shape, na, 2, True, 'alloy' if lod == 0 else 'trim', lift=0.002)
             if lod == 0:
                 surface_patch(ext, caster, lambda a, b: shape(a, 0.1 + 0.8 * b), na, 2, True, 'glass', lift=0.016)
                 for fa in (0.28, 0.62):
                     ps, ph = shape(fa, 0.55)
                     l2, n2 = caster.hit((ps, ph, 5), (0, 0, -1))
                     if l2:
-                        rr = min(0.034, (lerp(h1, h3, fa) - lerp(h0, h2, fa ** 1.5)) * 0.36)
-                        c = l2 + n2 * 0.002
-                        f = lathe(ext, [(rr * 1.25, 0.0), (rr * 1.1, 0.004), (rr * 0.8, -0.002), (rr * 0.4, -0.008), (0.0, -0.01)], 20, c, n2, mat='chrome')
+                        rr = min(0.046, (lerp(h1, h3, fa) - lerp(h0, h2, fa ** 1.5)) * 0.45)
+                        c = l2 + n2 * 0.004
+                        # deep parabolic reflector bowl, a black bulb shroud in the middle
+                        f = lathe(ext, [(rr * 1.2, 0.004), (rr * 1.05, -0.004), (rr * 0.8, -0.012), (rr * 0.5, -0.019), (rr * 0.2, -0.023), (0.0, -0.024)], 24, c, n2, mat='chrome')
                         bmesh.ops.reverse_faces(ext.bm, faces=f)
-                        lathe(ext, [(rr * 0.72, 0.0), (rr * 0.6, 0.006), (rr * 0.35, 0.01), (0.0, 0.0115)], 16, c, n2, mat='lens')
+                        lathe(ext, [(rr * 1.28, -0.002), (rr * 1.3, 0.004), (rr * 1.2, 0.006)], 24, c, n2, mat='trim')
+                        lathe(ext, [(0.0, -0.024), (rr * 0.3, -0.02), (rr * 0.32, -0.008), (rr * 0.2, -0.002), (0.0, 0.0)], 12, c, n2, mat='trim')
                 pts = []
                 for i in range(9):
                     ps, ph = shape(0.05 + 0.9 * i / 8, 0.12)
@@ -414,7 +430,7 @@ def build(kind, lod, coll):
                     if l2:
                         pts.append(l2 + n2 * 0.006)
                 if len(pts) > 2:
-                    sweep(ext, pts, [(-0.004, -0.002), (0.004, -0.002), (0.004, 0.002), (-0.004, 0.002)], mat='ivory', up=(0, -1, 0))
+                    sweep(ext, pts, [(-0.0025, -0.0015), (0.0025, -0.0015), (0.0025, 0.0015), (-0.0025, 0.0015)], mat='lens', up=(0, -1, 0))
             else:
                 surface_patch(ext, caster, shape, na, 2, True, 'lens', lift=0.004)
         gw, g0, g1 = k['grille']

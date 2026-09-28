@@ -438,6 +438,9 @@ export async function createSky(renderer, scene, { requestShadow = () => { rende
   sun.shadow.normalBias = 0.035;
   sun.shadow.radius = 1.5;
   scene.add(sun, sun.target);
+  // bounce off the sunlit sand and street: lifts the backlit faces (seawall, path, the
+  // shaded flanks) out of black when looking into the sunrise
+  scene.add(new THREE.HemisphereLight(0xa9bddb, 0xc9a07a, 0.28));
 
   // The shadow box (~2 cm texels on the facades) follows the viewer along the street. It
   // is only ever translated by whole shadow texels in light space, so static casters

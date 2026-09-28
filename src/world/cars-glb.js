@@ -20,7 +20,7 @@ const HERO_PAINT2 = 0xf1eee4;   // the two-tone side sweep
 const MOVER_PAINTS = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0];
 const WHEEL_R = 0.36;
 // distance (m) at which the hero / parked cars drop to LOD1
-const LOD1_AT = { high: { hero: 38, parked: 42 }, medium: { hero: 30, parked: 32 }, low: { hero: 16, parked: 18 } }[QUALITY.tier] ?? { hero: 38, parked: 42 };
+const LOD1_AT = { high: { hero: 38, parked: 42 }, medium: { hero: 30, parked: 32 }, low: { hero: 25, parked: 25 } }[QUALITY.tier] ?? { hero: 38, parked: 42 };
 
 let pending = null;
 // start the downloads early (main.js calls this before the world build)
@@ -113,6 +113,11 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
     color, roughness: 0.015, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: 1.0,
     clearcoat: 1, clearcoatRoughness: 0.015, depthWrite: false, side: THREE.DoubleSide,
   });
+  // premultiplied output: the tint (diffuse) is weighted by the opacity, the reflections are
+  // not, so even clear glass carries the sky and the facades like real glass does
+  m.blending = THREE.CustomBlending;
+  m.blendSrc = THREE.OneFactor;
+  m.blendDst = THREE.OneMinusSrcAlphaFactor;
   // Fresnel: glass seen edge-on turns into a mirror of the sky (and, for the hero's
   // screen, the greenish tint of the glass thickness)
   const tint = edgeTint ? new THREE.Color(edgeTint) : null;
@@ -123,7 +128,8 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
     s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
       `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
          diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)});
-         ${tint ? `outgoingLight = mix(outgoingLight, outgoingLight * vec3(${tint.r.toFixed(3)}, ${tint.g.toFixed(3)}, ${tint.b.toFixed(3)}), fr);` : ''} }
+         ${tint ? `outgoingLight = mix(outgoingLight, outgoingLight * vec3(${tint.r.toFixed(3)}, ${tint.g.toFixed(3)}, ${tint.b.toFixed(3)}), fr);` : ''}
+         outgoingLight = totalDiffuse * diffuseColor.a + max(outgoingLight - totalDiffuse, vec3(0.0)) * (0.35 + 0.65 * diffuseColor.a); }
        outgoingLight = min(outgoingLight, vec3(${CAR_MAX_RADIANCE.toFixed(2)}));
 #include <opaque_fragment>`);
   };
@@ -138,7 +144,7 @@ function paintMaterial(env, color, key) {
     color, roughness: 0.45, metalness: 0.0, specularIntensity: 0.18, clearcoat: 1, clearcoatRoughness: 0.05,
     envMap: env, envMapIntensity: 1.0,
   });
-  groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4);
+  groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4, 2.6);
   return m;
 }
 
@@ -305,11 +311,12 @@ function poseHero(inst, v) {
 
 // ---------------------------------------------------------------------------
 // parked fleet
-const KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe'];
+const KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crossover'];
 // silver, white, black, navy, gunmetal, red, champagne, pearl white, dark green, light blue,
-// burgundy, graphite, sand beige, teal grey
+// burgundy, graphite, sand beige, teal grey, metallic blue, cream, olive, steel blue, copper,
+// sky blue
 const PAINTS = [0xb9bcbf, 0xe4e4e0, 0x1c1d1f, 0x1f2c44, 0x4a4d52, 0x8a1e1e, 0xc9b78f, 0xf2efe6, 0x1f3a2c,
-  0x9dbad3, 0x5a1622, 0x3a3d42, 0xb5a488, 0x51686b];
+  0x9dbad3, 0x5a1622, 0x3a3d42, 0xb5a488, 0x51686b, 0x2f5d8c, 0xdcd3bd, 0x5f6b3a, 0x6f8799, 0x8f4a2a, 0x7fb3c9];
 
 // float copy of the attributes a batch needs, in the car's space
 function bake(mesh, root, keep) {
@@ -362,7 +369,7 @@ function parkedLayout(kinds) {
   const taken = [-1.5, -24, -31.5, 58];
   const row = (z0, z1, seed, clip, avoid) => {
     const rnd = (() => { let a = seed; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
-    const types = ['sedan', 'sedan', 'hatch', 'suv', 'suv', 'pickup', 'coupe'].map(kindOf);
+    const types = ['sedan', 'sedan', 'hatch', 'suv', 'crossover', 'crossover', 'wagon', 'pickup', 'coupe'].map(kindOf);
     let prev = null;
     for (let z = z0; z < z1;) {
       // never the same model twice in a row
@@ -396,7 +403,18 @@ function parkedLayout(kinds) {
   // from the neighbour (the authored spots are fitted in among the rows)
   spots.sort((a, b) => a.z - b.z);
   const rc = (() => { let a = 4242; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
+  // colours are dealt from a shuffled deck (every paint once before any repeats), so a
+  // stretch of the row shows the whole range rather than a few colours rotating
+  let deck = [];
+  const deal = () => {
+    if (!deck.length) {
+      deck = PAINTS.slice();
+      for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rc() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    }
+    return deck.pop();
+  };
   spots.forEach((s, i) => {
+    if (!s.fixed) s.color = deal();
     const near = [spots[i - 1], spots[i - 2]].filter((n) => n && s.z - n.z < 14);
     if (!s.fixed && near[0] && near[0].kind === s.kind) {
       const alt = KINDS.find((k) => kinds[k] && k !== s.kind && Math.abs(kinds[k].L - kinds[s.kind].L) < 0.35 && k !== spots[i + 1]?.kind);
@@ -525,7 +543,7 @@ function mergeList(list) {
 // Traffic cars (world/traffic.js): modern models cloned from the parked fleet GLB, each with
 // its wheel pivots, both LODs, its own paint and tail-lamp materials, plus the classic
 // convertible copies. Geometry is shared with the GLB; no shadow casting (a contact blob).
-const WHEEL_RADII = { sedan: 0.335, hatch: 0.315, suv: 0.37, pickup: 0.39, coupe: 0.34 };
+const WHEEL_RADII = { sedan: 0.335, hatch: 0.315, suv: 0.37, pickup: 0.39, coupe: 0.34, wagon: 0.33, crossover: 0.355 };
 function trafficKit(scene, gltf, M, env, pool, probe) {
   const kinds = gltf ? KINDS.filter((k) => gltf.scene.getObjectByName(k)) : [];
   const box = new THREE.Box3();
