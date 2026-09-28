@@ -1,7 +1,8 @@
 // Rideable vehicles: the beach cruiser parked by the promenade near the z = -30 seawall
-// access and the lifeguard ATV by the main tower. Walk up to one and look at it: "E - ride"
-// (a Ride button on touch). E again gets off (the vehicle brakes first if it is moving;
-// the rider steps off beside it and it stays there).
+// access, the lifeguard ATV by the main tower and the 1950s convertible at the west curb
+// (the hero car, drawn by world/cars-glb.js). Walk up to one and look at it: "E - ride" /
+// "E - drive" (a Ride button on touch). E again gets off (the vehicle brakes first if it is
+// moving; the rider steps off beside it, the sidewalk side first for the car, and it stays).
 //
 // While riding, the walker is paused: this module reads the keys / touch stick, steps the
 // physics (sim.js), poses the model, puts the camera at the rider's eye (mouse / drag look
@@ -16,8 +17,10 @@ export const PARKED = {
   bike: { x: 7.5, z: -26.5, yaw: -0.17 },
   atv: { x: TOWER.x + 1.2, z: TOWER.z + 4.8, yaw: 0.35 - Math.PI },
 };
-const REACH = { bike: 2.5, atv: 2.9 };
-const RIDE_PITCH = { bike: -13, atv: -9 };   // deg, the view settles to this on mounting
+const REACH = { bike: 2.5, atv: 2.9, car: 3.4 };   // m to the nearest collider circle centre
+const RIDE_PITCH = { bike: -13, atv: -9, car: -7 };   // deg, the view settles to this on mounting
+const CAR_LOOK = { yaw: 1.85, up: 0.5, down: -0.85 };   // rad: head turn limits in the driver's seat
+const STARTER = 1.05;   // s of cranking before the V8 catches
 const BASE_FOV = 50;
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector2();
 
@@ -108,7 +111,7 @@ function createSpray(scene) {
 
 // ---------------------------------------------------------------------------
 
-export function createVehicles(scene, { walker, camera, beach, staticBoxes, staticCircles, dynamicCircles = [], audio, shot = false, renderer, requestShadow = () => {}, getTouch = () => null }) {
+export function createVehicles(scene, { walker, camera, beach, staticBoxes, staticCircles, dynamicCircles = [], audio, shot = false, renderer, requestShadow = () => {}, getTouch = () => null, car = null, movers = [] }) {
   const dyn = [];
   const world = {
     groundAt: beach.groundAt,
@@ -136,7 +139,16 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     pose3(e, 0);
     if (shot) { m.root.visible = false; m.shadow.visible = false; }
   }
+  let hbT = 0;
+  // the convertible (not in ?shot mode: the harness frames it exactly where it is parked)
+  if (car && !shot) {
+    const v = createVehicle('car', car.pose, world);
+    v.parked = true;
+    list.push({ kind: 'car', v, m: null, drive: car, kick: 1, startT: 0 });
+  }
   const colliders = list.flatMap((e) => e.v.circlesWorld);
+  // the passing traffic car(s) as moving colliders: circles along the lane
+  const moverCircles = movers.map(() => [-1.9, -0.95, 0, 0.95, 1.9].map((dz) => ({ x: 0, z: 0, r: 0.95, dz, owner: null })));
   const spray = createSpray(scene);
 
   // UI
@@ -165,6 +177,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
 
   function pose3(e, t) {
     const { v, m } = e;
+    if (e.kind === 'car') { e.drive.apply(v); return; }
     m.root.position.set(v.x, v.bodyY + v.airY, v.z);
     m.root.rotation.set(0, v.yaw, 0);
     m.tilt.rotation.set(v.pitch, 0, v.roll);
@@ -200,6 +213,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
 
   function eyeWorld(e, bob, out) {
     const { v } = e, S = v.spec;
+    if (e.kind === 'car') { e.drive.eye(out); out.y += bob.y; return out; }
     _e.set(v.pitch, v.yaw, v.roll, 'YXZ');
     _q.setFromEuler(_e);
     out.set(S.eye[0] + bob.x, S.eye[1] + bob.y, S.eye[2]).applyQuaternion(_q);
@@ -209,7 +223,8 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
   function headQuat(e, out) {
     const { v } = e;
     const k = e.kind === 'bike' ? 0.55 : 0.8;
-    _e.set(v.pitch * 0.85, v.yaw, v.roll * k, 'YXZ');
+    // (in the car the head rides the sprung body: its pitch and roll are the body's)
+    _e.set(v.pitch * (e.kind === 'car' ? 1 : 0.85), v.yaw, v.roll * (e.kind === 'car' ? 1 : k), 'YXZ');
     out.setFromEuler(_e);
     _e.set(walker.pitch, rel, 0, 'YXZ');
     return out.multiply(_q2.setFromEuler(_e));
@@ -227,12 +242,19 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     walker.jumpReq = false;
     hintT = 3.5;
     offReq = false;
+    if (e.kind === 'car') { v.engineOn = false; e.startT = STARTER; v.rpm = 0; }
     return true;
   }
   function dismount() {
     if (!rider) return false;
     const e = rider, v = e.v;
-    for (const [x, z] of dismountSpots(v)) {
+    let spots = dismountSpots(v);
+    if (e.kind === 'car') {
+      // the sidewalk side (the higher ground by the doors) first, else the road side
+      const h = (p) => walker.world.heightAt(p[0], p[1], v.groundY + 0.3);
+      if (h(spots[1]) > h(spots[0]) + 0.05) spots = spots.map((p, i) => (i < 8 ? spots[i ^ 1] : p));
+    }
+    for (const [x, z] of spots) {
       const feet = walker.world.heightAt(x, z, v.groundY + 0.3);
       if (Math.abs(feet - v.groundY) > 0.5) continue;
       walker.feetY = feet;
@@ -242,6 +264,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
       walker.set(x, feet + EYE_HEIGHT, z, heading, THREE.MathUtils.radToDeg(walker.pitch));
       v.ridden = false; v.parked = true;
       v.vx = v.vz = 0; v.lon = 0; v.steer *= 0.3; v.airY = 0; v.vyAir = 0;
+      if (e.kind === 'car') { v.engineOn = false; v.rpm = 0; v.gear = 1; pose3(e, clock); }
       rider = null; trans = null; offReq = false;
       audio?.vehicle?.({ kind: null });
       requestShadow();
@@ -268,12 +291,17 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     let best = null, bd = Infinity;
     for (const e of list) {
       const v = e.v;
-      let d = Infinity;
-      for (const c of v.circlesWorld) d = Math.min(d, Math.hypot(walker.pos.x - c.x, walker.pos.y - c.z));
+      let d = Infinity, nc = null;
+      for (const c of v.circlesWorld) {
+        const dd = Math.hypot(walker.pos.x - c.x, walker.pos.y - c.z);
+        if (dd < d) { d = dd; nc = c; }
+      }
       if (d > REACH[e.kind] || Math.abs(walker.feetY - v.groundY) > 0.8) continue;
-      const dx = v.x - walker.pos.x, dz = v.z - walker.pos.y, dl = Math.hypot(dx, dz) || 1;
+      // (the long car: look at the part of it that is nearest, not its centre)
+      const tx = e.kind === 'car' ? nc.x : v.x, tz = e.kind === 'car' ? nc.z : v.z;
+      const dx = tx - walker.pos.x, dz = tz - walker.pos.y, dl = Math.hypot(dx, dz) || 1;
       const facing = (dx * fx + dz * fz) / dl;
-      if (d > 1.1 && facing < 0.62) continue;
+      if (d > (e.kind === 'car' ? 1.6 : 1.1) && facing < 0.62) continue;
       if (d < bd) { bd = d; best = e; }
     }
     return best;
@@ -294,11 +322,18 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     }
     let hop = walker.jumpReq || (virtualKeys ? key('Space') : false);
     walker.jumpReq = false;
+    // car: Space held = handbrake; a tap of the touch Jump (Brake) button pulls it for a moment
+    let handbrake = false;
+    if (e.kind === 'car') {
+      if (hop) hbT = 0.6;
+      handbrake = (active && key('Space')) || hbT > 0;
+      hop = false;
+    }
     if (offReq) {
       const lon = e.v.lon;
       f = Math.abs(lon) > 0.3 ? -Math.sign(lon) : 0; r = 0; hard = false; hop = false;
     }
-    return { throttle: THREE.MathUtils.clamp(f, -1, 1), steer: THREE.MathUtils.clamp(r, -1, 1), hard, hop };
+    return { throttle: THREE.MathUtils.clamp(f, -1, 1), steer: THREE.MathUtils.clamp(r, -1, 1), hard, hop, handbrake };
   }
 
   let clock = 0;
@@ -306,7 +341,13 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     dt = Math.min(dt, 0.05);
     clock += dt;
     dyn.length = 0;
+    hbT = Math.max(0, hbT - dt);
     for (const c of dynamicCircles) dyn.push(c);
+    movers.forEach((m, i) => {
+      if (!m.visible) return;
+      const s = Math.cos(m.rotation.y) >= 0 ? 1 : -1;
+      for (const c of moverCircles[i]) { c.x = m.position.x; c.z = m.position.z + c.dz * s; dyn.push(c); }
+    });
     for (const e of list) if (e !== rider) for (const c of e.v.circlesWorld) dyn.push(c);
 
     // the other vehicles: kickstand, settle, visibility
@@ -318,18 +359,19 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
         stepVehicle(v, { throttle: 0, steer: 0, hard: false, hop: false }, dt, world);
         pose3(e, clock);
         requestShadow();
-      } else if (Math.abs(v.bodyY - v.baseT) > 0.002 || Math.abs(v.bodyV) > 0.01) {
+      } else if (Math.abs(v.bodyY - v.baseT) > 0.002 || Math.abs(v.bodyV) > 0.01 || Math.abs(v.pitchV) + Math.abs(v.rollV) > 0.01) {
         stepVehicle(v, { throttle: 0, steer: 0, hard: false, hop: false }, dt, world);
         pose3(e, clock);
       }
+      if (e.kind === 'car') continue;   // (world/cars-glb.js does its LOD / distance handling)
       const far = Math.hypot(camera.position.x - v.x, camera.position.z - v.z) > 240;
       e.m.root.visible = e.m.shadow.visible = !far;
     }
 
     if (!rider) {
       near = findNear();
-      showPrompt(near ? '<b>E</b>ride' : '');
-      setTouch(near ? 'ride' : null);
+      showPrompt(near ? (near.kind === 'car' ? '<b>E</b>drive' : '<b>E</b>ride') : '');
+      setTouch(near ? (near.kind === 'car' ? 'drive' : 'ride') : null);
       fov += (BASE_FOV - fov) * (1 - Math.exp(-dt * 6));
       applyFov();
       spray.update(dt, renderer, camera);
@@ -339,6 +381,11 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     const e = rider, v = e.v;
     near = null;
     if (e.kind === 'bike') e.kick = Math.max(0, e.kick - dt * 4);
+    if (e.kind === 'car' && e.startT > 0) {
+      // the starter cranks, then the V8 catches
+      e.startT -= dt;
+      if (e.startT <= 0) { v.engineOn = true; v.rpm = 1250; }
+    }
     let input = { throttle: 0, steer: 0, hard: false, hop: false };
     if (trans) {
       trans.t += dt / 0.4;
@@ -352,6 +399,10 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     // look: mouse / drag deltas since the last frame move the head relative to the vehicle
     const d = wrap(walker.yaw - lastYaw);
     if (Math.abs(d) > 1e-5) { rel = wrap(rel + d); lookIdle = 0; } else lookIdle += dt;
+    if (e.kind === 'car') {
+      rel = THREE.MathUtils.clamp(rel, -CAR_LOOK.yaw, CAR_LOOK.yaw);
+      walker.pitch = THREE.MathUtils.clamp(walker.pitch, CAR_LOOK.down, CAR_LOOK.up);
+    }
     if (lookIdle > 1.4 && Math.abs(v.lon) > 1.5 && !trans) rel *= Math.exp(-dt * 1.3);
     if (trans) {
       const k = Math.min(1, trans.t), s = k * k * (3 - 2 * k);
@@ -367,6 +418,10 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
       const a = Math.min(1, Math.abs(v.lon) / 3) * v.pedal;
       bob.y = 0.012 * a * Math.sin(v.crank * 2);
       bob.x = 0.008 * a * Math.sin(v.crank);
+    } else if (e.kind === 'car') {
+      // the V8 through the column and the seat: a faint shake, more at idle lope
+      const j = v.engineOn ? 0.00035 + 0.0003 * Math.max(0, 1 - Math.abs(v.lon) / 4) : 0;
+      bob.y = j * Math.sin(clock * 41) + j * 0.7 * Math.sin(clock * 10.3);
     } else {
       const j = 0.0006 + 0.0012 * (v.rpm - 1400) / 6000;
       bob.y = j * Math.sin(clock * 83) + j * 0.6 * Math.sin(clock * 131);
@@ -385,12 +440,13 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     }
     walker.pos.set(v.x, v.z);
     walker.feetY = v.groundY;
-    fov += (56 + Math.min(1, Math.abs(v.lon) / 12) * 5 - fov) * (1 - Math.exp(-dt * 3));
+    const fov0 = e.kind === 'car' ? 58 + Math.min(1, Math.abs(v.lon) / 19) * 4 : 56 + Math.min(1, Math.abs(v.lon) / 12) * 5;
+    fov += (fov0 - fov) * (1 - Math.exp(-dt * 3));
     applyFov();
 
     // spray from the wheels in the swash, roost from the ATV on soft sand
     const sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), al = Math.abs(v.lon);
-    v.spec.wheels.forEach(([lx, lz], i) => {
+    if (e.kind !== 'car') v.spec.wheels.forEach(([lx, lz], i) => {
       const dep = v.wheelDepth[i];
       const wx = v.x + lx * cy + lz * sy, wz = v.z - lx * sy + lz * cy, gy = v.wheelH[i];
       const side = lx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(lx);
@@ -421,11 +477,12 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     audio?.vehicle?.({
       kind: e.kind, lon: v.lon, throttle: input.throttle, rpm: v.rpm, load: v.load, surface: v.surf.kind, soft: v.surf.soft,
       depth: Math.max(...v.wheelDepth), coasting: v.coasting, pedal: v.pedal, crank: v.crank, bump: v.bump, land: v.land,
+      gear: v.gear, braking: v.braking, engineOn: v.engineOn, turn: v.turn ?? 0, handbrake: input.handbrake,
     });
 
     hintT -= dt;
     if (offFail > 0) { offFail -= dt; showPrompt('No room to get off here'); }
-    else showPrompt(offReq ? 'Stopping…' : hintT > 0 ? '<b>E</b>get off' : '');
+    else showPrompt(offReq ? 'Stopping…' : hintT > 0 ? (e.kind === 'car' ? '<b>E</b>get out &nbsp; <b>Space</b>handbrake' : '<b>E</b>get off') : '');
     setTouch('off');
   }
 
@@ -437,7 +494,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     const t = getTouch();
     if (!t?.setRide) return;
     touchMode = mode;
-    t.setRide(mode, rider?.kind);
+    t.setRide(mode, rider?.kind ?? near?.kind);
   }
 
   const api = {

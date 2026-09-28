@@ -134,7 +134,8 @@ const post = createPost(renderer, scene, camera, {
 const walkWorld = {
   heightAt: beach.heightAt,
   boxes: [
-    ...STREET_COLLIDERS.filter((c) => c.min), ...cars.colliders, ...beach.colliders,
+    // (the drivable hero car collides as the vehicle's moving circles instead of its box)
+    ...STREET_COLLIDERS.filter((c) => c.min), ...cars.colliders.filter((c) => !(c.hero && cars.drive && !SHOT)), ...beach.colliders,
     ...hotels.userData.footprints.map((f) => ({ min: { x: -80, y: -5, z: f.z0 }, max: { x: f.fx, y: 60, z: f.z1 } })),
   ],
   circles: [
@@ -165,7 +166,7 @@ const people = buildPeople(scene, {
 walkWorld.circles.push(...people.colliders);
 window.__people = people;
 
-// --- rideable beach cruiser and lifeguard ATV (E to ride); parked colliders block the walker
+// --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
 await nextFrame();
 const vehicles = createVehicles(scene, {
   walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
@@ -173,6 +174,7 @@ const vehicles = createVehicles(scene, {
   dynamicCircles: people.colliders,
   requestShadow,
   getTouch: () => touch,
+  car: cars.drive ?? null, movers: cars.movers ?? [],
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
@@ -215,7 +217,7 @@ function enableTouch() {
   if (touch || SHOT) return;
   touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle() });
   window.__touch = touch;
-  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV';
+  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike, the ATV or the convertible';
   if (controls.active && !controls.locked) touch.setEnabled(true);
 }
 function beginTouch() {

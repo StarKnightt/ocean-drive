@@ -94,6 +94,96 @@ check('ATV runs the whole beach north -> south (z -335 -> 330)', r.z > 330 - 1, 
   for (let i = 0; i < 600; i++) { stepVehicle(v, { throttle: 1, steer: 0.3 * Math.sin(i / 50) }, 1 / 60, world); minP = Math.min(minP, v.pitch); maxP = Math.max(maxP, v.pitch); maxR = Math.max(maxR, Math.abs(v.roll)); }
   check('ATV pitches / rolls over the sand mounds', maxP - minP > 0.01 && maxR > 0.005, { pitchRange: +(maxP - minP).toFixed(4), maxRoll: +maxR.toFixed(4), rpm: Math.round(v.rpm) });
 }
+
+// convertible: the road (x -24 .. -14.5), a parked car and a lamp post in the west lane
+{
+  const parked = { min: { x: -23.75, y: 0, z: 58 }, max: { x: -21.75, y: 1.4, z: 62.8 } };
+  const post = { x: -19.75, z: 150, r: 0.12 };
+  const cw = { ...world, grid: buildGrid([...boxes, parked], [post]) };
+  const car = (pose) => { const v = createVehicle('car', pose, cw); v.parked = false; v.ridden = true; v.engineOn = true; return v; };
+  const drive = (v, input, seconds, stop) => {
+    let t = 0;
+    for (; t < seconds; t += 1 / 60) {
+      stepVehicle(v, typeof input === 'function' ? input(v, t) : input, 1 / 60, cw);
+      if (stop && stop(v, t)) break;
+    }
+    return t;
+  };
+  const S = yawFor(180);   // heading south (+z)
+  let v = car({ x: -16.5, z: -336, yaw: S });
+  let t50 = null, t70 = null;
+  drive(v, { throttle: 1, steer: 0 }, 60, (q, t) => { if (t50 === null && q.lon > 50 / 3.6) t50 = t; if (t70 === null && q.lon > 65 / 3.6) t70 = t; return q.z > 320; });
+  console.log('      (0-65 km/h:', t70?.toFixed(1), 's)');
+  check('car 0-50 km/h in 6-11 s (a cruiser)', t50 > 6 && t50 < 11, { t50: +t50?.toFixed(2) });
+  check('car top speed ~70 km/h', v.lon * 3.6 > 64 && v.lon * 3.6 < 72, { kmh: +(v.lon * 3.6).toFixed(1), gear: v.gear, rpm: Math.round(v.rpm) });
+  check('car in top gear at speed', v.gear === 3 && v.rpm > 1400 && v.rpm < 2200, { gear: v.gear, rpm: Math.round(v.rpm) });
+  // braking from 50 km/h
+  v = car({ x: -19.75, z: -300, yaw: S });
+  drive(v, { throttle: 1, steer: 0 }, 30, (q) => q.lon > 50 / 3.6);
+  const z0 = v.z;
+  const tb = drive(v, { throttle: -1, steer: 0 }, 10, (q) => q.lon < 0.05);
+  check('car brakes from 50 km/h in ~12-20 m', v.z - z0 > 12 && v.z - z0 < 20, { dist: +(v.z - z0).toFixed(2), t: +tb.toFixed(2) });
+  // handbrake alone stops it too
+  v = car({ x: -19.75, z: -300, yaw: S });
+  drive(v, { throttle: 1, steer: 0 }, 30, (q) => q.lon > 30 / 3.6);
+  const zh = v.z;
+  drive(v, { throttle: 0, steer: 0, handbrake: true }, 10, (q) => q.lon < 0.05);
+  check('car handbrake stops it from 30 km/h', v.lon < 0.1 && v.z - zh < 16, { dist: +(v.z - zh).toFixed(2) });
+  // turning circle at walking pace, full lock
+  v = car({ x: -18, z: -200, yaw: S });
+  let x0 = Infinity, x1 = -Infinity, zl0 = Infinity, zl1 = -Infinity;
+  const hold = (q) => ({ throttle: q.lon < 2 ? 0.5 : 0, steer: 1 });
+  const cw2 = { ...cw, bounds: { x0: -200, x1: 200, z0: -340, z1: 340 }, groundAt: () => 0 };
+  const loop = createVehicle('car', { x: 0, z: 0, yaw: S }, cw2); loop.parked = false; loop.engineOn = true;
+  for (let t = 0; t < 40; t += 1 / 60) {
+    stepVehicle(loop, hold(loop), 1 / 60, cw2);
+    if (t > 8) { x0 = Math.min(x0, loop.x); x1 = Math.max(x1, loop.x); zl0 = Math.min(zl0, loop.z); zl1 = Math.max(zl1, loop.z); }
+  }
+  const dia = ((x1 - x0) + (zl1 - zl0)) / 2;
+  check('car turning circle ~12 m at full lock', dia > 10.5 && dia < 14, { diameter: +dia.toFixed(2) });
+  // speed-sensitive steering: at 40 km/h full lock gives a much wider arc
+  v = car({ x: -18, z: -200, yaw: S });
+  drive(v, { throttle: 1, steer: 0 }, 30, (q) => q.lon > 40 / 3.6);
+  check('car steering lock falls with speed', (() => { drive(v, { throttle: 0.3, steer: 1 }, 0.8); return Math.abs(v.steer) < 0.2; })(), { steer: +v.steer.toFixed(3) });
+  // body roll out of a turn
+  v = car({ x: -18, z: -200, yaw: S });
+  drive(v, { throttle: 1, steer: 0 }, 30, (q) => q.lon > 30 / 3.6);
+  let maxRoll = 0;
+  drive(v, { throttle: 0.4, steer: 1 }, 1.5, (q) => { maxRoll = Math.max(maxRoll, q.roll); return false; });
+  check('car body rolls out of a right turn (2-5 deg)', maxRoll > 0.035 && maxRoll < 0.09, { rollDeg: +(maxRoll * 57.3).toFixed(2) });
+  // curbs: steer hard for the park-side sidewalk and the hotel sidewalk
+  v = car({ x: -16.5, z: 200, yaw: yawFor(90) });
+  drive(v, { throttle: 1, steer: 0, hard: true }, 6);
+  check('car stopped by the park-side curb (x -14.5)', v.x < -14.5 - 0.3, { x: +v.x.toFixed(2) });
+  v = car({ x: -20, z: 220, yaw: yawFor(270) });
+  drive(v, { throttle: 1, steer: 0, hard: true }, 6);
+  check('car stopped by the hotel-side curb (x -24)', v.x > -24 + 0.5, { x: +v.x.toFixed(2) });
+  // down a cross street (8 ST, z = 79): west past the sidewalk line
+  v = car({ x: -20, z: 79, yaw: yawFor(270) });
+  drive(v, { throttle: 0.6, steer: 0 }, 8);
+  check('car drives into a cross street', v.x < -30, { x: +v.x.toFixed(2), z: +v.z.toFixed(2) });
+  // collisions: parked car and a lamp post, no tunnelling at top speed
+  v = car({ x: -22.75, z: 40, yaw: S });
+  drive(v, { throttle: 1, steer: 0, hard: true }, 8);
+  check('car stops at a parked car', v.z + 2.88 < 58 + 0.05 && v.z > 50, { z: +v.z.toFixed(2), lon: +v.lon.toFixed(2) });
+  v = car({ x: -19.75, z: -10, yaw: S });
+  drive(v, { throttle: 1, steer: 0, hard: true }, 25);
+  check('car at speed stops at a lamp post (no tunnelling)', v.z < 150 - 0.12 - 0.9 && v.z > 140, { z: +v.z.toFixed(2) });
+  // a moving collider (the traffic car) blocks it; once overlapping it can still pull away
+  const mover = { x: -19.75, z: 30, r: 1 };
+  const cw3 = { ...cw, dynamic: () => [mover] };
+  v = createVehicle('car', { x: -19.75, z: 20, yaw: S }, cw3); v.parked = false; v.engineOn = true;
+  for (let t = 0; t < 4; t += 1 / 60) stepVehicle(v, { throttle: 1, steer: 0 }, 1 / 60, cw3);
+  check('car stops at the moving traffic car', v.z + 1.95 + 0.93 < 30 - 1 + 0.05, { z: +v.z.toFixed(2) });
+  mover.z = v.z;   // it drives into us
+  const zb = v.z;
+  for (let t = 0; t < 2; t += 1 / 60) stepVehicle(v, { throttle: -1, steer: 0 }, 1 / 60, cw3);
+  check('car can back out of an overlap', v.z < zb - 0.5, { z: +v.z.toFixed(2) });
+  // no drive before the engine has caught
+  v = createVehicle('car', { x: -19.75, z: -250, yaw: S }, cw); v.parked = false;
+  drive(v, { throttle: 1, steer: 0 }, 1);
+  check('car does not move before the engine starts', Math.abs(v.lon) < 0.01, { lon: v.lon });
+}
 const failed = results.filter((q) => !q.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);

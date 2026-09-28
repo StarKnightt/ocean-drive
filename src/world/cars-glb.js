@@ -41,37 +41,62 @@ export function preloadCars() {
 // made for diffuse fill, so paint and chrome mirrored nothing. A low-res cube capture of the
 // street itself (hotel fronts, palms, sky, the dark road) is PMREM-filtered into the cars'
 // envMap: once at load, and again whenever the viewer has moved PROBE.step metres along the
-// drive. The render target is reused, so its texture (and every car program) stays the same.
+// drive (then one cube face per frame, so driving past doesn't hitch). The render target is
+// reused, so its texture (and every car program) stays the same.
 const PROBE = { high: { size: 256, step: 50 }, medium: { size: 128, step: 50 }, low: { size: 64, step: 80 } }[QUALITY.tier] ?? { size: 128, step: 50 };
 function createProbe(renderer, scene) {
   const cubeRT = new THREE.WebGLCubeRenderTarget(PROBE.size, { type: THREE.HalfFloatType });
   const cam = new THREE.CubeCamera(0.3, 2500, cubeRT);
   const pmrem = new THREE.PMREMGenerator(renderer);
-  let out = null;
+  let out = null, face = -1, pendingZ = 0;
+  const place = (z) => {
+    const x = CAR.x + 2.7;
+    cam.position.set(x, roadHeight(x) + 0.95, z);
+    cam.updateMatrixWorld(true);
+  };
+  // render with the cars hidden, the sun's shadow map left as it is
+  const hidden = (hide, fn) => {
+    const vis = hide.map((o) => o.visible);
+    for (const o of hide) o.visible = false;
+    const shadowUpdate = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.needsUpdate = false;
+    fn();
+    renderer.shadowMap.needsUpdate = shadowUpdate;
+    hide.forEach((o, i) => { o.visible = vis[i]; });
+  };
   const probe = {
     hide: [], z: null, captures: 0,
     get texture() { return out.texture; },
     // skyOnly: the load-time capture, before the world's shaders are compiled (asynchronously,
     // in main.js): only the sky dome, so it compiles nothing; the first frame re-captures all
     capture(z, skyOnly = false) {
-      const x = CAR.x + 2.7;
-      cam.position.set(x, roadHeight(x) + 0.95, z);
+      place(z);
       const hide = skyOnly ? scene.children.filter((o) => !o.isLight && o.material?.name !== 'Sky') : probe.hide;
-      const vis = hide.map((o) => o.visible);
-      for (const o of hide) o.visible = false;
-      const shadowUpdate = renderer.shadowMap.needsUpdate;
-      renderer.shadowMap.needsUpdate = false;
-      cam.update(renderer, scene);
-      renderer.shadowMap.needsUpdate = shadowUpdate;
-      hide.forEach((o, i) => { o.visible = vis[i]; });
+      hidden(hide, () => cam.update(renderer, scene));
       out = pmrem.fromCubemap(cubeRT.texture, out);
       probe.z = z;
+      face = -1;
       probe.captures++;
     },
     // along the drive the probe follows the viewer (clamped to the modelled district)
     follow(p) {
       const z = THREE.MathUtils.clamp(p.z, DISTRICT.zMin, DISTRICT.zMax);
-      if (probe.z === null || Math.abs(z - probe.z) > PROBE.step) probe.capture(z);
+      if (probe.z === null) { probe.capture(z); return; }
+      if (face < 0 && Math.abs(z - probe.z) > PROBE.step) { face = 0; pendingZ = z; }
+      if (face < 0) return;
+      place(pendingZ);
+      const target = renderer.getRenderTarget(), cf = renderer.getActiveCubeFace(), ml = renderer.getActiveMipmapLevel();
+      hidden(probe.hide, () => {
+        renderer.setRenderTarget(cubeRT, face);
+        renderer.render(scene, cam.children[face]);
+      });
+      renderer.setRenderTarget(target, cf, ml);
+      if (++face === 6) {
+        out = pmrem.fromCubemap(cubeRT.texture, out);
+        probe.z = pendingZ;
+        face = -1;
+        probe.captures++;
+      }
     },
   };
   return probe;
@@ -189,22 +214,40 @@ function blobMesh(w, l) {
   return blob;
 }
 
-// hero / mover instance: both LODs under one group, wheels found by name
+// hero / mover instance: both LODs under one group, wheels found by name. The bodywork
+// hangs in a sway group (pitch / roll / bounce on its springs, pivoting at mid height);
+// the wheels are lifted out of it into per-LOD sets so they stay on the road.
+const SWAY_Y = 0.55;
 function heroInstance(gltf, paint, paint2, M) {
   const g = new THREE.Group();
+  const sway = new THREE.Group(), body = new THREE.Group();
+  sway.position.y = SWAY_Y;
+  body.position.y = -SWAY_Y;
+  sway.add(body);
+  g.add(sway);
   const levels = ['convertible', 'convertible_L1'].map((n) => {
     const src = gltf.scene.getObjectByName(n);
     const c = src.clone(true);
     c.position.set(0, 0, 0);
     applyMaterials(c, M, paint, paint2);
-    g.add(c);
+    body.add(c);
     return c;
   });
-  const wheels = [], steering = [];
+  const wheels = [], steering = [], wheelSets = [];
   levels.forEach((lv, k) => {
     const sfx = k ? '_L1' : '';
-    for (const n of ['FL', 'FR', 'RL', 'RR']) wheels.push(lv.getObjectByName(`wheel_${n}${sfx}`));
-    steering.push(lv.getObjectByName(`steering_wheel${sfx}`));
+    const set = new THREE.Group();
+    set.visible = k === 0;
+    g.add(set);
+    wheelSets.push(set);
+    for (const n of ['FL', 'FR', 'RL', 'RR']) {
+      const w = lv.getObjectByName(`wheel_${n}${sfx}`);
+      set.add(w);
+      wheels.push(w);
+    }
+    const st = lv.getObjectByName(`steering_wheel${sfx}`);
+    if (st) st.userData.q0 = st.quaternion.clone();
+    steering.push(st);
   });
   levels[1].visible = false;
   g.add(blobMesh(2.35, 6.1));
@@ -212,7 +255,7 @@ function heroInstance(gltf, paint, paint2, M) {
     levels, wheels, steering,
     seatAnchor: levels[0].getObjectByName('driver_seat'), eyeAnchor: levels[0].getObjectByName('driver_eye'),
   };
-  return { car: g, wheels, levels, wheelR: WHEEL_R };
+  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R };
 }
 
 function setLevel(inst, k) {
@@ -220,7 +263,39 @@ function setLevel(inst, k) {
   if (a.visible === (k === 0)) return false;
   a.visible = k === 0;
   b.visible = k === 1;
+  inst.wheelSets[0].visible = k === 0;
+  inst.wheelSets[1].visible = k === 1;
   return true;
+}
+
+// Pose the hero from the vehicle sim state (vehicles/sim.js: yaw 0 = north, forward -z;
+// the model's nose is +z, so it turns by yaw + pi and the sim's pitch / roll flip sign).
+// Front wheels steer with Ackermann geometry; the steering wheel turns 2.5 turns lock to lock.
+const _qs = new THREE.Quaternion(), _ax = new THREE.Vector3(0, 1, 0);
+function poseHero(inst, v) {
+  const S = v.spec, g = inst.car;
+  g.position.set(v.x, v.baseT, v.z);
+  g.rotation.set(-v.pitchT, v.yaw + Math.PI, -v.rollT, 'YXZ');
+  inst.sway.position.y = SWAY_Y + (v.bodyY - v.baseT);
+  inst.sway.rotation.set(-(v.pitch - v.pitchT), 0, -(v.roll - v.rollT));
+  const d = v.steer, ad = Math.abs(d);
+  let inner = d, outer = d;
+  if (ad > 1e-4) {
+    const R = S.wheelbase / Math.tan(ad);
+    inner = Math.sign(d) * Math.atan(S.wheelbase / Math.max(0.5, R - S.track / 2));
+    outer = Math.sign(d) * Math.atan(S.wheelbase / (R + S.track / 2));
+  }
+  // model FL / FR = the car's left / right; a right turn (d > 0) has the right wheel inside
+  const angFL = d > 0 ? outer : inner, angFR = d > 0 ? inner : outer;
+  for (let k = 0; k < 2; k++) {
+    const w = inst.wheels.slice(k * 4, k * 4 + 4);
+    w[0].rotation.set(v.wheelRot, -angFL, 0, 'YXZ');
+    w[1].rotation.set(v.wheelRot, -angFR, 0, 'YXZ');
+    w[2].rotation.set(v.wheelRot, 0, 0);
+    w[3].rotation.set(v.wheelRot, 0, 0);
+    const st = inst.steering[k];
+    if (st?.userData.q0) st.quaternion.copy(st.userData.q0).multiply(_qs.setFromAxisAngle(_ax, (d / S.steerMax) * 1.25 * 2 * Math.PI));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +532,8 @@ export async function buildCarsGlb(scene, renderer) {
   const hero = heroInstance(heroGltf, paintMaterial(env, HERO_PAINT, 'hero'), paint2, M);
   seat(hero.car, CAR.x, CAR.z, 0);
   scene.add(hero.car);
-  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.9 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.9 } }];
+  // (hero: the drivable car replaces this box with its own moving circles)
+  const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.9 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.9 }, hero: true }];
   const fleet = parkedGltf ? buildFleet(scene, parkedGltf, M) : null;
   colliders.push(...(fleet ? fleet.colliders : buildParkedProcedural(scene)));
   // moving copies for the audio car passes (no shadow casting, like the procedural ones)
@@ -475,6 +551,13 @@ export async function buildCarsGlb(scene, renderer) {
   const tmp = new THREE.Vector3();
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
+    // the drivable hero (vehicles/index.js): start pose in sim terms, pose from the sim, eye
+    drive: {
+      pose: { x: CAR.x, z: CAR.z, yaw: Math.PI },
+      apply: (v) => poseHero(hero, v),
+      eye: (out) => hero.car.userData.eyeAnchor.getWorldPosition(out),
+      root: hero.car,
+    },
     update(dt, cars, camera) {
       movers(dt, cars);
       if (!camera) return;

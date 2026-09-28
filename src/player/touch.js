@@ -169,13 +169,14 @@ export function createTouchControls(walker, { audio, onRide } = {}) {
       if (!enabled) releaseAll();
     },
     syncMute,
-    // mode: 'ride' (a vehicle in reach), 'off' (riding), null; kind: the ridden vehicle
+    // mode: 'ride' (a vehicle in reach), 'off' (riding), null; kind: the ridden / reachable vehicle
     setRide(mode, kind) {
       rideBtn.classList.toggle('show', !!mode);
-      rideBtn.textContent = mode === 'off' ? 'Off' : 'Ride';
-      rideBtn.setAttribute('aria-label', mode === 'off' ? 'Get off' : 'Ride');
+      const car = kind === 'car';
+      rideBtn.textContent = mode === 'off' ? (car ? 'Exit' : 'Off') : car ? 'Drive' : 'Ride';
+      rideBtn.setAttribute('aria-label', mode === 'off' ? (car ? 'Get out' : 'Get off') : car ? 'Drive' : 'Ride');
       const riding = mode === 'off';
-      jumpLabel.textContent = riding ? (kind === 'atv' ? 'Boost' : 'Hop') : 'Jump';
+      jumpLabel.textContent = riding ? (kind === 'atv' ? 'Boost' : car ? 'Brake' : 'Hop') : 'Jump';
       jumpBtn.setAttribute('aria-label', jumpLabel.textContent);
     },
   };

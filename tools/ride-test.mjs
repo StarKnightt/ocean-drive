@@ -223,6 +223,81 @@ const brakeOff = await page.evaluate(() => { const V = window.__vehicles; for (l
 check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
 
 // ---------------------------------------------------------------------------
+// 2b. the convertible: prompt from the sidewalk, starter, driver view, roads only
+{
+  const carV = () => page.evaluate(() => { const v = window.__vehicles.list.find((e) => e.kind === 'car').v; return { x: +v.x.toFixed(2), z: +v.z.toFixed(2), yaw: +v.yaw.toFixed(3), lon: +v.lon.toFixed(2), rpm: Math.round(v.rpm), gear: v.gear, on: v.engineOn, ridden: v.ridden }; });
+  const start = await carV();
+  await approach('car', 2.4, 270);
+  s = await st();
+  const carPrompt = await page.evaluate(() => document.getElementById('ride-prompt').textContent);
+  check('car prompt "E drive" from the sidewalk', s.near === 'car' && /drive/.test(carPrompt), { near: s.near, prompt: carPrompt });
+  await shot('13-car-prompt');
+  await page.keyboard.press('KeyE');
+  await page.waitForTimeout(300);
+  let c = await carV();
+  check('E sits you in the car; starter cranking (engine not yet on)', c.ridden && !c.on, c);
+  await page.waitForTimeout(1200);
+  c = await carV();
+  check('the V8 catches and idles ~620 rpm', c.on && c.rpm > 500 && c.rpm < 1400, c);
+  await shot('14-car-driver-view', 300);
+  // real keys: W pulls away down the west lane
+  await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(3000);
+  await shot('15-car-driving', 0);
+  await page.keyboard.up('KeyW');
+  c = await carV();
+  check('real W key drives the car', c.lon > 4, c);
+  // steer (A / D) and the steering wheel turns with it
+  const steer = await page.evaluate(() => { const V = window.__vehicles; V.simulate(['KeyW', 'KeyD'], 1.2); return +V.current.steer.toFixed(3); });
+  check('D steers right', steer > 0.05, { steer });
+  await shot('16-car-steering', 0);
+  // down the drive to the south end at speed, then brake
+  r = await rideTo(-19.75, 300, { maxT: 60, stopAt: 3 });
+  report.checks.carDrive = r;
+  check('car reaches ~60-70 km/h on the road', (r.bySurf.pavement ?? 0) * 3.6 > 58 && (r.bySurf.pavement ?? 99) * 3.6 < 76, r);
+  await brake(4);
+  // curbs: try to drive onto the park-side sidewalk and the hotel side
+  await page.evaluate(() => window.__vehicles.place(-17, 250, -Math.PI / 2));
+  r = await rideTo(-5, 250, { maxT: 5 });
+  check('park-side curb stops the car', r.at[0] < -14.4, r);
+  await page.evaluate(() => window.__vehicles.place(-20, 250, Math.PI / 2));
+  r = await rideTo(-35, 250, { maxT: 5 });
+  check('hotel-side curb stops the car', r.at[0] > -24.1, r);
+  // a cross street (7 ST, z = 190)
+  await page.evaluate(() => window.__vehicles.place(-19, 190, Math.PI / 2));
+  r = await rideTo(-40, 190, { maxT: 12, hard: false });
+  check('car drives into a cross street', r.at[0] < -32, r);
+  await shot('17-car-cross-street', 100);
+  // a parked car stops it
+  const pk = await page.evaluate(() => { const c = window.__cars.colliders.find((q) => !q.hero && q.min.z > 20 && q.min.z < 120); return c && { z: c.min.z, x: (c.min.x + c.max.x) / 2 }; });
+  if (pk) {
+    await page.evaluate((pk) => window.__vehicles.place(pk.x, pk.z - 14, Math.PI), pk);
+    r = await rideTo(pk.x, pk.z + 6, { maxT: 6 });
+    check('a parked car stops it (no tunnelling)', r.at[1] < pk.z - 2.5, { ...r, parkedZ: pk.z });
+  }
+  // exit: sidewalk side when parked at the curb; the car stays
+  await page.evaluate(() => window.__vehicles.place(-22.75, -40, Math.PI));
+  await brake(1);
+  await page.keyboard.press('KeyE');
+  await page.waitForTimeout(500);
+  s = await st();
+  c = await carV();
+  check('E gets out on the sidewalk side; engine off; car stays', !s.riding && s.walker.x < -24 && !c.on && Math.abs(c.z + 40) < 0.5, { walker: s.walker, car: c });
+  await shot('18-car-after-exit', 300);
+  // the parked car is solid to the walker
+  const solid = await page.evaluate(() => {
+    const w = window.__walker, v = window.__vehicles.list.find((e) => e.kind === 'car').v;
+    w.teleport(v.x - 2.6, v.z, 90, 0);
+    w.simulate(['KeyW'], 3);
+    return +(v.x - w.pos.x).toFixed(2);
+  });
+  check('the parked convertible is solid to the walker', solid > 1.0, { dx: solid });
+  // put it back where it was (the ride test runs before other shots)
+  await page.evaluate((p) => window.__vehicles.place(p.x, p.z, p.yaw, 'car'), start);
+}
+
+// ---------------------------------------------------------------------------
 // 3. waterline foam (swash over the feet)
 await page.evaluate(() => { window.__walker.teleport(91.5, 14, 110, -38); });
 const swash = await page.evaluate(async () => {

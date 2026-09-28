@@ -35,7 +35,8 @@ from any sub-path; every push to `main` deploys it to GitHub Pages through
 
 The Playwright scripts in `tools/` need the dev server running: `shots.mjs` captures the five
 fixed critic cameras, `walk-test.mjs` walks the route from the sidewalk to the water,
-`ride-test.mjs` and `vehicle-sim-test.mjs` check the bike and the ATV, and `mobile-test.mjs` runs
+`ride-test.mjs` and `vehicle-sim-test.mjs` check the bike, the ATV and the convertible (`car-ride-test.mjs`
+runs the convertible's enter / drive / exit flow in Node), and `mobile-test.mjs` runs
 the touch controls on an emulated phone.
 
 ![The hotel fronts from the park: MARISOL, ORCHIDEA and the convertible at the curb](media/01-hotel-fronts.jpg)
@@ -49,7 +50,8 @@ the touch controls on an emulated phone.
 | W A S D | Walk |
 | Shift | Walk faster |
 | Space | Jump |
-| E | Get on or off the beach cruiser or the lifeguard ATV, when you are next to one |
+| E | Get on or off the beach cruiser or the lifeguard ATV, or into / out of the convertible, when you are next to one |
+| W S A D (driving) | Throttle, brake / reverse, steer; Shift for a little more throttle, Space for the handbrake |
 | M | Mute |
 | Esc | Release the pointer |
 
@@ -86,7 +88,7 @@ jump, ride and mute.
 - People: a jogger, a beach walker on the wet sand, a café worker and a cyclist.
 - Birds: pelicans in a line over the water, gulls that flee when you walk at them, sanderlings
   chasing the surf, grackles on the patios, a frigatebird and cormorants.
-- A beach cruiser to ride and a lifeguard ATV to drive.
+- A beach cruiser to ride, a lifeguard ATV and the 1950s convertible to drive (V8 synthesized live).
 
 ![The waterline: glitter path, breakers and the wrack line](media/03-waterline.jpg)
 

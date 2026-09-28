@@ -1,11 +1,11 @@
-// Vehicle physics shared by the beach cruiser and the lifeguard ATV. Pure maths (no three,
+// Vehicle physics shared by the beach cruiser, the lifeguard ATV and the 1950s convertible. Pure maths (no three,
 // no DOM) so it runs in Node tests: a kinematic bicycle model with tyre slip, per-surface
 // speed caps and rolling resistance, sub-stepped circle-vs-box / circle-vs-circle
 // collisions, wheel contact heights driving pitch / roll / a sprung body, and a hop.
 //
 // Conventions (same as the walker): +x east, -z north; yaw 0 faces north, forward is
 // (-sin yaw, -cos yaw), right is (cos yaw, -sin yaw). Model local: forward = -z, right = +x.
-import { SEA_LEVEL, PARK, SAND, WET_LINE_X, groundHeight, sandHeight } from '../world/layout.js';
+import { SEA_LEVEL, PARK, SAND, WET_LINE_X, groundHeight, sandHeight, crossStreetAt } from '../world/layout.js';
 
 const G = 9.8;
 // seawall accesses (beach.js ACCESS_Z + MORE_ACCESS_Z) and their step profile
@@ -44,6 +44,23 @@ export const SPECS = {
     steerMax: 0.6, steerV: 5, steerRate: 6, grip: { hard: 9, soft: 5 },
     waterK: 0.45, eye: [0, 1.6, 0.3],
     rideH: 0, idle: 1450, redline: 7600,
+  },
+  // the hero convertible: a soft, heavy cruiser. Road and cross streets only: every curb
+  // (sidewalks, the park side, the curb ramps' upper part) stops it
+  car: {
+    kind: 'car',
+    wheelbase: 2.96, track: 1.61, wheelR: 0.36,
+    wheels: [[-0.805, -1.34], [0.805, -1.34], [-0.805, 1.62], [0.805, 1.62]],   // FL FR RL RR
+    circles: [-1.95, -1.3, -0.65, 0, 0.65, 1.3, 1.95].map((z) => [z, 0.93]),
+    maxStep: 0.1, accessStep: 0.1, maxDepth: 0.1, xMin: -Infinity, maxGround: 0.1,
+    // west bound: the hotel patios, except down the cross streets
+    x0At: (z, x0) => (crossStreetAt(z, -0.5) ? -52 : x0),
+    vmax: { pavement: [19.4, 21], grass: [3, 3], wetsand: [3, 3], sand: [3, 3] },
+    roll: { pavement: 0.2, grass: 1, wetsand: 1, sand: 1 },
+    accel: 2.2, accelHard: 2.9, brake: 6.5, handbrake: 4.2, revAccel: 1.6, revMax: 3.4, engineBrake: 0.45,
+    steerMax: 0.46, steerV: 7.5, steerRate: 4, grip: { hard: 6, soft: 6 }, bounce: 0.06,
+    waterK: 0.1, eye: [-0.42, 1.24, 0.24],
+    idle: 620, redline: 4400, ratios: [0, 224, 135, 89],
   },
 };
 
@@ -119,7 +136,7 @@ export function createVehicle(kind, { x, z, yaw = 0 }, world) {
     wheelH: spec.wheels.map(() => 0), groundY: 0,
     bodyY: 0, bodyV: 0, pitch: 0, pitchV: 0, roll: 0, rollV: 0, pitchT: 0, rollT: 0,
     airY: 0, vyAir: 0, grounded: true,
-    crank: 0, wheelRot: 0, pedal: 0, rpm: spec.idle ?? 0, throttle: 0, load: 0,
+    crank: 0, wheelRot: 0, pedal: 0, rpm: spec.idle ?? 0, throttle: 0, load: 0, gear: 1, shiftT: 0, braking: 0, engineOn: kind !== 'car',
     boostT: 0, bump: 0, land: 0, t: 0, parked: true, ridden: false,
     surf: { kind: 'pavement', soft: 0, depth: 0 },
     wheelDepth: spec.wheels.map(() => 0),
@@ -179,12 +196,14 @@ export function blockedAt(v, x, z, yaw, world, airY = 0) {
     const [px, pz] = wheelPoint(v, i, x, z, yaw);
     const lim = (v.kind === 'bike' && nearAccess(pz, 0.3) && px > 10 && px < 13 ? S.accessStep : S.maxStep) + airY;
     if (_h[i] - v.wheelH[i] > lim) return 'step';
+    if (S.maxGround != null && _h[i] > S.maxGround) return 'curb';
     if (SEA_LEVEL - _h[i] > S.maxDepth && _h[i] < v.wheelH[i]) return 'deep';   // (heading back out is fine)
   }
   const gy = v.groundY;
   for (const [lz, r] of S.circles) {
     const cx = x + lz * s, cz = z + lz * c;
-    if (cx - r < Math.max(B.x0, S.xMin) || cx + r > B.x1 || cz - r < B.z0 || cz + r > B.z1) return 'bounds';
+    const x0 = S.x0At ? S.x0At(cz, B.x0) : Math.max(B.x0, S.xMin);
+    if (cx - r < x0 || cx + r > B.x1 || cz - r < B.z0 || cz + r > B.z1) return 'bounds';
     const hit = world.grid.query(cx - r, cz - r, cx + r, cz + r, (q) => {
       if (q.min) {
         if (q.max.y < gy + 0.12 + airY || q.min.y > gy + 1.3) return false;
@@ -196,7 +215,7 @@ export function blockedAt(v, x, z, yaw, world, airY = 0) {
     });
     if (hit) return 'wall';
     for (const q of world.dynamic()) {
-      if (q.owner === v || !(q.r > 0)) continue;
+      if (q.owner === v || !(q.r > 0) || v._inside?.has(q)) continue;
       const rr = r + q.r;
       if ((cx - q.x) ** 2 + (cz - q.z) ** 2 < rr * rr) return 'wall';
     }
@@ -226,6 +245,11 @@ export function stepVehicle(v, input, dt, world) {
     }
   }
   if (v.parked) { v.vx = v.vz = 0; input = { throttle: 0, steer: 0 }; }
+  if (v.kind === 'car') {
+    // no drive before the engine has caught (the brakes work)
+    if (!v.engineOn) input = { ...input, throttle: Math.min(0, input.throttle) };
+    v._inside = overlapping(v, world);
+  }
   const speed = Math.hypot(v.vx, v.vz);
   const n = clamp(Math.ceil(Math.max(speed, 0.5) * dt / 0.08), 1, 12);
   const h = dt / n;
@@ -233,6 +257,20 @@ export function stepVehicle(v, input, dt, world) {
   v.throttle = input.throttle;
   post(v, input, dt, world, hard);
   return v;
+}
+
+// dynamic circles already overlapping the vehicle (someone walked into it, the traffic car
+// drove through it) don't block it, so it can always pull away
+function overlapping(v, world) {
+  let set = null;
+  for (const q of world.dynamic()) {
+    if (q.owner === v || !(q.r > 0)) continue;
+    for (const o of v.circlesWorld) {
+      const rr = o.r + q.r;
+      if ((o.x - q.x) ** 2 + (o.z - q.z) ** 2 < rr * rr) { (set ??= new Set()).add(q); break; }
+    }
+  }
+  return set;
 }
 
 function vmaxFor(v, hard) {
@@ -269,14 +307,20 @@ function substep(v, input, h, world, hard) {
     if (lon > 0.3) a = -S.brake * -thr;
     else a = -S.revAccel * -thr * clamp(1 + lon / S.revMax, -2, 1);
   }
+  // handbrake (car): drags the car down and lets the tail slide
+  const hb = !!input.handbrake && !!S.handbrake;
+  if (hb && Math.abs(lon) > 0.05) a -= Math.sign(lon) * S.handbrake;
+  v.braking = (thr < -0.05 && lon > 0.3) || (thr > 0.05 && lon < -0.3) ? Math.abs(thr) : hb ? 0.7 : 0;
   // gravity along the slope between the wheels (the access steps count as a ramp)
   a -= G * clamp(Math.sin(v.pitchT), -0.1, 0.1) * 0.8;
+  const lon0 = lon;
   lon += a * h;
+  if (hb && lon0 !== 0 && Math.sign(lon) !== Math.sign(lon0)) lon = 0;
   const driving = (thr > 0.05 && lon > 0.3) || (thr < -0.05 && lon < -0.3);
   const res = (driving ? 0 : rollFor(v) + (Math.abs(thr) < 0.05 ? S.engineBrake : 0)) * h;
   lon = Math.sign(lon) * Math.max(0, Math.abs(lon) - res);
   const soft = v.surf.kind === 'sand' ? v.surf.soft : 0;
-  lat *= Math.exp(-h * lerp(S.grip.hard, S.grip.soft, soft));
+  lat *= Math.exp(-h * lerp(S.grip.hard, S.grip.soft, soft) * (hb ? 0.3 : 1));
   // steering: less lock at speed; soft sand makes the bike wander
   const al = Math.abs(lon);
   const lock = S.steerMax / (1 + (al / S.steerV) ** 2);
@@ -295,7 +339,8 @@ function substep(v, input, h, world, hard) {
   else if (!blockedAt(v, v.x, nz, Y, world, air)) { v.bump = Math.max(v.bump, Math.abs(vx)); vx = 0; v.z = nz; }
   else {
     v.bump = Math.max(v.bump, Math.hypot(vx, vz));
-    vx *= -0.25; vz *= -0.25;
+    const k = S.bounce ?? 0.25;
+    vx *= -k; vz *= -k;
     if (!blockedAt(v, v.x, v.z, yaw, world, air)) v.yaw = yaw;
   }
   v.vx = vx; v.vz = vz;
@@ -312,7 +357,7 @@ function post(v, input, dt, world, hard) {
   v.lon = lon;
   const al = Math.abs(lon);
   // body: sprung toward the wheel contacts; past full droop it falls freely
-  const K = v.kind === 'bike' ? 220 : 70, C = 2 * (v.kind === 'bike' ? 0.6 : 0.35) * Math.sqrt(K);
+  const K = v.kind === 'bike' ? 220 : v.kind === 'car' ? 42 : 70, C = 2 * (v.kind === 'bike' ? 0.6 : v.kind === 'car' ? 0.28 : 0.35) * Math.sqrt(K);
   const comp = v.baseT - v.bodyY;
   const wasAir = comp < -0.1;
   const acc = comp > -0.1 ? K * comp - C * v.bodyV : -G;
@@ -322,15 +367,17 @@ function post(v, input, dt, world, hard) {
   if (wasAir && v.baseT - v.bodyY >= -0.1 && v.bodyV < -1) v.land = Math.max(v.land, -v.bodyV);
   // pitch / roll springs (with squat and dive from the acceleration)
   const accel = dLon / dt;
-  const pT = v.pitchT + (v.kind === 'atv' ? clamp(accel, -8, 8) * 0.006 : 0);
-  const Kp = v.kind === 'bike' ? 260 : 90, Cp = 2 * 0.45 * Math.sqrt(Kp);
+  const car = v.kind === 'car';
+  const pT = v.pitchT + (v.kind === 'atv' ? clamp(accel, -8, 8) * 0.006 : car ? clamp(accel, -8, 8) * 0.0065 : 0);
+  const Kp = v.kind === 'bike' ? 260 : car ? 34 : 90, Cp = 2 * (car ? 0.3 : 0.45) * Math.sqrt(Kp);
   v.pitchV += (Kp * (pT - v.pitch) - Cp * v.pitchV) * dt;
   v.pitch += v.pitchV * dt;
-  if (v.kind === 'atv') {
-    // body roll: terrain plus a lean out of the turn
+  if (v.kind === 'atv' || car) {
+    // body roll: terrain plus a lean out of the turn (the convertible wallows on soft springs)
     const turn = -((v.yaw - (v._yaw ?? v.yaw) + Math.PI * 3) % (Math.PI * 2) - Math.PI) / dt;
-    const rT = v.rollT + clamp(lon * turn, -9, 9) * 0.008;
-    v.rollV += (90 * (rT - v.roll) - 2 * 0.4 * Math.sqrt(90) * v.rollV) * dt;
+    const rT = v.rollT + clamp(lon * turn, -9, 9) * (car ? 0.011 : 0.008);
+    const Kr = car ? 30 : 90;
+    v.rollV += (Kr * (rT - v.roll) - 2 * (car ? 0.3 : 0.4) * Math.sqrt(Kr) * v.rollV) * dt;
     v.roll += v.rollV * dt;
     v.turn = turn;
   } else {
@@ -350,6 +397,19 @@ function post(v, input, dt, world, hard) {
     v.pedal += ((pedalling ? 1 : 0) - v.pedal) * (1 - Math.exp(-dt * 8));
     if (pedalling) v.crank += Math.max(lon, 0.6) / (S.wheelR * 2.44) * dt * (hard ? 1.05 : 1);
     v.coasting = !pedalling && lon > 0.4;
+  } else if (car) {
+    // 3-speed automatic: shift points rise with the throttle; a torque converter lets the
+    // revs flare above road speed when pulling away
+    const thr = v.engineOn ? Math.max(0, input.throttle) : 0;
+    const up = [0, lerp(5.5, 9.5, thr), lerp(10.5, 15.5, thr)];
+    v.shiftT = Math.max(0, v.shiftT - dt);
+    if (v.gear < 3 && lon > up[v.gear] && v.shiftT <= 0) { v.gear++; v.shiftT = 0.45; }
+    else if (v.gear > 1 && lon < up[v.gear - 1] - 3 && v.shiftT <= 0) { v.gear--; v.shiftT = 0.3; }
+    if (lon < -0.3) v.gear = 1;
+    const conv = S.idle + thr * (hard ? 1500 : 1150) * clamp(1 - al / 9, 0.2, 1);
+    const target = v.engineOn ? Math.max(al * S.ratios[v.gear] + thr * 380, conv) : 0;
+    v.rpm += (clamp(target, v.engineOn ? S.idle : 0, S.redline) - v.rpm) * (1 - Math.exp(-dt * (v.shiftT > 0.2 ? 10 : 4)));
+    v.load = thr * clamp(1 - al / (vmaxFor(v, hard) + 1), 0.2, 1);
   } else {
     // CVT: revs rise with throttle, then with road speed
     const thr = Math.max(0, input.throttle);
@@ -367,6 +427,15 @@ function post(v, input, dt, world, hard) {
 
 // Where the rider steps off: left side, right side, behind, in front (local offsets)
 export function dismountSpots(v) {
+  if (v.kind === 'car') {
+    // beside the doors on either side, a little further out, then the ends
+    const out = [];
+    for (const [lx, lz] of [[-1.5, 0.1], [1.5, 0.1], [-1.5, -0.5], [1.5, -0.5], [-1.5, 0.8], [1.5, 0.8], [-2.0, 0.1], [2.0, 0.1], [0, 3.4], [0, -3.4]]) {
+      const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
+      out.push([v.x + lx * c + lz * s, v.z - lx * s + lz * c]);
+    }
+    return out;
+  }
   const w = v.kind === 'bike' ? 0.75 : 1.15, l = v.kind === 'bike' ? 1.3 : 1.7;
   const out = [];
   for (const [lx, lz] of [[-w, 0], [w, 0], [-w, 0.5], [w, 0.5], [0, l], [0, -l], [-w - 0.5, 0], [w + 0.5, 0]]) {
