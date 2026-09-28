@@ -140,18 +140,23 @@ function pleatTexture() {
 }
 
 export function blobTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 128;
-  const c = cv.getContext('2d');
-  // darkest right under the body, fading out well inside the quad (road colour at the edges)
-  c.filter = 'blur(9px)';
-  c.fillStyle = 'rgba(0,0,0,0.42)';
-  c.fillRect(38, 20, 52, 88);
-  c.filter = 'blur(5px)';
-  c.fillStyle = 'rgba(0,0,0,0.38)';
-  c.fillRect(46, 30, 36, 68);
-  const t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace;
+  // computed, not canvas-drawn: a blurred canvas uploaded during boot came out empty.
+  // Soft occlusion under the whole body, darkest mid-car, plus a tyre-contact spot at each
+  // corner; everything fades to 0 well inside the quad so no box edge ever shows.
+  const N = 128, px = new Uint8Array(N * N * 4);
+  const box = (d, half, soft) => 1 - THREE.MathUtils.smoothstep(d, half - soft, half + soft);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const u = (i + 0.5) / N - 0.5, v = (j + 0.5) / N - 0.5;
+    const body = 0.66 * box(Math.abs(u), 0.27, 0.12) * box(Math.abs(v), 0.36, 0.1);
+    const du = (Math.abs(u) - 0.345) / 0.075, dv = (Math.abs(v) - 0.26) / 0.085;
+    const tyre = 0.55 * Math.max(0, 1 - Math.hypot(du, dv)) ** 1.5;
+    px[(j * N + i) * 4 + 3] = Math.round(255 * (1 - (1 - body) * (1 - tyre)));
+  }
+  const t = new THREE.DataTexture(px, N, N);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
   return t;
 }
 
