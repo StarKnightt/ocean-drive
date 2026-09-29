@@ -41,10 +41,10 @@ for (const kind of ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crosso
   }
 }
 const hero = await load('public/models/convertible.glb');
-for (const n of ['convertible', 'convertible_L1', 'wheel_FL', 'wheel_RR_L1', 'steering_wheel', 'driver_seat', 'driver_eye', 'speedo_needle', 'driver_hands', 'driver_wrist_L', 'driver_wrist_R', 'driver_legs']) check(!!hero.scene.getObjectByName(n), `convertible node ${n}`);
+for (const n of ['convertible', 'convertible_L1', 'wheel_FL', 'wheel_RR_L1', 'steering_wheel', 'driver_seat', 'driver_eye', 'speedo_needle', 'driver_pelvis', 'grip_L', 'grip_R', 'rear_mirror']) check(!!hero.scene.getObjectByName(n), `convertible node ${n}`);
 const hm = new Set();
 hero.scene.traverse((o) => { if (o.isMesh) hm.add(o.material.name); });
 console.log('convertible materials', [...hm].sort().join(' '));
-for (const m of ['paint', 'paint2', 'chrome', 'screen', 'dial_glass', 'interior', 'vinyl', 'vinyl2', 'carpet', 'tail', 'gauge_speedo', 'gauge_fuel', 'gauge_temp', 'needle', 'skin']) check(hm.has(m), `convertible material ${m}`);
+for (const m of ['paint', 'paint2', 'chrome', 'screen', 'dial_glass', 'interior', 'vinyl', 'vinyl2', 'carpet', 'tail', 'gauge_speedo', 'gauge_fuel', 'gauge_temp', 'needle', 'engine', 'dashtop', 'brushed', 'enamel']) check(hm.has(m), `convertible material ${m}`);
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');
 process.exitCode = failed ? 1 : 0;

@@ -69,6 +69,12 @@ MAT_DEFS = {
     'cloth': dict(color=(0.55, 0.68, 0.8), rough=0.85),
     'cloth2': dict(color=(0.12, 0.15, 0.22), rough=0.9),
     'rubber': dict(color=(0.03, 0.03, 0.03), rough=0.7),
+    # hero cockpit: engine-turned cluster / dash band, padded dash top, satin chrome, the horn
+    # crest's enamel
+    'engine': dict(color=(0.7, 0.71, 0.72), rough=0.3, metal=1.0),
+    'dashtop': dict(color=(0.3, 0.55, 0.5), rough=0.7),
+    'brushed': dict(color=(0.8, 0.81, 0.82), rough=0.18, metal=1.0),
+    'enamel': dict(color=(0.6, 0.05, 0.04), rough=0.15),
 }
 
 

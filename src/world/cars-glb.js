@@ -15,7 +15,8 @@ import {
   CAR_MAX_RADIANCE, shared, blockedBay,
 } from './car.js';
 
-const HERO_PAINT = 0x86cfc1;
+// a soft pastel seafoam (the period's greyed turquoise, not a saturated cyan)
+const HERO_PAINT = 0x8fc6bf;
 const HERO_PAINT2 = 0xf1eee4;   // the two-tone side sweep
 const MOVER_PAINTS = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0];
 const WHEEL_R = 0.36;
@@ -111,12 +112,81 @@ function createProbe(renderer, scene) {
 }
 
 // ---------------------------------------------------------------------------
+// The hero's rear-view mirror while someone drives: the street behind rendered into a small
+// target from the driver's eye mirrored in the glass (a virtual camera behind the mirror
+// looking back through it; the near plane clips the mirror and its housing). Every frame on
+// high, every other frame on medium, none on low (the housing's chrome shows instead).
+const MIRROR = { w: 0.176, h: 0.043, r: 0.012 };
+function rearMirror(renderer, scene, inst) {
+  const anchor = inst.levels[0].getObjectByName('rear_mirror');
+  if (!anchor || QUALITY.tier === 'low') return null;
+  const every = QUALITY.tier === 'high' ? 1 : 2;
+  const rt = new THREE.WebGLRenderTarget(384, 96, { type: THREE.HalfFloatType });
+  const { w, h, r } = MIRROR;
+  const shape = new THREE.Shape();
+  shape.moveTo(-w / 2 + r, -h / 2);
+  shape.lineTo(w / 2 - r, -h / 2); shape.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+  shape.lineTo(w / 2, h / 2 - r); shape.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+  shape.lineTo(-w / 2 + r, h / 2); shape.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+  shape.lineTo(-w / 2, -h / 2 + r); shape.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+  const geo = new THREE.ShapeGeometry(shape, 4);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / w + 0.5, pos.getY(i) / h + 0.5);
+  // (the anchor's local +y is the mirror's normal, -z its up: glTF from Blender's Z / Y)
+  geo.rotateX(-Math.PI / 2).translate(0, 0.0006, 0);
+  rt.texture.wrapS = THREE.RepeatWrapping;
+  rt.texture.repeat.x = -1;
+  rt.texture.offset.x = 1;
+  const face = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: rt.texture, color: 0xcfd4d4, fog: false }));
+  face.visible = false;
+  face.castShadow = false;
+  anchor.add(face);
+  const cam = new THREE.PerspectiveCamera(10, w / h, 0.5, 600);
+  const E = new THREE.Vector3(), P = new THREE.Vector3(), N = new THREE.Vector3(), up = new THREE.Vector3();
+  let frame = 0;
+  return {
+    face,
+    update(camera, on) {
+      face.visible = on;
+      if (!on || frame++ % every) return;
+      camera.getWorldPosition(E);
+      anchor.getWorldPosition(P);
+      N.set(0, 1, 0).transformDirection(anchor.matrixWorld);
+      // the eye mirrored through the glass plane, looking back through the mirror
+      const k = 2 * E.clone().sub(P).dot(N);
+      cam.position.copy(E).addScaledVector(N, -k);
+      cam.up.copy(up.set(0, 1, 0).transformDirection(inst.car.matrixWorld));
+      cam.lookAt(P);
+      const dist = cam.position.distanceTo(P);
+      cam.near = dist + 0.03;
+      cam.fov = THREE.MathUtils.radToDeg(2 * Math.atan((h / 2 + 0.003) / dist));
+      cam.updateProjectionMatrix();
+      const target = renderer.getRenderTarget(), shadowUpdate = renderer.shadowMap.needsUpdate;
+      renderer.shadowMap.needsUpdate = false;
+      face.visible = false;
+      renderer.setRenderTarget(rt);
+      renderer.clear();
+      renderer.render(scene, cam);
+      renderer.setRenderTarget(target);
+      renderer.shadowMap.needsUpdate = shadowUpdate;
+      face.visible = true;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // runtime materials by the Blender material name
-function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under = null, ior = 1.5, envI = 1.0 }) {
+function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under = null, ior = 1.5, envI = 1.0, rough = 0.015, inside = null }) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.015, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: envI, ior,
-    clearcoat: 1, clearcoatRoughness: 0.015, depthWrite: false, side: THREE.DoubleSide,
+    color, roughness: rough, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: envI, ior,
+    clearcoat: 1, clearcoatRoughness: Math.max(0.015, rough), depthWrite: false, side: THREE.DoubleSide,
   });
+  // inside: { edge, dash } for the hero's screen seen from the driver's seat (uInside = 1):
+  // a stronger edge tint, and the sunlit dash top faintly mirrored in the lower glass. From
+  // outside the grazing edge stays light so the cockpit reads through the wraparound corners
+  const uInside = { value: 0 };
+  m.userData.uInside = uInside;
+  m.userData.uBaseY = { value: 0 };
   // premultiplied output: the tint (diffuse) is weighted by the opacity, the reflections are
   // not, so even clear glass carries the sky and the facades like real glass does
   m.blending = THREE.CustomBlending;
@@ -135,11 +205,23 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under 
         low
           ? `return mix(${lowGlsl}, min(envMapColor.rgb, vec3(2.2)), smoothstep(-0.03, 0.03, reflectVec.y)) * envMapIntensity;`
           : 'return min(envMapColor.rgb, vec3(2.2)) * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+    const edgeExpr = inside ? `mix(${edge.toFixed(2)}, ${inside.edge.toFixed(2)}, uInside)` : edge.toFixed(2);
+    if (inside) {
+      // (height above the car's base: the GLB's positions are quantised, so not position.y)
+      s.uniforms.uInside = uInside;
+      s.uniforms.uBaseY = m.userData.uBaseY;
+      s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying float vObjY;\nuniform float uBaseY;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvObjY = (modelMatrix * vec4(transformed, 1.0)).y - uBaseY;');
+      s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vObjY;\nuniform float uInside;');
+    }
+    const d = inside ? new THREE.Color(inside.dash) : null;
     s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
       `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
-         diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)});
+         diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edgeExpr});
          ${tint ? `outgoingLight = mix(outgoingLight, outgoingLight * vec3(${tint.r.toFixed(3)}, ${tint.g.toFixed(3)}, ${tint.b.toFixed(3)}), fr);` : ''}
-         outgoingLight = totalDiffuse * diffuseColor.a + max(outgoingLight - totalDiffuse, vec3(0.0)) * (0.35 + 0.65 * diffuseColor.a); }
+         outgoingLight = totalDiffuse * diffuseColor.a + max(outgoingLight - totalDiffuse, vec3(0.0)) * (0.35 + 0.65 * diffuseColor.a);
+         ${d ? `outgoingLight += uInside * vec3(${d.r.toFixed(3)}, ${d.g.toFixed(3)}, ${d.b.toFixed(3)}) * (1.0 - smoothstep(0.93, 1.16, vObjY));
+         diffuseColor.a = max(diffuseColor.a, uInside * 0.1 * (1.0 - smoothstep(0.93, 1.16, vObjY)));` : ''} }
        outgoingLight = min(outgoingLight, vec3(${CAR_MAX_RADIANCE.toFixed(2)}));
 #include <opaque_fragment>`);
   };
@@ -198,13 +280,47 @@ function dialTexture(kind) {
 
 // clearcoat over a rougher base: the base's specular is kept low so the sun's highlight is
 // the coat's small hard spot, and the output is capped under the bloom threshold
-function paintMaterial(env, color, key) {
+// lacquer: the hero's period paint gets a softer coat (reflections that follow the panels
+// without mirroring like its chrome)
+const LACQUER = { ccr: 0.1, envI: 0.62, coat: 1.25 };
+function paintMaterial(env, color, key, o = null) {
+  const { ccr = 0.05, envI = 1.0, coat = 2.6 } = o ?? {};
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.45, metalness: 0.0, specularIntensity: 0.18, clearcoat: 1, clearcoatRoughness: 0.05,
-    envMap: env, envMapIntensity: 1.0,
+    color, roughness: 0.45, metalness: 0.0, specularIntensity: 0.18, clearcoat: 1, clearcoatRoughness: ccr,
+    envMap: env, envMapIntensity: envI,
   });
-  groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4, 2.6);
+  groundReflect(m, 'glb-paint-' + key, CAR_MAX_RADIANCE, 1.4, coat);
   return m;
+}
+
+// engine-turned metal: rows of overlapping swirled discs (a tile of 4 x 4)
+function engineTexture() {
+  const N = 256, S = N / 4;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#b9bdc1';
+  g.fillRect(0, 0, N, N);
+  for (let row = -1; row <= 4; row++) for (let col = -1; col <= 4; col++) {
+    const x = (col + 0.5 + (row % 2 ? 0.5 : 0)) * S, y = (row + 0.5) * S * 0.9;
+    for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) {
+      const cx = x + dx, cy = y + dy;
+      if (cx < -S || cx > N + S || cy < -S || cy > N + S) continue;
+      const cg = g.createConicGradient(0.6, cx, cy);
+      cg.addColorStop(0, '#f6f7f8'); cg.addColorStop(0.25, '#9a9ea3'); cg.addColorStop(0.5, '#eceef0');
+      cg.addColorStop(0.75, '#8e9297'); cg.addColorStop(1, '#f6f7f8');
+      g.fillStyle = cg;
+      g.beginPath(); g.arc(cx, cy, S * 0.62, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(40,42,45,0.35)'; g.lineWidth = 1.2; g.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  // (the cockpit UVs are in metres: a disc every ~16 mm)
+  t.repeat.set(15, 15);
+  t.anisotropy = 8;
+  return t;
 }
 
 function makeMaterials(env, sky, vinylNor, carpetNor) {
@@ -219,16 +335,22 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
   groundReflect(chrome, 'glb-chrome', CAR_MAX_RADIANCE, 2.1);
   const alloy = std({ color: 0xb9bdc1, metalness: 1, roughness: 0.24, envMap: env, envMapIntensity: 1.0 });
   groundReflect(alloy, 'glb-alloy', CAR_MAX_RADIANCE, 1.6);
+  // satin chrome (horn cap, pedal and wiper arms): reflections broken up
+  const brushed = std({ color: 0xe4e6e8, metalness: 1, roughness: 0.2, envMap: env, envMapIntensity: 1.0 });
+  groundReflect(brushed, 'glb-brushed', CAR_MAX_RADIANCE, 1.9);
+  const engine = std({ color: 0xffffff, map: engineTexture(), metalness: 0.45, roughness: 0.32, envMap: env, envMapIntensity: 1.1 });
+  groundReflect(engine, 'glb-engine', CAR_MAX_RADIANCE, 1.9);
   for (const t of [vinylNor, carpetNor]) {
     if (!t) continue;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = 4;
   }
   if (carpetNor) carpetNor.repeat.set(3, 3);
+  // soft upholstery vinyl: a matte grain with only a faint sheen
   const vinyl = (color) => {
     const m = new THREE.MeshPhysicalMaterial({
-      color, roughness: 0.36, clearcoat: 0.35, clearcoatRoughness: 0.25, envMap: env, envMapIntensity: 0.8,
-      ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.5, 0.5) } : {}),
+      color, roughness: 0.6, clearcoat: 0.1, clearcoatRoughness: 0.45, envMap: env, envMapIntensity: 0.55,
+      ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.35, 0.35) } : {}),
     });
     clampRadiance(m, 'glb-vinyl');
     return m;
@@ -243,18 +365,25 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     glass: glassMaterial(env, { color: 0xe4f2ec, opacity: 0.12, edge: 0.95, key: 'clear', edgeTint: 0x9fd8bf }),
     // the hero's wraparound screen: a green-tinted pane that carries the sky, the facades
     // and (from the seat) the painted dash top, going to a green mirror at grazing angles
-    screen: glassMaterial(env, { color: 0xa9d2bd, opacity: 0.24, edge: 0.65, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.95, envI: 1.3 }),
+    screen: glassMaterial(env, {
+      color: 0xa9d2bd, opacity: 0.2, edge: 0.32, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.7, envI: 1.1,
+      inside: { edge: 0.8, dash: 0x2e4a44 },
+    }),
     // the dial lenses: a faint glint, the printed faces must read through them
-    dial_glass: glassMaterial(env, { color: 0xf2f6f4, opacity: 0.04, edge: 0.3, key: 'dial', envI: 0.35 }),
+    dial_glass: glassMaterial(env, { color: 0xf2f6f4, opacity: 0.025, edge: 0.15, key: 'dial', envI: 0.1, rough: 0.14 }),
     gauge_speedo: std({ map: dialTexture('speedo'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_fuel: std({ map: dialTexture('fuel'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_temp: std({ map: dialTexture('temp'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     needle: coat({ color: 0xd8471a, roughness: 0.3, emissive: 0x3a0e02 }, 'needle'),
     // (a faint warm emissive stands in for light scattering through skin in the shade)
-    skin: std({ color: 0xe8b797, roughness: 0.5, emissive: 0x3a1c10, envMapIntensity: 0.7 }, 'figure', true),
-    cloth: std({ color: 0x9dbdd6, roughness: 0.9, envMapIntensity: 0.6 }, 'figure', true),
+    skin: std({ color: 0xdcae93, roughness: 0.55, emissive: 0x1f1009, envMap: env, envMapIntensity: 0.55 }, 'figure', true),
+    cloth: std({ color: 0xe6e0d2, roughness: 0.92, emissive: 0x0d0c0a, envMap: env, envMapIntensity: 0.6 }, 'figure', true),
     cloth2: std({ color: 0xa8926a, roughness: 0.92, envMapIntensity: 0.6 }, 'figure', true),
-    rubber: std({ color: 0x141414, roughness: 0.7, envMapIntensity: 0.5 }, 'figure', true),
+    rubber: std({ color: 0x1e1e1e, roughness: 0.72, envMapIntensity: 0.6 }, 'figure', true),
+    engine, brushed,
+    enamel: coat({ color: 0x9b1a17, roughness: 0.2, clearcoatRoughness: 0.05, envMapIntensity: 0.8 }, 'enamel'),
+    // padded dash top: matte grained vinyl a shade deeper than the paint
+    dashtop: std({ color: 0x6b9f93, roughness: 0.75, envMapIntensity: 0.6, ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.3, 0.3) } : {}) }, 'dashtop', true),
     tint: glassMaterial(env, { color: 0x1c2428, opacity: 0.42, edge: 0.97, key: 'tint' }),
     tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.8, envMapIntensity: 0.5 }, 'tyre', true),
     trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
@@ -263,7 +392,8 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     vinyl: vinyl(0xf3ecdc),
     vinyl2: vinyl(0x7fc4b4),
     canvas: std({ color: 0xd8d0bb, roughness: 0.92, envMapIntensity: 0.9, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(0.45, 0.45) } : {}) }),
-    carpet: std({ color: 0x35504c, roughness: 1, envMapIntensity: 1.0, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(1.4, 1.4) } : {}) }),
+    // (light enough to read in the shaded footwells; a little emissive for the bounce light)
+    carpet: std({ color: 0x5f7a74, roughness: 1, envMap: env, envMapIntensity: 0.95, emissive: 0x08100e, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(1.3, 1.3) } : {}) }, 'carpet', true),
     ivory: coat({ color: 0xf1e9d6, roughness: 0.22, clearcoat: 0.6, envMapIntensity: 1.0 }, 'ivory'),
     lens: coat({ color: 0xdfe6ea, metalness: 0.9, roughness: 0.06, envMapIntensity: 1.0 }, 'lens'),
     amber: coat({ color: 0xd98a2e, roughness: 0.18, emissive: 0x2a1200 }, 'amber'),
@@ -338,43 +468,20 @@ function heroInstance(gltf, paint, paint2, M) {
   levels[1].visible = false;
   g.add(blobMesh(2.35, 6.1));
   const L0 = levels[0];
-  const needle = L0.getObjectByName('speedo_needle'), hands = L0.getObjectByName('driver_hands');
-  for (const o of [needle, hands]) if (o) o.userData.q0 = o.quaternion.clone();
-  // arms: shoulder fixed by the seat back, wrist anchor on the hands (which turn with the
-  // rim), the elbow solved between them (two-bone IK, bending outward and down). Upper arm
-  // in a short shirt sleeve, a shaped forearm (muscle near the elbow, flat oval wrist).
-  // Both built along +z over a unit length and stretched to the bone each frame
-  const arms = [];
-  if (hands && M.skin) {
-    const fore = limbGeo([[-0.04, 0.012, 0.011], [-0.022, 0.031, 0.028], [0, 0.038, 0.034], [0.14, 0.043, 0.037], [0.34, 0.041, 0.033],
-      [0.58, 0.036, 0.027], [0.82, 0.032, 0.023], [1.0, 0.03, 0.021], [1.04, 0.022, 0.015]]);
-    const upper = limbGeo([[0, 0.044, 0.044], [0.5, 0.042, 0.04], [1.0, 0.038, 0.036], [1.06, 0.02, 0.02]]);
-    const sleeve = limbGeo([[-0.12, 0.0, 0.0], [-0.09, 0.045, 0.045], [-0.04, 0.06, 0.058], [0.3, 0.059, 0.055], [0.6, 0.061, 0.056],
-      [0.62, 0.063, 0.058], [0.635, 0.056, 0.052], [0.64, 0.043, 0.041]]);
-    for (const [side, sx, out] of [['L', 0.63, 1], ['R', 0.21, -1]]) {
-      const wrist = hands.getObjectByName('driver_wrist_' + side);
-      if (!wrist) continue;
-      const up = new THREE.Group(), fa = new THREE.Group();
-      up.add(new THREE.Mesh(upper, M.skin), new THREE.Mesh(sleeve, M.cloth));
-      fa.add(new THREE.Mesh(fore, M.skin));
-      for (const o of [up, fa]) o.matrixAutoUpdate = false;
-      const th = out * Math.PI / 3;
-      const arm = new THREE.Group();
-      arm.add(up, fa);
-      // (the hands' rim tangent at the grip, glTF axes: the wrist's wide side)
-      arm.userData = { wrist, up, fa, shoulder: new THREE.Vector3(sx, 0.98, -0.33), pole: new THREE.Vector3(out * 0.7, -1, -0.1).normalize(), tan: new THREE.Vector3(Math.cos(th), 0, Math.sin(th)) };
-      L0.add(arm);
-      arms.push(arm);
-    }
-  }
-  // the driver (hands on the wheel, forearms, legs) only while someone drives
-  const driver = [hands, L0.getObjectByName('driver_legs'), ...arms].filter(Boolean);
-  for (const o of driver) o.visible = false;
+  const needle = L0.getObjectByName('speedo_needle');
+  if (needle) needle.userData.q0 = needle.quaternion.clone();
+  // driver body hook (attachDriver): a skinned character hangs from the pelvis anchor, its
+  // hands IK'd to the rim targets on the LOD0 wheel (they turn with it). None until attached
+  const driverRig = {
+    pelvis: L0.getObjectByName('driver_pelvis'), eye: L0.getObjectByName('driver_eye'),
+    gripL: L0.getObjectByName('grip_L'), gripR: L0.getObjectByName('grip_R'),
+    body: null, update: null,
+  };
   g.userData = {
     levels, wheels, steering,
     seatAnchor: L0.getObjectByName('driver_seat'), eyeAnchor: L0.getObjectByName('driver_eye'),
   };
-  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R, needle, hands, driver, arms };
+  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R, needle, driverRig };
 }
 
 function setLevel(inst, k) {
@@ -392,7 +499,6 @@ function setLevel(inst, k) {
 // Front wheels steer with Ackermann geometry; the steering wheel turns 2.5 turns lock to lock.
 const _qs = new THREE.Quaternion(), _ax = new THREE.Vector3(0, 1, 0);
 const FLIP_Y = new THREE.Quaternion().setFromAxisAngle(_ax, Math.PI);
-const HANDS_MAX = 1.15;   // rad the hands follow the rim before they slide round it
 function poseHero(inst, v) {
   const S = v.spec, g = inst.car;
   g.position.set(v.x, v.baseT, v.z);
@@ -409,7 +515,6 @@ function poseHero(inst, v) {
     -(v.pitch - v.pitchT) + vib(0.0007 * idle + 0.0011 * road, 23, 37, 1.1) - seam * 0.6,
     0,
     -(v.roll - v.rollT) + vib(0.0005 * idle + 0.0009 * road, 29, 53, 2.3));
-  for (const o of inst.driver) o.visible = !!v.ridden;
   // speedometer: the needle sweeps SPEEDO_SWEEP clockwise from 0 mph
   if (inst.needle) {
     const mph = Math.min(SPEEDO_SWEEP.max, Math.abs(v.lon) * 2.237);
@@ -436,55 +541,14 @@ function poseHero(inst, v) {
     const st = inst.steering[k];
     if (st?.userData.q0) st.quaternion.copy(st.userData.q0).multiply(_qs.setFromAxisAngle(_ax, steerWheelAngle(v)));
   }
-  if (inst.hands) {
-    const a = THREE.MathUtils.clamp(steerWheelAngle(v), -HANDS_MAX, HANDS_MAX);
-    inst.hands.quaternion.copy(inst.hands.userData.q0).multiply(_qs.setFromAxisAngle(_ax, a));
-    if (v.ridden) {
-      inst.hands.updateMatrix();
-      for (const arm of inst.arms) {
-        const { wrist, up, fa, shoulder, pole, tan } = arm.userData;
-        _w.copy(wrist.position).applyMatrix4(inst.hands.matrix);
-        // two-bone IK: the elbow on the circle of solutions, toward the pole
-        _d.subVectors(_w, shoulder);
-        const d = Math.min(_d.length(), ARM_U + ARM_F - 1e-4);
-        _d.normalize();
-        const a = (ARM_U * ARM_U - ARM_F * ARM_F + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, ARM_U * ARM_U - a * a));
-        _p.copy(pole).addScaledVector(_d, -pole.dot(_d)).normalize();
-        _e.copy(shoulder).addScaledVector(_d, a).addScaledVector(_p, hgt);
-        bone(up.matrix, shoulder, _e, _y.set(0, 1, 0));
-        // (the forearm's wide side turns into the rim tangent at the wrist)
-        bone(fa.matrix, _e, _w, _y.copy(tan).transformDirection(inst.hands.matrix).cross(_d.subVectors(_w, _e).normalize()));
-      }
+  const rig = inst.driverRig;
+  if (rig?.body) {
+    rig.body.visible = !!v.ridden;
+    if (v.ridden && rig.update) {
+      inst.car.updateMatrixWorld(true);
+      rig.update(rig, v);
     }
   }
-}
-const ARM_U = 0.3, ARM_F = 0.27;
-const _w = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _e = new THREE.Vector3(), _y = new THREE.Vector3();
-const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3();
-// a limb built along +z over a unit length, from a to b; its local +y turned toward upHint
-function bone(m, a, b, upHint) {
-  _bz.subVectors(b, a);
-  const len = _bz.length();
-  _bz.divideScalar(len);
-  _bx.crossVectors(upHint, _bz);
-  if (_bx.lengthSq() < 1e-8) _bx.set(1, 0, 0);
-  _bx.normalize();
-  _by.crossVectors(_bz, _bx);
-  m.makeBasis(_bx, _by, _bz.multiplyScalar(len)).setPosition(a);
-}
-// tube along +z: prof = [[z, rx, ry], ...] rings of elliptical section (rx across, ry up)
-function limbGeo(prof, n = 18) {
-  const pos = [], idx = [];
-  for (const [z, rx, ry] of prof) for (let j = 0; j < n; j++) { const a = (j / n) * Math.PI * 2; pos.push(Math.cos(a) * rx, Math.sin(a) * ry, z); }
-  for (let i = 0; i < prof.length - 1; i++) for (let j = 0; j < n; j++) {
-    const a = i * n + j, b = i * n + (j + 1) % n;
-    idx.push(a, b, a + n, b, b + n, a + n);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
 }
 // 2.5 turns lock to lock: +-450 deg at the full steering lock
 export const steerWheelAngle = (v) => (v.steer / v.spec.steerMax) * 1.25 * 2 * Math.PI;
@@ -772,7 +836,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
       probe.hide.push(root);
       return { root, levels, wheels, wheelR: WHEEL_RADII[kind] ?? 0.34, len: lens[kind] };
     },
-    paint: (color) => paintMaterial(env, color, 'hero'),   // (the hero's program: nothing new to compile)
+    paint: (color) => paintMaterial(env, color, 'fleet'),   // (the fleet's program: nothing new to compile)
     tail: () => M.makeTail(),
     setLevel,
   };
@@ -788,11 +852,12 @@ export async function buildCarsGlb(scene, renderer) {
   probe.z = null;
   const env = probe.texture;
   const M = makeMaterials(env, scene.environment, vinylNor, carpetNor);
-  const paint2 = paintMaterial(env, HERO_PAINT2, 'hero2');
+  const paint2 = paintMaterial(env, HERO_PAINT2, 'hero2', LACQUER);
   // hero: parked at the west curb, facing south (the direction of the west lane), top down
-  const hero = heroInstance(heroGltf, paintMaterial(env, HERO_PAINT, 'hero'), paint2, M);
+  const hero = heroInstance(heroGltf, paintMaterial(env, HERO_PAINT, 'hero', LACQUER), paint2, M);
   seat(hero.car, CAR.x, CAR.z, 0);
   scene.add(hero.car);
+  const mirror = rearMirror(renderer, scene, hero);
   // (hero: the drivable car replaces this box with its own moving circles)
   const colliders = [{ min: { x: CAR.x - 1.0, y: 0, z: CAR.z - 2.9 }, max: { x: CAR.x + 1.0, y: 1.2, z: CAR.z + 2.9 }, hero: true }];
   const fleet = parkedGltf ? buildFleet(scene, parkedGltf, M) : null;
@@ -800,7 +865,7 @@ export async function buildCarsGlb(scene, renderer) {
   // classic copies for the traffic (world/traffic.js): no shadow casting (a contact blob),
   // each with its own tail-lamp material so its brake lights are its own
   const pool = MOVER_PAINTS.map((c, i) => {
-    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i), paint2, M);
+    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i, LACQUER), paint2, M);
     const tail = M.makeTail();
     m.car.traverse((o) => { if (o.isMesh) { o.castShadow = false; if (o.material === M.tail) o.material = tail; } });
     m.car.visible = false;
@@ -811,22 +876,42 @@ export async function buildCarsGlb(scene, renderer) {
   probe.hide.push(hero.car, ...pool.map((m) => m.car));
   if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
+  let heroDriven = false;
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
     traffic: trafficKit(scene, parkedGltf, M, env, pool, probe),
     // the drivable hero (vehicles/index.js): start pose in sim terms, pose from the sim, eye
     drive: {
       pose: { x: CAR.x, z: CAR.z, yaw: Math.PI },
-      apply: (v) => poseHero(hero, v),
+      apply: (v) => { heroDriven = !!v.ridden; poseHero(hero, v); },
       eye: (out) => hero.car.userData.eyeAnchor.getWorldPosition(out),
       // the eye's frame is the sprung body's (squat, dive, roll and shake move the view
       // against the horizon); the model's nose is +z, a camera looks down -z
       eyeQuat: (out) => hero.car.userData.eyeAnchor.getWorldQuaternion(out).multiply(FLIP_Y),
       root: hero.car,
+      // Seat a skinned driver (e.g. a Mixamo character) in the hero: `body` is parented to
+      // the `driver_pelvis` anchor (glTF axes: +z toward the nose, +x the car's left, +y up)
+      // and shown only while someone drives. `update(rig, v)` runs after each pose with the
+      // car's world matrices current: IK the hands to rig.gripL / rig.gripR (empties on the
+      // rim at ten and two that turn with the wheel), aim the head at rig.eye, etc.
+      // Returns a detach function.
+      attachDriver(body, { update = null } = {}) {
+        const rig = hero.driverRig;
+        if (!rig.pelvis) return () => {};
+        rig.pelvis.add(body);
+        rig.body = body;
+        rig.update = update;
+        body.visible = heroDriven;
+        return () => { rig.pelvis.remove(body); rig.body = rig.update = null; };
+      },
     },
     update(dt, cars, camera) {
       if (!camera) return;
       probe.follow(camera.position);
+      const inside = heroDriven;
+      M.screen.userData.uInside.value = inside ? 1 : 0;
+      M.screen.userData.uBaseY.value = hero.car.position.y;
+      mirror?.update(camera, inside);
       for (const m of all) {
         if (!m.car.visible) continue;
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);
