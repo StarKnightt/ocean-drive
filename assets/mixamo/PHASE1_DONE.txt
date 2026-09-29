@@ -1,0 +1,9 @@
+PHASE 1 COMPLETE — 2026-09-29 ~18:35 IST
+
+6 characters (FBX Binary, with skin, T-pose) in <slug>/<slug>_tpose.fbx:
+  sophie, elizabeth, megan (women); remy, bryce, lewis (men)
+47 animations (no skin, 30 fps, no keyframe reduction) in animations/*.fbx
+  - reference skeleton: Bryce (male clips), Sophie (female clips); all share the mixamorig skeleton
+  - locomotion loops are exported in place; start/stop/turn clips have no in-place option on Mixamo, so they keep root motion
+0 failures. Mixamo has no roller- or ice-skating clips (see MANIFEST.md notes).
+See MANIFEST.md for the per-file list. Raw .fbx files are git-ignored (assets/mixamo/**/*.fbx).

@@ -14,7 +14,9 @@ import { EYE_HEIGHT, CURB_HEIGHT, SAND, WET_LINE_X, TOWERS, HOTEL, DISTRICT } fr
 import { updateLod } from './world/lod.js'; // DISTRICT: per-block distance culling
 import { createAudio } from './audio/index.js'; // SOUND agent: synthesized spatial audio
 import { createBirds } from './world/birds.js'; // BIRDS: pelicans, gulls, sanderlings, grackles
-import { buildPeople } from './world/people.js'; // PEOPLE: jogger, beach walker, cafe worker, cyclist
+import { buildPeople } from './world/people.js'; // PEOPLE fallback: the procedural figures (?people=procedural)
+import { preloadPeople } from './world/mixamo.js'; // PEOPLE: Mixamo characters, clip library, skates
+import { buildCrowd } from './world/crowd.js'; // PEOPLE: walkers, joggers, skaters, sitters, drivers
 import { QUALITY, IS_TOUCH } from './quality.js';
 import { createTouchControls } from './player/touch.js';
 import { createVehicles } from './vehicles/index.js';
@@ -104,6 +106,7 @@ let shadowWanted = true, shadowAt = -Infinity;
 const requestShadow = () => { shadowWanted = true; };
 
 preloadCars();   // the car models download while the world builds
+const peopleLoad = params.get('people') === 'procedural' ? Promise.resolve(null) : preloadPeople();   // and the people
 await loadStep(0.1, 'Raising the sun…'); // LOADER
 const sky = await createSky(renderer, scene, { requestShadow });
 bootMark('sky');
@@ -160,12 +163,16 @@ audio.setGullSource?.((L) => birds.gullSource(L)); // BIRDS: gull calls come fro
 birds.onFlutter = (p) => audio.wingFlutter?.(p);   // BIRDS: wingbeats of a gull taking off nearby
 audio.setAutoSteps(false);   // the walker drives the footsteps
 
-// --- PEOPLE hook: a few procedural passers-by; their circle colliders move with them ---
+// --- PEOPLE hook: Mixamo passers-by (the procedural figures if the models don't load);
+// their circle colliders move with them ---
 await nextFrame();
-const people = buildPeople(scene, {
-  beach, hotels, walker: controls, shot: SHOT, mode: params.get('people'),
-  getCars: () => traffic.cars,   // the cyclist waits for a clear road
-});
+const peopleAssets = await peopleLoad;
+const people = peopleAssets
+  ? buildCrowd(scene, peopleAssets, { beach, hotels, walker: controls, shot: SHOT, mode: params.get('people'), getCars: () => traffic.cars })
+  : buildPeople(scene, {
+    beach, hotels, walker: controls, shot: SHOT, mode: params.get('people'),
+    getCars: () => traffic.cars,   // the cyclist waits for a clear road
+  });
 walkWorld.circles.push(...people.colliders, ...traffic.colliders);
 window.__people = people;
 
@@ -181,13 +188,16 @@ const vehicles = createVehicles(scene, {
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
+people.setVehicles?.(vehicles);          // people step round the player's bike / ATV / car
+people.attachDrivers?.(traffic, cars);   // seated drivers in the traffic, the player's body at the wheel
 
 // TRAFFIC inputs: pedestrians (who have right of way on the crosswalks) and obstacles in
 // the lanes (the player on foot, every ride vehicle, the cyclist)
 function trafficPeds() {
   const out = [];
   if (!vehicles.riding) out.push({ x: controls.pos.x, z: controls.pos.y });
-  for (const p of Object.values(people.people ?? {})) if (p.visible && p.name !== 'cyclist') out.push({ x: p.x, z: p.z });
+  if (people.peds) out.push(...people.peds());
+  else for (const p of Object.values(people.people ?? {})) if (p.visible && p.name !== 'cyclist') out.push({ x: p.x, z: p.z });
   return out;
 }
 function trafficObstacles() {

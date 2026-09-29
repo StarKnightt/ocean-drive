@@ -816,7 +816,7 @@ let FORCE = false;
 const blocksCrossing = (x, z) => inCrossing(x, z) ||
   (inLeg(z) && (Math.abs(x - SIDEWALK_W.x1) < 1.6 || Math.abs(x - SIDEWALK_E.x0) < 1.6));
 function place(list, g, x, y, z, rotY = 0, col) {
-  if (!FORCE && blocksCrossing(x, z)) return;
+  if (!FORCE && blocksCrossing(x, z)) return false;
   const c = g.clone().rotateY(rotY).translate(x, y, z);
   list.push(c);
   if (typeof col === 'number') STREET_COLLIDERS.push({ x, z, r: col });
@@ -825,7 +825,11 @@ function place(list, g, x, y, z, rotY = 0, col) {
     const b = c.boundingBox;
     STREET_COLLIDERS.push({ min: { x: b.min.x, y: b.min.y, z: b.min.z }, max: { x: b.max.x, y: b.max.y, z: b.max.z } });
   }
+  return true;
 }
+// park benches (people.js seats people on them): x, z of the centre, yaw (faces +x at 0),
+// seat top height
+export const BENCHES = [];
 
 function furniture() {
   const rnd = mulberry32(111);
@@ -864,7 +868,8 @@ function furniture() {
   for (let z = -150; z <= 150; z += 9 + rnd() * 22) {
     const x = promenadeX(z) + 2.8 + rnd() * 1.4;
     if (palmNear(x, z, 1.8) || x > PARK.x1 - 1 || rnd() < 0.2) continue;
-    place(L, bench, x, H, z, (rnd() - 0.5) * 0.2, 'box');
+    const rot = (rnd() - 0.5) * 0.2;
+    if (place(L, bench, x, H, z, rot, 'box')) BENCHES.push({ x, z, rot, seatY: H + 0.4575 });
   }
   // storm drains at both curbs, manholes in the lanes
   for (let z = -280; z <= 280; z += 45) {
@@ -932,7 +937,8 @@ function districtFurniture(mat, G) {
     for (let z = 155 + rnd() * 10; z <= 340; z += 9 + rnd() * 22) {
       const x = promenadeX(s * z) + 2.8 + rnd() * 1.4;
       if (G.palmNear(x, s * z, 1.8) || x > PARK.x1 - 1 || rnd() < 0.2) continue;
-      place(L, G.bench, x, H, s * z, (rnd() - 0.5) * 0.2, 'box');
+      const rot = (rnd() - 0.5) * 0.2;
+      if (place(L, G.bench, x, H, s * z, rot, 'box')) BENCHES.push({ x, z: s * z, rot, seatY: H + 0.4575 });
     }
     [160, 232, 268, 330].forEach((z, i) => place(L, G.hyd, i % 2 ? px - 0.15 : hx + 0.15, H, s * z, 0, 0.2));
   }

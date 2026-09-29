@@ -648,13 +648,13 @@ const GROUND_GLSL = /* glsl */ `
 `;
 
 // Projected sun shadow for one figure (same skeleton, same geometry).
-const SH_SHARED = {
+export const SH_SHARED = {
   uSun: { value: SUN_DIR.clone() },
   uInvProj: { value: new THREE.Matrix4() },
   uProj: { value: new THREE.Matrix4() },
   uViewport: { value: new THREE.Vector4(0, 0, 1, 1) },
 };
-function shadowMaterial(per) {
+export function shadowMaterial(per) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
   m.fog = false;
   m.transparent = true;

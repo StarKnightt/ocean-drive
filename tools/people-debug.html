@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- The Mixamo people in isolation: every character playing one clip.
+     http://localhost:5173/tools/people-debug.html?clip=walk_casual_m&t=0.3&view=front|side|q34|close&skate=1&tint=1&lod=0|1
+     (window.__ready, window.__info) -->
+<html><head><meta charset="utf-8"><base href="/"><style>html,body{margin:0;background:#8a96a0;overflow:hidden}
+.l{position:fixed;color:#fff;font:12px system-ui;text-shadow:0 1px 2px #000;transform:translate(-50%,0)}</style></head>
+<body><script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { preloadPeople, createPerson, attachSkates, bakeSkateClip, SKATE_LIFT } from '/src/world/mixamo.js';
+const q = new URLSearchParams(location.search);
+const clipName = q.get('clip') || 'walk_casual_m';
+const view = q.get('view') || 'front';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.6;
+const sun = new THREE.DirectionalLight(0xfff0dd, 2.2); sun.position.set(6, 5, 8); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x77736c }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const A = await preloadPeople();
+const names = (q.get('chars') || Object.keys(A.chars).join(',')).split(',').filter((n) => A.chars[n]);
+const TINTS = [[[0.8, 0.25, 0.3, 1], [0.15, 0.2, 0.35, 1], [0.9, 0.9, 0.88, 1]], [[0.2, 0.55, 0.6, 1], [0.85, 0.8, 0.7, 1], [0.3, 0.3, 0.32, 1]]];
+const info = { clip: clipName, chars: {} };
+const people = [];
+names.forEach((n, i) => {
+  const P = createPerson(A.chars[n], { tints: q.has('tint') ? TINTS[i % 2] : null, shadow: false });
+  P.root.position.set((i - (names.length - 1) / 2) * 1.2, 0, 0);
+  scene.add(P.root);
+  let clip = clipName;
+  if (q.has('skate')) {
+    attachSkates(P, A.skate);
+    const c = bakeSkateClip(P);
+    P.asset.clips.set('skate', c);
+    clip = 'skate';
+    P.root.position.y = SKATE_LIFT;
+  }
+  const a = P.action(clip);
+  if (a) { a.play(); a.time = (+q.get('t') || 0) * a.getClip().duration; }
+  P.mixer.update(0);
+  P.setLevel(+(q.get('lod') ?? 0));
+  info.chars[n] = { tris0: A.chars[n].tris0, tris1: A.chars[n].tris1, speed: clip === 'skate' ? null : +P.speedOf(clip).toFixed(2), hipsY: +A.chars[n].hipsY.toFixed(3) };
+  // (measureSpeed stops the action: restart it)
+  const b = P.action(clip); b.reset().play(); b.time = (+q.get('t') || 0) * b.getClip().duration; P.mixer.update(0);
+  people.push(P);
+  const lab = document.createElement('div'); lab.className = 'l'; lab.textContent = n; lab.dataset.x = P.root.position.x; document.body.appendChild(lab);
+});
+info.clips = [...A.lib.clips.keys()];
+const W = names.length * 1.2;
+const cam = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.05, 500);
+const poses = { front: [0, 1.2, W * 1.6 + 2, 0, 0.9, 0], side: [W * 1.4 + 3, 1.1, 0.01, 0, 0.9, 0], q34: [W * 0.9, 1.6, W * 1.2, 0, 0.8, 0], back: [0, 1.2, -W * 1.6 - 2, 0, 0.9, 0], close: [0, 1.5, 2.6, 0, 1.2, 0], face: [0, 1.62, 0.9, 0, 1.58, 0], feet: [0.4, 0.4, 1.6, 0, 0.15, 0] };
+const p = poses[view];
+cam.position.set(p[0], p[1], p[2]); cam.lookAt(p[3], p[4], p[5]);
+renderer.render(scene, cam);
+for (const l of document.querySelectorAll('.l')) {
+  const v = new THREE.Vector3(+l.dataset.x, 2.0, 0).project(cam);
+  l.style.left = ((v.x + 1) / 2 * innerWidth) + 'px'; l.style.top = ((1 - v.y) / 2 * innerHeight) + 'px';
+}
+window.__info = info;
+window.__people = people;
+window.__render = (t) => { for (const P of people) { for (const a of P.actions.values()) if (a.isRunning()) a.time = t * a.getClip().duration; P.mixer.update(0); } renderer.render(scene, cam); };
+window.__ready = true;
+</script></body></html>

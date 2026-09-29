@@ -2536,6 +2536,9 @@ export async function buildHotels(scene, pause = null) {
   }
   // walk collision: each building's front line (patios in front are raised terraces)
   group.userData.footprints = specs.map((S) => ({ z0: S.z0, z1: S.z1, fx: S.fx }));
+  // patio chairs (people.js seats cafe guests): x, y (floor), z, rot (a chair faces its local +z)
+  group.userData.chairs = ctx.chairs.map((c) => ({ x: c.x, y: c.y, z: c.z, rot: c.rot }));
+  group.userData.tables = ctx.tables.map((t) => ({ x: t.x, y: t.y, z: t.z }));
   scene.add(group);
   window.__hotelStats = { grimeVerts: chunks.reduce((n, c) => n + (c.grime.count ?? 0), 0), buildings: specs.length, windows: ctx.windows.length, chairs: ctx.chairs.length, umbrellas: ctx.umbrellas.length, signMiss: atlases.map((a) => a.miss ?? 0), signMissAt: atlases.flatMap((a) => a.missAt ?? []), chunks: chunks.length };
   return group;

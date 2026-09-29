@@ -173,7 +173,7 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
         }
       }
       if (I.driver?.update) {
-        I.root.updateMatrixWorld(true);
+        I.rig.pelvis.updateWorldMatrix(true, false);
         I.driver.update(I.rig, c);
       }
     }
