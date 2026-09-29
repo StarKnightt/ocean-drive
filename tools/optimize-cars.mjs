@@ -12,6 +12,8 @@ fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(TMP, { recursive: true });
 const cli = 'npx -y @gltf-transform/cli@4.5.0';
 const names = process.argv.slice(2).length ? process.argv.slice(2) : fs.readdirSync(RAW).filter((f) => f.endsWith('.glb')).map((f) => f.replace('.glb', ''));
+// (fraction of the model's radius, ~3 m: 0.0002 is 0.6 mm)
+const HERO_SIMPLIFY = Number(process.env.HERO_SIMPLIFY ?? 0.0002);
 const run = (args) => execSync(`${cli} ${args}`, { stdio: ['ignore', 'pipe', 'inherit'] });
 for (const n of names) {
   const src = path.join(RAW, `${n}.glb`);
@@ -21,6 +23,12 @@ for (const n of names) {
   run(`prune "${a}" "${b}" --keep-leaves true --keep-attributes ${n === 'convertible'}`);
   run(`resize "${b}" "${a}" --width 1024 --height 1024`);
   run(`webp "${a}" "${c}" --quality 88`);
+  if (n === 'convertible' && HERO_SIMPLIFY > 0) {
+    // collapse the triangles that carry no shape (flat panels, straight runs of trim) at a
+    // sub-millimetre error bound: about a third of the hero's LOD0 goes, the silhouette stays
+    run(`simplify "${c}" "${a}" --ratio 0 --error ${HERO_SIMPLIFY} --lock-border true`);
+    fs.copyFileSync(a, c);
+  }
   const out = path.join(OUT, `${n}.glb`);
   // the hero is seen from inches away: 14-bit positions opened hairline cracks along the
   // boolean-cut body's T-junctions (black streaks across the hood), coarse normals banded

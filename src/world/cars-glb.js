@@ -243,14 +243,15 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     glass: glassMaterial(env, { color: 0xe4f2ec, opacity: 0.12, edge: 0.95, key: 'clear', edgeTint: 0x9fd8bf }),
     // the hero's wraparound screen: a green-tinted pane that carries the sky, the facades
     // and (from the seat) the painted dash top, going to a green mirror at grazing angles
-    screen: glassMaterial(env, { color: 0xa9d2bd, opacity: 0.2, edge: 0.55, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.95, envI: 1.3 }),
+    screen: glassMaterial(env, { color: 0xa9d2bd, opacity: 0.24, edge: 0.65, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.95, envI: 1.3 }),
     // the dial lenses: a faint glint, the printed faces must read through them
     dial_glass: glassMaterial(env, { color: 0xf2f6f4, opacity: 0.04, edge: 0.3, key: 'dial', envI: 0.35 }),
     gauge_speedo: std({ map: dialTexture('speedo'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_fuel: std({ map: dialTexture('fuel'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_temp: std({ map: dialTexture('temp'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     needle: coat({ color: 0xd8471a, roughness: 0.3, emissive: 0x3a0e02 }, 'needle'),
-    skin: std({ color: 0xe0ad8c, roughness: 0.55, envMapIntensity: 0.6 }, 'figure', true),
+    // (a faint warm emissive stands in for light scattering through skin in the shade)
+    skin: std({ color: 0xe8b797, roughness: 0.5, emissive: 0x3a1c10, envMapIntensity: 0.7 }, 'figure', true),
     cloth: std({ color: 0x9dbdd6, roughness: 0.9, envMapIntensity: 0.6 }, 'figure', true),
     cloth2: std({ color: 0xa8926a, roughness: 0.92, envMapIntensity: 0.6 }, 'figure', true),
     rubber: std({ color: 0x141414, roughness: 0.7, envMapIntensity: 0.5 }, 'figure', true),
@@ -339,19 +340,29 @@ function heroInstance(gltf, paint, paint2, M) {
   const L0 = levels[0];
   const needle = L0.getObjectByName('speedo_needle'), hands = L0.getObjectByName('driver_hands');
   for (const o of [needle, hands]) if (o) o.userData.q0 = o.quaternion.clone();
-  // forearms: hung between an elbow fixed by the driver's side and the wrist anchor on the
-  // hands (which turn with the rim), a short shirt sleeve over the elbow. Built along +z,
-  // stretched to the elbow-wrist distance each frame
+  // arms: shoulder fixed by the seat back, wrist anchor on the hands (which turn with the
+  // rim), the elbow solved between them (two-bone IK, bending outward and down). Upper arm
+  // in a short shirt sleeve, a shaped forearm (muscle near the elbow, flat oval wrist).
+  // Both built along +z over a unit length and stretched to the bone each frame
   const arms = [];
   if (hands && M.skin) {
-    const fore = new THREE.CylinderGeometry(0.023, 0.035, 1, 14, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
-    const sleeve = new THREE.CylinderGeometry(0.046, 0.052, 0.3, 16, 1, false).rotateX(Math.PI / 2).translate(0, 0, 0.05);
-    for (const [side, sx] of [['L', 0.72], ['R', 0.12]]) {
+    const fore = limbGeo([[-0.04, 0.012, 0.011], [-0.022, 0.031, 0.028], [0, 0.038, 0.034], [0.14, 0.043, 0.037], [0.34, 0.041, 0.033],
+      [0.58, 0.036, 0.027], [0.82, 0.032, 0.023], [1.0, 0.03, 0.021], [1.04, 0.022, 0.015]]);
+    const upper = limbGeo([[0, 0.044, 0.044], [0.5, 0.042, 0.04], [1.0, 0.038, 0.036], [1.06, 0.02, 0.02]]);
+    const sleeve = limbGeo([[-0.12, 0.0, 0.0], [-0.09, 0.045, 0.045], [-0.04, 0.06, 0.058], [0.3, 0.059, 0.055], [0.6, 0.061, 0.056],
+      [0.62, 0.063, 0.058], [0.635, 0.056, 0.052], [0.64, 0.043, 0.041]]);
+    for (const [side, sx, out] of [['L', 0.63, 1], ['R', 0.21, -1]]) {
       const wrist = hands.getObjectByName('driver_wrist_' + side);
       if (!wrist) continue;
+      const up = new THREE.Group(), fa = new THREE.Group();
+      up.add(new THREE.Mesh(upper, M.skin), new THREE.Mesh(sleeve, M.cloth));
+      fa.add(new THREE.Mesh(fore, M.skin));
+      for (const o of [up, fa]) o.matrixAutoUpdate = false;
+      const th = out * Math.PI / 3;
       const arm = new THREE.Group();
-      arm.add(new THREE.Mesh(fore, M.skin), new THREE.Mesh(sleeve, M.cloth));
-      arm.userData = { wrist, elbow: new THREE.Vector3(sx, 0.78, -0.2) };
+      arm.add(up, fa);
+      // (the hands' rim tangent at the grip, glTF axes: the wrist's wide side)
+      arm.userData = { wrist, up, fa, shoulder: new THREE.Vector3(sx, 0.98, -0.33), pole: new THREE.Vector3(out * 0.7, -1, -0.1).normalize(), tan: new THREE.Vector3(Math.cos(th), 0, Math.sin(th)) };
       L0.add(arm);
       arms.push(arm);
     }
@@ -431,17 +442,50 @@ function poseHero(inst, v) {
     if (v.ridden) {
       inst.hands.updateMatrix();
       for (const arm of inst.arms) {
-        const { wrist, elbow } = arm.userData;
-        _w.copy(wrist.position).applyMatrix4(inst.hands.matrix).sub(elbow);
-        const len = _w.length();
-        arm.position.copy(elbow);
-        arm.quaternion.setFromUnitVectors(_z, _w.divideScalar(len));
-        arm.scale.set(1, 1, len);
+        const { wrist, up, fa, shoulder, pole, tan } = arm.userData;
+        _w.copy(wrist.position).applyMatrix4(inst.hands.matrix);
+        // two-bone IK: the elbow on the circle of solutions, toward the pole
+        _d.subVectors(_w, shoulder);
+        const d = Math.min(_d.length(), ARM_U + ARM_F - 1e-4);
+        _d.normalize();
+        const a = (ARM_U * ARM_U - ARM_F * ARM_F + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, ARM_U * ARM_U - a * a));
+        _p.copy(pole).addScaledVector(_d, -pole.dot(_d)).normalize();
+        _e.copy(shoulder).addScaledVector(_d, a).addScaledVector(_p, hgt);
+        bone(up.matrix, shoulder, _e, _y.set(0, 1, 0));
+        // (the forearm's wide side turns into the rim tangent at the wrist)
+        bone(fa.matrix, _e, _w, _y.copy(tan).transformDirection(inst.hands.matrix).cross(_d.subVectors(_w, _e).normalize()));
       }
     }
   }
 }
-const _w = new THREE.Vector3(), _z = new THREE.Vector3(0, 0, 1);
+const ARM_U = 0.3, ARM_F = 0.27;
+const _w = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _e = new THREE.Vector3(), _y = new THREE.Vector3();
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3();
+// a limb built along +z over a unit length, from a to b; its local +y turned toward upHint
+function bone(m, a, b, upHint) {
+  _bz.subVectors(b, a);
+  const len = _bz.length();
+  _bz.divideScalar(len);
+  _bx.crossVectors(upHint, _bz);
+  if (_bx.lengthSq() < 1e-8) _bx.set(1, 0, 0);
+  _bx.normalize();
+  _by.crossVectors(_bz, _bx);
+  m.makeBasis(_bx, _by, _bz.multiplyScalar(len)).setPosition(a);
+}
+// tube along +z: prof = [[z, rx, ry], ...] rings of elliptical section (rx across, ry up)
+function limbGeo(prof, n = 18) {
+  const pos = [], idx = [];
+  for (const [z, rx, ry] of prof) for (let j = 0; j < n; j++) { const a = (j / n) * Math.PI * 2; pos.push(Math.cos(a) * rx, Math.sin(a) * ry, z); }
+  for (let i = 0; i < prof.length - 1; i++) for (let j = 0; j < n; j++) {
+    const a = i * n + j, b = i * n + (j + 1) % n;
+    idx.push(a, b, a + n, b, b + n, a + n);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
 // 2.5 turns lock to lock: +-450 deg at the full steering lock
 export const steerWheelAngle = (v) => (v.steer / v.spec.steerMax) * 1.25 * 2 * Math.PI;
 

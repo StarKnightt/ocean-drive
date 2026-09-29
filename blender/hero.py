@@ -131,7 +131,7 @@ SPEC = dict(
 # ---------------------------------------------------------------------------
 def build_body(lod, name):
     B = Body(SPEC, lod)
-    step, n_end = (0.07, 10) if lod == 0 else (0.12, 5)
+    step, n_end = (0.08, 10) if lod == 0 else (0.12, 5)
     us = stations(HALF, SPEC['ruF'], SPEC['ruR'], step, n_end, extra=(OPEN[0] - 0.0015, OPEN[0] + 0.0015, OPEN[1] - 0.0015, OPEN[1] + 0.0015))
     p, faces = B.build(name, us)
     bmesh.ops.remove_doubles(p.bm, verts=p.bm.verts, dist=1e-5)
@@ -140,7 +140,7 @@ def build_body(lod, name):
     cut = []
     for wz, ar in ((WB_F, 0.445), (WB_R, 0.435)):
         for s in (-1, 1):
-            cut.append(cutter_cyl(V(s * 1.05, HUB_H + 0.01, wz), (1, 0, 0), ar, 0.9, segs=64 if lod == 0 else 32))
+            cut.append(cutter_cyl(V(s * 1.05, HUB_H + 0.01, wz), (1, 0, 0), ar, 0.9, segs=48 if lod == 0 else 32))
     if lod == 0:
         # full-width grille opening and the headlamp sockets in the nose
         cut.append(cutter_box(V(0, GR_H, HALF + 0.0), (GR_W * 2 + 0.02, 0.2, 0.36), bevel=0.035))
@@ -153,8 +153,12 @@ def build_body(lod, name):
             for uz in (d0, d1):
                 cut.append(fence([(s * 0.72, uz), (s * 1.3, uz)], 0.33, 1.05, G))
             cut.append(cutter_box(V(s * 1.03, 0.352, (d0 + d1) / 2), (0.16, G, d0 - d1)))
-        cut.append(fence([(0.6, 0.69), (0.6, 2.57), (-0.6, 2.57), (-0.6, 0.69), (0.6, 0.69)], 0.72, 1.2, G))
-        cut.append(fence([(0.56, -1.66), (0.56, -2.4), (-0.56, -2.4), (-0.56, -1.66), (0.56, -1.66)], 0.79, 1.2, G))
+        # hood and trunk: the cross seams only. (Slots running lengthwise down the long flat
+        # hood and deck are seen almost edge-on and broke into flickering dashes.)
+        for u0 in (0.69, 2.57):
+            cut.append(fence([(0.6, u0), (-0.6, u0)], 0.72, 1.2, G))
+        for u0 in (-1.66, -2.4):
+            cut.append(fence([(0.56, u0), (-0.56, u0)], 0.79, 1.2, G))
     boolean(ob, cut)
     if lod == 0:
         bevel(ob, width=0.0022, angle=35, segments=1)
@@ -281,12 +285,7 @@ def build_wheel(lod, side, name, parent, loc):
     if lod == 0:
         prof = [(0.192, -0.078), (0.25, -0.098), (0.325, -0.091), (0.3575, -0.066)]
         cr = lambda x: R - 0.004 * (x / 0.066) ** 2
-        rw = 0.124 / 3
-        prof.append((cr(-0.062), -0.062))
-        for k in range(1, 3):
-            b = -0.062 + k * rw
-            prof += [(cr(b), b - 0.003), (cr(b) - 0.006, b - 0.0012), (cr(b) - 0.006, b + 0.0012), (cr(b), b + 0.003)]
-        prof.append((cr(0.062), 0.062))
+        prof += [(cr(-0.062), -0.062), (cr(0.0), 0.0), (cr(0.062), 0.062)]
         # outer sidewall: black shoulder, a raised moulding ring, then the wide whitewall
         # band standing proud with crisp steps at both edges
         prof += [(0.3575, 0.066), (0.349, 0.074), (0.333, 0.088), (0.318, 0.0955), (0.3145, 0.0995), (0.3095, 0.1),
@@ -312,8 +311,8 @@ def build_wheel(lod, side, name, parent, loc):
     # separate domed centre cap
     lathe(p, [(0.196, 0.074), (0.191, 0.083), (0.182, 0.0855), (0.173, 0.081)], segs, o, ax, mat='paint')
     if lod == 0:
-        cover = [(0.1735, 0.079), (0.1715, 0.091), (0.166, 0.099), (0.156, 0.103), (0.145, 0.105), (0.134, 0.107),
-                 (0.122, 0.109), (0.11, 0.111), (0.098, 0.113), (0.088, 0.115), (0.08, 0.117), (0.075, 0.116), (0.072, 0.11)]
+        cover = [(0.1735, 0.079), (0.1715, 0.091), (0.166, 0.099), (0.156, 0.103), (0.134, 0.107),
+                 (0.11, 0.111), (0.098, 0.113), (0.08, 0.117), (0.072, 0.11)]
 
         def ribs(r, a, th, idx):
             if 0.09 < r < 0.16:
@@ -349,8 +348,7 @@ def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1),
     arc(u1 - rbm, h0 + rbm, rbm, -90, 0, 2)
     arc(u1 - rt, h1 - rt, rt, 0, 90, n + 1)
     if not lod:
-        for k in range(1, 4):
-            prof.append((u1 - rt - (du - rt - 0.045) * k / 4, h1 + 0.004 * math.sin(math.pi * k / 4)))
+        prof.append((u1 - rt - (du - rt - 0.045) / 2, h1 + 0.004))
     arc(u0 + 0.045, h1 - 0.045, 0.045, 90, 180, n)
     arc(u0 + rbm, h0 + rbm, rbm, 180, 270, 2)
     cu, ch = u0 + du / 2, h0 + dh / 2
@@ -362,8 +360,8 @@ def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1),
         tx, ty = b[0] - a[0], b[1] - a[1]
         L = math.hypot(tx, ty) or 1
         nrm.append((ty / L, -tx / L))
-    # enough rings per pleat for a rounded tuck and a crisp sewn groove between tucks
-    per = 7
+    # rings per pleat: the groove, both flanks and the crown of the tuck
+    per = 4
     ns = max(8, int(2 * s_half / pleat_w * per)) if not lod else 12
     rings = []
     for i in range(ns + 1):
@@ -426,7 +424,7 @@ def build_interior(part, lod, glass):
     Bd = Body(SPEC, 0)
     # carpet floor with transmission tunnel and a raised toe board
     rings = []
-    ns, nu = (24, 20) if lod == 0 else (6, 5)
+    ns, nu = (16, 12) if lod == 0 else (6, 5)
     u0f, u1f = OPEN[0] + 0.07, OPEN[1] + 0.11
     for i in range(nu + 1):
         u = u0f + (u1f - u0f) * i / nu
@@ -453,8 +451,8 @@ def build_interior(part, lod, glass):
     # fitted padded boot over the folded top: taut ivory vinyl in three padded panels, a
     # full front roll against the seat back, seafoam welts and chrome snaps round the hem
     rings = []
-    nb = 60 if lod == 0 else 8
-    nk = 16 if lod == 0 else 6
+    nb = 24 if lod == 0 else 8
+    nk = 12 if lod == 0 else 6
     SEAM = 0.31
 
     def boot_h(s, a):
@@ -468,8 +466,10 @@ def build_interior(part, lod, glass):
             g = math.exp(-((abs(s) - SEAM) / 0.022) ** 2)
             h += (0.006 * (1 - g) - 0.009 * g) * kk * math.sin(a) ** 0.8
         return h, u
-    for i in range(nb + 1):
-        s = -0.86 + 1.72 * i / nb
+    sb = [-0.86 + 1.72 * i / nb for i in range(nb + 1)]
+    if lod == 0:
+        sb = sorted(set(sb + [sg * (SEAM + d) for sg in (-1, 1) for d in (-0.036, -0.018, 0.0, 0.018, 0.036)]))
+    for s in sb:
         ring = []
         for k in range(nk + 1):
             h, u = boot_h(s, math.pi * k / nk)
@@ -578,7 +578,7 @@ def tube_prof(r, n=8, ry=None):
 
 
 def build_dash(part, glass, lod):
-    ns = 88 if lod == 0 else 12
+    ns = 52 if lod == 0 else 12
     ss = [-0.87 + 1.74 * i / ns for i in range(ns + 1)]
     if lod == 0:
         # extra rings where the pod's side walls rise out of the dash
@@ -614,7 +614,7 @@ def build_dash(part, glass, lod):
         nrm, upv = dial_frame(c)
         disc(part, c, nrm, upv, r, mat, segs=40)
         lathe(part, [(r + 0.001, -0.012), (r + 0.004, -0.004), (r + 0.004, 0.003), (r + 0.011, 0.006), (r + 0.01, 0.012), (r + 0.002, 0.011)],
-              40, c, nrm, mat='chrome')
+              32, c, nrm, mat='chrome')
         lathe(glass, [(r + 0.002, 0.004), (r * 0.7, 0.009), (r * 0.35, 0.0115), (0.0, 0.012)], 24, c, nrm, mat='dial_glass')
         if mat != 'gauge_speedo':
             # fixed needles: fuel at three quarters, temperature mid-scale
@@ -682,10 +682,10 @@ def build_steering(lod, parent):
     name = 'steering_wheel' if lod == 0 else 'steering_wheel_L1'
     p = Part(name)
     X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
-    segs = 144 if lod == 0 else 36
+    segs = 108 if lod == 0 else 36
     rim = [Vector((RIM_R * math.cos(2 * math.pi * k / segs), RIM_R * math.sin(2 * math.pi * k / segs), 0)) for k in range(segs)]
     grips = [1.0 + (0.1 * max(0.0, math.cos(36 * 2 * math.pi * k / segs)) ** 6 if lod == 0 else 0.0) for k in range(segs)]
-    sweep(p, rim, [(0.0115 * math.cos(a), 0.0135 * math.sin(a)) for a in [2 * math.pi * k / (12 if lod == 0 else 6) for k in range(12 if lod == 0 else 6)]],
+    sweep(p, rim, [(0.0115 * math.cos(a), 0.0135 * math.sin(a)) for a in [2 * math.pi * k / (10 if lod == 0 else 6) for k in range(10 if lod == 0 else 6)]],
           mat='ivory', closed_path=True, up=(0, 0, 1), scales=grips)
     for ang in (200, 340):
         a = math.radians(ang)
@@ -749,35 +749,70 @@ def build_driver(parent):
     Mi = M.inverted()
     h = Part('driver_hands')
     wrists = []
+    RI = 0.0142   # just outside the rim tube
+    Zl = Vector((0, 0, 1))
     for sg in (1, -1):
         th = math.radians(60) * sg
         pr = Vector((RIM_R * math.sin(th), RIM_R * math.cos(th), 0))
         n_r = pr.normalized()
         t = Vector((math.cos(th), -math.sin(th), 0))
-        Zl = Vector((0, 0, 1))
-        cs = lambda ph, r: pr + (n_r * math.cos(math.radians(ph)) + Zl * math.sin(math.radians(ph))) * r
-        # back of the hand: a flattened pad on the outer / driver's side of the rim
-        c = cs(-35, 0.02)
-        pad = lathe(h, [(0.006, -0.047), (0.017, -0.042), (0.023, -0.028), (0.025, -0.008), (0.024, 0.014), (0.02, 0.032), (0.012, 0.044), (0.004, 0.047)],
-                    20, c, t * -sg, mat='skin')
-        Q = n_r.lerp(-Zl, 0.45).normalized()
-        # four fingers wrapped over the far side of the rim, their tips curling back on the
-        # inside, knuckles in a row along the pad
-        for k in range(4):
-            dt = (-0.028 + 0.0187 * k) * -sg
-            arc = [cs(ph, 0.022) + t * dt for ph in (-25, 20, 70, 115, 160, 195)]
-            sweep(h, arc, tube_prof(0.0092, 8), mat='skin', up=tuple(t), scales=[1.1, 1.05, 1.0, 0.95, 0.9, 0.75])
-            lathe(h, [(0.0, -0.011), (0.0095, -0.006), (0.0098, 0.004), (0.0, 0.01)], 10, cs(-28, 0.029) + t * dt, Q, mat='skin')
-        # thumb along the inner side of the rim, pointing up it
-        tb = [cs(-70, 0.024) + t * sg * 0.022, cs(-115, 0.022) + t * sg * 0.002, cs(-150, 0.02) - t * sg * 0.026]
-        sweep(h, tb, tube_prof(0.0105, 8), mat='skin', up=tuple(t), scales=[1.15, 1.0, 0.75])
-        # the wrist, heading back toward the elbow (the runtime hangs the forearm between the
-        # 'wrist' anchor and an elbow fixed by the driver's side, so turning hands keep arms)
-        elbow = Mi @ V(HUB[0] + sg * 0.3, 0.78, -0.2)
-        w0 = cs(-75, 0.026)
-        wrist = w0 + (elbow - w0).normalized() * 0.05
-        limb(h, [w0, w0.lerp(wrist, 0.5), wrist], [0.026, 0.024, 0.023], 'skin')
+        up_rim = -t * sg   # along the rim toward twelve o'clock
+        dirf = lambda ph: n_r * math.cos(math.radians(ph)) + Zl * math.sin(math.radians(ph))
+        # one closed skin over the grip: the wrist stub coming from the forearm, the palm
+        # heel behind the rim, the back of the hand over its outer side (knuckle bumps), the
+        # fingers round the front with shallow grooves between them, tips tucked inside
+        NW = 20
+        elbow = Mi @ V(HUB[0] + sg * 0.26, 0.86, -0.02)
+
+        def section(center, a_ax, d_ax, half, thick, d0, bumps=0.0, groove=0.0):
+            ring = []
+            for j in range(NW):
+                a = 2 * math.pi * j / NW
+                ca, sa = math.cos(a), math.sin(a)
+                w = half * math.copysign(abs(ca) ** 0.55, ca)
+                d = thick * 0.5 * (1 + math.copysign(abs(sa) ** 0.7, sa))
+                if sa > 0:
+                    f = (w / (2 * half) + 0.5) * 4   # 0..4 across the four fingers
+                    d += sa * (bumps * (0.5 - 0.5 * math.cos(2 * math.pi * f)) - groove * math.exp(-((f - round(f)) / 0.12) ** 2) * (0 < round(f) < 4))
+                ring.append(center + a_ax * w + d_ax * (d - d0))
+            return ring
+        rings = []
+        ph0 = -75
+        c0 = pr + dirf(ph0) * RI
+        ew = (elbow - c0).normalized()
+        q = ew.cross(t).normalized()
+        if q.dot(dirf(ph0)) < 0:
+            q = -q
+        for k in (3, 2, 1):
+            # wrist stub: an oval narrowing toward the forearm's start
+            rings.append(section(c0 + ew * 0.024 * k, t, q, lerp(0.041, 0.03, k / 3), lerp(0.03, 0.042, k / 3), 0.0))
+        phs = [-75, -58, -40, -22, -5, 12, 30, 50, 72, 95, 118, 140, 158, 171]
+        for ph in phs:
+            fing = smoothstep(0, 35, ph)
+            half = lerp(0.043, 0.039, fing) * (1 - 0.12 * smoothstep(120, 171, ph))
+            thick = lerp(0.03, 0.019, fing) * (1 - 0.35 * smoothstep(140, 171, ph))
+            knuck = 0.0035 * math.exp(-((ph - 8) / 12) ** 2)
+            rings.append(section(pr + dirf(ph) * RI, t, dirf(ph), half, thick, 0.0, bumps=knuck, groove=0.0028 * fing))
+        # rounded fingertips
+        last = rings[-1]
+        cl = sum(last, Vector()) / len(last)
+        rings.append([cl + (p - cl) * 0.55 + dirf(178) * 0.004 for p in last])
+        f = h.grid(rings, mat='skin', wrap_j=True, cap0=True, cap1=True)
+        cens = [sum(r, Vector()) / len(r) for r in rings]
+        orient(h, f, lambda c, cens=cens: min(cens, key=lambda q2: (q2 - c).length_squared))
+        # thumb along the rim's inner back, toward twelve o'clock
+        rp = lambda d: (lambda a: (Vector((RIM_R * math.sin(a), RIM_R * math.cos(a), 0))))(th - sg * d / RIM_R)
+        tpath = []
+        for d, ph, rr in ((0.012, -95, 0.024), (0.03, -115, 0.022), (0.05, -135, 0.02), (0.066, -150, 0.019)):
+            p = rp(d)
+            nn = p.normalized()
+            tpath.append(p + (nn * math.cos(math.radians(ph)) + Zl * math.sin(math.radians(ph))) * rr)
+        tpath.append(tpath[-1] + (tpath[-1] - tpath[-2]).normalized() * 0.008)
+        sweep(h, tpath, tube_prof(0.0095, 12, ry=0.0075), mat='skin', up=tuple(Zl), scales=[1.15, 1.0, 0.92, 0.75, 0.35])
+        # the wrist anchor at the stub's end: the runtime hangs the forearm from it
+        wrist = c0 + ew * 0.072 + q * 0.021
         wrists.append(('driver_wrist_' + ('L' if sg > 0 else 'R'), wrist))
+    bmesh.ops.recalc_face_normals(h.bm, faces=h.bm.faces)
     ob = h.object(sharp=60)
     ob.name = 'driver_hands_mesh'
     piv = empty('driver_hands', (0, 0, 0), parent, size=0.05)
@@ -904,13 +939,13 @@ def arches(part, lod):
             if lod:
                 continue
             # drum backing plate behind the wheel
-            lathe(part, [(0.0, 0.0), (0.2, 0.0), (0.205, 0.03), (0.19, 0.04)], 20, V(sg * (TRACK - 0.11), HUB_H, wz), V(sg, 0, 0), mat='dark')
+            lathe(part, [(0.0, 0.0), (0.2, 0.0), (0.205, 0.03), (0.19, 0.04)], 12, V(sg * (TRACK - 0.11), HUB_H, wz), V(sg, 0, 0), mat='dark')
             if front:
                 # coil spring between the lower arm and the frame, the arm itself
-                n, turns = 40, 6
+                n, turns = 30, 6
                 pts = [V(sg * (0.52 + 0.06 * math.cos(2 * math.pi * turns * k / n)), HUB_H + 0.02 + 0.3 * k / n,
                          wz - 0.06 + 0.06 * math.sin(2 * math.pi * turns * k / n)) for k in range(n + 1)]
-                sweep(part, pts, [(0.009 * math.cos(a), 0.009 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='dark', up=(0, 0, 1))
+                sweep(part, pts, [(0.009 * math.cos(a), 0.009 * math.sin(a)) for a in [2 * math.pi * k / 4 for k in range(4)]], mat='dark', up=(0, 0, 1))
                 box(part, V(sg * 0.5, HUB_H - 0.04, wz), (0.36, 0.05, 0.12), mat='dark', bevel=0.012)
             else:
                 # leaf spring pack under the axle
@@ -1015,8 +1050,12 @@ def trims(part, caster, lod):
                 col = []
                 for k in range(15):
                     hh = 0.37 + (hs(uz) - 0.02 - 0.37) * k / 14
-                    l2, n2 = caster.hit((sg * 2, hh, uz), (-sg, 0, 0))
-                    if l2:
+                    # (sampled either side of the slot: a ray down the slot itself passes
+                    # through into the cockpit and left the rear strip floating inside)
+                    la, na = caster.hit((sg * 2, hh, uz + 0.012), (-sg, 0, 0))
+                    lb, nb = caster.hit((sg * 2, hh, uz - 0.012), (-sg, 0, 0))
+                    if la and lb:
+                        l2, n2 = (la + lb) / 2, (na + nb).normalized()
                         col.append((l2 - n2 * 0.004, n2))
                 if len(col) > 2:
                     strip = [[p + V(0, 0, 0.012), p + V(0, 0, -0.012)] for p, _n in col]
@@ -1026,7 +1065,7 @@ def trims(part, caster, lod):
     # the ground under the car. Body colour, not black: seen across the long flat hood at a
     # grazing angle a black slot aliased into broken black and bright streaks
     if lod == 0:
-        for loop in ([(0.6, 0.69), (0.6, 2.57), (-0.6, 2.57), (-0.6, 0.69)], [(0.56, -1.66), (0.56, -2.4), (-0.56, -2.4), (-0.56, -1.66), (0.56, -1.66)]):
+        for loop in ([(0.6, 0.69), (-0.6, 0.69)], [(0.6, 2.57), (-0.6, 2.57)], [(0.56, -1.66), (-0.56, -1.66)], [(0.56, -2.4), (-0.56, -2.4)]):
             for (s0, u0), (s1, u1) in zip(loop[:-1], loop[1:]):
                 L = math.hypot(s1 - s0, u1 - u0)
                 n = max(2, int(L / 0.04))
@@ -1034,9 +1073,11 @@ def trims(part, caster, lod):
                 rows = []
                 for k in range(n + 1):
                     s, u = s0 + (s1 - s0) * k / n, u0 + (u1 - u0) * k / n
-                    loc, nor = caster.hit((s, 2.5, u), (0, -1, 0))
-                    if not loc:
+                    la, na = caster.hit((s + du * 0.012, 2.5, u - ds * 0.012), (0, -1, 0))
+                    lb, nb = caster.hit((s - du * 0.012, 2.5, u + ds * 0.012), (0, -1, 0))
+                    if not (la and lb):
                         continue
+                    loc, nor = (la + lb) / 2, (na + nb).normalized()
                     p = loc - nor * 0.005
                     rows.append([p + V(-du * 0.014, 0, ds * 0.014), p + V(du * 0.014, 0, -ds * 0.014)])
                 if len(rows) > 1:
@@ -1077,7 +1118,7 @@ def trims(part, caster, lod):
               mat='chrome', closed_path=True, up=(0, -1, 0), cap=False)
         for h in (GR_H - 0.06, GR_H - 0.02, GR_H + 0.02, GR_H + 0.06):
             bar = [V(-GR_W + 0.03 + (2 * GR_W - 0.06) * j / 16, h, us - 0.05 - 0.02 * (j / 8 - 1) ** 2) for j in range(17)]
-            sweep(part, bar, [(0.017 * math.cos(a), 0.011 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(0, -1, 0))
+            sweep(part, bar, [(0.017 * math.cos(a), 0.011 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='chrome', up=(0, -1, 0))
         for j in range(15):
             s = -GR_W + 0.06 + (2 * GR_W - 0.12) * j / 14
             box(part, V(s, GR_H, us - 0.07 - 0.02 * (s / GR_W) ** 2), (0.006, 0.17, 0.03), mat='chrome')
