@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { CAR, roadHeight, CROSS_STREETS, DISTRICT } from './layout.js';
+import { CAR, roadHeight, CROSS, CROSS_STREETS, crossRoadHeight, DISTRICT } from './layout.js';
 import { registerLodHook, LOD } from './lod.js';
 import { QUALITY } from '../quality.js';
 import {
@@ -32,7 +32,11 @@ export function preloadCars() {
   const tex = new THREE.TextureLoader();
   const small = QUALITY.tier === 'low' ? '_512' : '';
   const map = (name) => tex.loadAsync(`textures/cars/${name}${small}.webp`).catch(() => null);
-  pending = Promise.all([get('convertible'), get('parked'), map('vinyl_nor'), map('carpet_nor')]);
+  // ?hero=raw: the unoptimised Blender export (dev server only), to tell export artefacts
+  // from modelling ones
+  const raw = new URLSearchParams(location.search).get('hero') === 'raw';
+  const hero = raw ? loader.loadAsync('/blender/_raw/convertible.glb').catch(() => null) : get('convertible');
+  pending = Promise.all([hero, get('parked'), map('vinyl_nor'), map('carpet_nor')]);
   return pending;
 }
 
@@ -108,9 +112,9 @@ function createProbe(renderer, scene) {
 
 // ---------------------------------------------------------------------------
 // runtime materials by the Blender material name
-function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
+function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under = null, ior = 1.5, envI = 1.0 }) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.015, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: 1.0,
+    color, roughness: 0.015, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: envI, ior,
     clearcoat: 1, clearcoatRoughness: 0.015, depthWrite: false, side: THREE.DoubleSide,
   });
   // premultiplied output: the tint (diffuse) is weighted by the opacity, the reflections are
@@ -121,10 +125,16 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
   // Fresnel: glass seen edge-on turns into a mirror of the sky (and, for the hero's
   // screen, the greenish tint of the glass thickness)
   const tint = edgeTint ? new THREE.Color(edgeTint) : null;
+  // under: what a downward reflection picks up. The probe only knows the dark road; from the
+  // driver's seat the lower windscreen mirrors the sunlit painted dash top instead
+  const low = under ? new THREE.Color(under) : null;
+  const lowGlsl = low ? `vec3(${low.r.toFixed(3)}, ${low.g.toFixed(3)}, ${low.b.toFixed(3)})` : null;
   m.onBeforeCompile = (s) => {
     s.fragmentShader = s.fragmentShader.replace('#include <envmap_physical_pars_fragment>',
       THREE.ShaderChunk.envmap_physical_pars_fragment.replace('return envMapColor.rgb * envMapIntensity;',
-        'return min(envMapColor.rgb, vec3(2.2)) * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
+        low
+          ? `return mix(${lowGlsl}, min(envMapColor.rgb, vec3(2.2)), smoothstep(-0.03, 0.03, reflectVec.y)) * envMapIntensity;`
+          : 'return min(envMapColor.rgb, vec3(2.2)) * envMapIntensity * mix(vec3(0.16, 0.15, 0.14), vec3(1.0), smoothstep(-0.012, 0.012, reflectVec.y));'));
     s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
       `{ float fr = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.0);
          diffuseColor.a = mix(diffuseColor.a, 1.0, fr * ${edge.toFixed(2)});
@@ -135,6 +145,55 @@ function glassMaterial(env, { color, opacity, edge, key, edgeTint = null }) {
   };
   m.customProgramCacheKey = () => 'car-glass-' + key;
   return m;
+}
+
+// Printed dial faces for the hero's cluster (no brand): the speedometer 0-120 over 270 deg
+// (the needle's sweep in poseHero), fuel E-F and temperature C-H over 120 deg
+export const SPEEDO_SWEEP = { from: -135, to: 135, max: 120 };
+function dialTexture(kind) {
+  const N = kind === 'speedo' ? 512 : 256, c = N / 2;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const g = cv.getContext('2d');
+  const face = g.createRadialGradient(c, c * 0.8, N * 0.05, c, c, c);
+  face.addColorStop(0, '#f4ecd8'); face.addColorStop(0.75, '#e6dcc2'); face.addColorStop(1, '#b9ad92');
+  g.fillStyle = face; g.fillRect(0, 0, N, N);
+  const at = (deg, r) => [c + r * Math.sin(deg * Math.PI / 180), c - r * Math.cos(deg * Math.PI / 180)];
+  const ink = '#1d1c1a';
+  g.strokeStyle = ink; g.fillStyle = ink; g.lineCap = 'butt';
+  const tick = (deg, r0, r1, w) => { const [x0, y0] = at(deg, r0), [x1, y1] = at(deg, r1); g.lineWidth = w; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); };
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (kind === 'speedo') {
+    const { from, to, max } = SPEEDO_SWEEP, deg = (v) => from + (to - from) * v / max;
+    g.lineWidth = N * 0.006;
+    g.beginPath(); g.arc(c, c, c * 0.9, (from - 90) * Math.PI / 180, (to - 90) * Math.PI / 180); g.stroke();
+    for (let v = 0; v <= max; v += 5) tick(deg(v), c * 0.9, v % 10 ? c * 0.84 : c * 0.78, v % 10 ? N * 0.005 : N * 0.009);
+    g.font = `600 ${Math.round(N * 0.085)}px "Futura", "Century Gothic", "Trebuchet MS", sans-serif`;
+    for (let v = 0; v <= max; v += 20) { const [x, y] = at(deg(v), c * 0.62); g.fillText(String(v), x, y); }
+    // a red band past 90
+    g.strokeStyle = '#a3261c'; g.lineWidth = N * 0.022;
+    g.beginPath(); g.arc(c, c, c * 0.93, (deg(90) - 90) * Math.PI / 180, (to - 90) * Math.PI / 180); g.stroke();
+    g.fillStyle = ink;
+    g.font = `500 ${Math.round(N * 0.05)}px "Futura", "Century Gothic", sans-serif`;
+    g.fillText('MPH', c, c + c * 0.36);
+    // odometer window
+    g.fillStyle = '#23211e'; g.fillRect(c - N * 0.13, c + c * 0.5, N * 0.26, N * 0.07);
+    g.fillStyle = '#e9e1cc'; g.font = `500 ${Math.round(N * 0.05)}px monospace`;
+    g.fillText('4 7 1 5 3', c, c + c * 0.5 + N * 0.037);
+  } else {
+    const lo = kind === 'fuel' ? 'E' : 'C', hi = kind === 'fuel' ? 'F' : 'H';
+    for (let k = 0; k <= 4; k++) tick(-60 + 30 * k, c * 0.86, k % 2 ? c * 0.72 : c * 0.62, N * (k % 2 ? 0.014 : 0.024));
+    g.font = `700 ${Math.round(N * 0.2)}px "Futura", "Century Gothic", sans-serif`;
+    g.fillText(lo, ...at(-60, c * 0.4)); g.fillText(hi, ...at(60, c * 0.4));
+    if (kind === 'temp') { g.strokeStyle = '#a3261c'; g.lineWidth = N * 0.05; g.beginPath(); g.arc(c, c, c * 0.8, (40 - 90) * Math.PI / 180, (60 - 90) * Math.PI / 180); g.stroke(); }
+    g.font = `500 ${Math.round(N * 0.11)}px "Futura", "Century Gothic", sans-serif`;
+    g.fillText(kind === 'fuel' ? 'FUEL' : 'TEMP', c, c + c * 0.45);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.flipY = false;
+  t.anisotropy = 8;
+  return t;
 }
 
 // clearcoat over a rougher base: the base's specular is kept low so the sun's highlight is
@@ -155,7 +214,9 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     return m;
   };
   const chrome = std({ color: 0xffffff, metalness: 1, roughness: 0.035, envMap: env, envMapIntensity: 1.0 });
-  groundReflect(chrome, 'glb-chrome', CAR_MAX_RADIANCE, 1.2);
+  // (downward reflections lifted: thin posts seen from the seat mirror mostly the road and
+  // otherwise read as dark matte rods)
+  groundReflect(chrome, 'glb-chrome', CAR_MAX_RADIANCE, 2.1);
   const alloy = std({ color: 0xb9bdc1, metalness: 1, roughness: 0.24, envMap: env, envMapIntensity: 1.0 });
   groundReflect(alloy, 'glb-alloy', CAR_MAX_RADIANCE, 1.6);
   for (const t of [vinylNor, carpetNor]) {
@@ -180,6 +241,17 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
   return {
     chrome, alloy,
     glass: glassMaterial(env, { color: 0xe4f2ec, opacity: 0.12, edge: 0.95, key: 'clear', edgeTint: 0x9fd8bf }),
+    // the hero's wraparound screen: a green-tinted pane that carries the sky, the facades
+    // and (from the seat) the painted dash top, going to a green mirror at grazing angles
+    screen: glassMaterial(env, { color: 0xa9d2bd, opacity: 0.2, edge: 0.55, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.95, envI: 1.3 }),
+    gauge_speedo: std({ map: dialTexture('speedo'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
+    gauge_fuel: std({ map: dialTexture('fuel'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
+    gauge_temp: std({ map: dialTexture('temp'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
+    needle: coat({ color: 0xd8471a, roughness: 0.3, emissive: 0x3a0e02 }, 'needle'),
+    skin: std({ color: 0xe0ad8c, roughness: 0.55, envMapIntensity: 0.6 }, 'figure', true),
+    cloth: std({ color: 0x9dbdd6, roughness: 0.9, envMapIntensity: 0.6 }, 'figure', true),
+    cloth2: std({ color: 0xa8926a, roughness: 0.92, envMapIntensity: 0.6 }, 'figure', true),
+    rubber: std({ color: 0x141414, roughness: 0.7, envMapIntensity: 0.5 }, 'figure', true),
     tint: glassMaterial(env, { color: 0x1c2428, opacity: 0.42, edge: 0.97, key: 'tint' }),
     tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.8, envMapIntensity: 0.5 }, 'tyre', true),
     trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
@@ -200,17 +272,18 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
   };
 }
 
-function applyMaterials(root, M, paint, paint2) {
+function applyMaterials(root, M, paint, paint2, hero = false) {
   root.traverse((o) => {
     if (!o.isMesh) return;
     const name = o.material.name;
-    if (name === 'paint') o.material = paint;
+    if (hero && name === 'glass') o.material = M.screen;
+    else if (name === 'paint') o.material = paint;
     else if (name === 'paint2') o.material = paint2;
     else if (name === 'gauge') {
       o.material.envMap = M.chrome.envMap;
       o.material.roughness = 0.35;
     } else if (M[name]) o.material = M[name];
-    const clear = o.material === M.glass || o.material === M.tint;
+    const clear = o.material === M.glass || o.material === M.tint || o.material === M.screen;
     o.castShadow = !clear;
     o.receiveShadow = true;
     if (clear) o.renderOrder = 2;
@@ -240,7 +313,7 @@ function heroInstance(gltf, paint, paint2, M) {
     const src = gltf.scene.getObjectByName(n);
     const c = src.clone(true);
     c.position.set(0, 0, 0);
-    applyMaterials(c, M, paint, paint2);
+    applyMaterials(c, M, paint, paint2, true);
     body.add(c);
     return c;
   });
@@ -262,11 +335,34 @@ function heroInstance(gltf, paint, paint2, M) {
   });
   levels[1].visible = false;
   g.add(blobMesh(2.35, 6.1));
+  const L0 = levels[0];
+  const needle = L0.getObjectByName('speedo_needle'), hands = L0.getObjectByName('driver_hands');
+  for (const o of [needle, hands]) if (o) o.userData.q0 = o.quaternion.clone();
+  // forearms: hung between an elbow fixed by the driver's side and the wrist anchor on the
+  // hands (which turn with the rim), a short shirt sleeve over the elbow. Built along +z,
+  // stretched to the elbow-wrist distance each frame
+  const arms = [];
+  if (hands && M.skin) {
+    const fore = new THREE.CylinderGeometry(0.023, 0.035, 1, 14, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+    const sleeve = new THREE.CylinderGeometry(0.046, 0.052, 0.3, 16, 1, false).rotateX(Math.PI / 2).translate(0, 0, 0.05);
+    for (const [side, sx] of [['L', 0.72], ['R', 0.12]]) {
+      const wrist = hands.getObjectByName('driver_wrist_' + side);
+      if (!wrist) continue;
+      const arm = new THREE.Group();
+      arm.add(new THREE.Mesh(fore, M.skin), new THREE.Mesh(sleeve, M.cloth));
+      arm.userData = { wrist, elbow: new THREE.Vector3(sx, 0.78, -0.2) };
+      L0.add(arm);
+      arms.push(arm);
+    }
+  }
+  // the driver (hands on the wheel, forearms, legs) only while someone drives
+  const driver = [hands, L0.getObjectByName('driver_legs'), ...arms].filter(Boolean);
+  for (const o of driver) o.visible = false;
   g.userData = {
     levels, wheels, steering,
-    seatAnchor: levels[0].getObjectByName('driver_seat'), eyeAnchor: levels[0].getObjectByName('driver_eye'),
+    seatAnchor: L0.getObjectByName('driver_seat'), eyeAnchor: L0.getObjectByName('driver_eye'),
   };
-  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R };
+  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R, needle, hands, driver, arms };
 }
 
 function setLevel(inst, k) {
@@ -283,12 +379,31 @@ function setLevel(inst, k) {
 // the model's nose is +z, so it turns by yaw + pi and the sim's pitch / roll flip sign).
 // Front wheels steer with Ackermann geometry; the steering wheel turns 2.5 turns lock to lock.
 const _qs = new THREE.Quaternion(), _ax = new THREE.Vector3(0, 1, 0);
+const FLIP_Y = new THREE.Quaternion().setFromAxisAngle(_ax, Math.PI);
+const HANDS_MAX = 1.15;   // rad the hands follow the rim before they slide round it
 function poseHero(inst, v) {
   const S = v.spec, g = inst.car;
   g.position.set(v.x, v.baseT, v.z);
   g.rotation.set(-v.pitchT, v.yaw + Math.PI, -v.rollT, 'YXZ');
-  inst.sway.position.y = SWAY_Y + (v.bodyY - v.baseT);
-  inst.sway.rotation.set(-(v.pitch - v.pitchT), 0, -(v.roll - v.rollT));
+  // the sprung body: pitch / roll / heave from the sim plus a fine shake the driver's eye
+  // (anchored in the body) shares: V8 lope at idle, road texture and seams growing with speed
+  const t = v.t, sp = Math.min(1, Math.abs(v.lon) / 14);
+  const eng = v.engineOn ? 1 : 0, idle = eng * Math.max(0, 1 - Math.abs(v.lon) / 3);
+  const road = sp * (v.ridden || Math.abs(v.lon) > 0.5 ? 1 : 0);
+  const vib = (a, f1, f2, p) => a * (Math.sin(t * f1 + p) + 0.6 * Math.sin(t * f2 + 2 * p));
+  const seam = road * 0.0025 * Math.max(0, Math.sin(v.z * 0.7 + v.x * 0.3)) ** 24;
+  inst.sway.position.y = SWAY_Y + (v.bodyY - v.baseT) + vib(0.0009 * idle + 0.0012 * road, 41, 67, 0.3) + seam;
+  inst.sway.rotation.set(
+    -(v.pitch - v.pitchT) + vib(0.0007 * idle + 0.0011 * road, 23, 37, 1.1) - seam * 0.6,
+    0,
+    -(v.roll - v.rollT) + vib(0.0005 * idle + 0.0009 * road, 29, 53, 2.3));
+  for (const o of inst.driver) o.visible = !!v.ridden;
+  // speedometer: the needle sweeps SPEEDO_SWEEP clockwise from 0 mph
+  if (inst.needle) {
+    const mph = Math.min(SPEEDO_SWEEP.max, Math.abs(v.lon) * 2.237);
+    const deg = SPEEDO_SWEEP.from + (SPEEDO_SWEEP.to - SPEEDO_SWEEP.from) * mph / SPEEDO_SWEEP.max;
+    inst.needle.quaternion.copy(inst.needle.userData.q0).multiply(_qs.setFromAxisAngle(_ax, -THREE.MathUtils.degToRad(deg)));
+  }
   const d = v.steer, ad = Math.abs(d);
   let inner = d, outer = d;
   if (ad > 1e-4) {
@@ -304,10 +419,30 @@ function poseHero(inst, v) {
     w[1].rotation.set(v.wheelRot, -angFR, 0, 'YXZ');
     w[2].rotation.set(v.wheelRot, 0, 0);
     w[3].rotation.set(v.wheelRot, 0, 0);
+    // (the pivot's local +y is the column axis, pointing down it: + turns the rim clockwise
+    // as the driver sees it, for a right turn)
     const st = inst.steering[k];
-    if (st?.userData.q0) st.quaternion.copy(st.userData.q0).multiply(_qs.setFromAxisAngle(_ax, (d / S.steerMax) * 1.25 * 2 * Math.PI));
+    if (st?.userData.q0) st.quaternion.copy(st.userData.q0).multiply(_qs.setFromAxisAngle(_ax, steerWheelAngle(v)));
+  }
+  if (inst.hands) {
+    const a = THREE.MathUtils.clamp(steerWheelAngle(v), -HANDS_MAX, HANDS_MAX);
+    inst.hands.quaternion.copy(inst.hands.userData.q0).multiply(_qs.setFromAxisAngle(_ax, a));
+    if (v.ridden) {
+      inst.hands.updateMatrix();
+      for (const arm of inst.arms) {
+        const { wrist, elbow } = arm.userData;
+        _w.copy(wrist.position).applyMatrix4(inst.hands.matrix).sub(elbow);
+        const len = _w.length();
+        arm.position.copy(elbow);
+        arm.quaternion.setFromUnitVectors(_z, _w.divideScalar(len));
+        arm.scale.set(1, 1, len);
+      }
+    }
   }
 }
+const _w = new THREE.Vector3(), _z = new THREE.Vector3(0, 0, 1);
+// 2.5 turns lock to lock: +-450 deg at the full steering lock
+export const steerWheelAngle = (v) => (v.steer / v.spec.steerMax) * 1.25 * 2 * Math.PI;
 
 // ---------------------------------------------------------------------------
 // parked fleet
@@ -413,6 +548,24 @@ function parkedLayout(kinds) {
     }
     return deck.pop();
   };
+  // cross streets: a parked row along each curb out past the hotels, facing the way the
+  // near lane runs (westbound on the north side)
+  {
+    const rx = (() => { let a = 5151; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); })();
+    const types = ['sedan', 'hatch', 'suv', 'crossover', 'wagon', 'pickup', 'coupe', 'sedan'].map(kindOf);
+    for (const c of CROSS_STREETS.filter((q) => !q.far)) for (const sd of [-1, 1]) {
+      let prev = null;
+      for (let x = -60 - rx() * 4; x > -175;) {
+        let kind = types[Math.floor(rx() * types.length)];
+        if (kind === prev) kind = types[(types.indexOf(kind) + 1) % types.length];
+        prev = kind;
+        const L = kinds[kind].L, xc = x - L / 2;
+        x -= L + 0.9 + rx() * 1.8;
+        if (rx() < 0.18) continue;
+        spots.push({ kind, x: xc, z: c.z + sd * (CROSS.hw - 1.15 + (rx() - 0.5) * 0.2), yaw: sd * Math.PI / 2 + (rx() - 0.5) * 0.06, cross: true });
+      }
+    }
+  }
   spots.forEach((s, i) => {
     if (!s.fixed) s.color = deal();
     const near = [spots[i - 1], spots[i - 2]].filter((n) => n && s.z - n.z < 14);
@@ -471,10 +624,11 @@ function buildFleet(scene, gltf, M) {
   const col = new THREE.Color();
   spots.forEach((s, i) => {
     const k = kinds[s.kind];
-    const slope = (roadHeight(s.x + 0.9) - roadHeight(s.x - 0.9)) / 1.8;
+    const slope = s.cross ? 0 : (roadHeight(s.x + 0.9) - roadHeight(s.x - 0.9)) / 1.8;
     e.set(0, s.yaw, Math.atan(slope), 'YXZ');
     q.setFromEuler(e);
-    const m4 = new THREE.Matrix4().compose(new THREE.Vector3(s.x, roadHeight(s.x), s.z - k.zc), q, one);
+    const y = s.cross ? crossRoadHeight(s.x, CROSS.hw - 1.15) : roadHeight(s.x);
+    const m4 = new THREE.Matrix4().compose(new THREE.Vector3(s.x - k.zc * Math.sin(s.yaw), y, s.z - k.zc * Math.cos(s.yaw)), q, one);
     const parts = [];
     for (const { bm, ids } of Object.values(batches)) {
       const [g0, g1] = ids[s.kind] ?? [];
@@ -484,9 +638,11 @@ function buildFleet(scene, gltf, M) {
       if (bm.material === fleetPaint) bm.setColorAt(id, col.setHex(s.color));
       parts.push({ bm, id, g0, g1 });
     }
-    blobs.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(s.x, roadHeight(s.x) + 0.012, s.z), q, new THREE.Vector3(2.25, 1, k.L + 0.6)));
-    cars.push({ x: s.x, z: s.z, parts, lod: 0, vis: true, blob: i });
-    colliders.push({ min: { x: s.x - 1.0, y: 0, z: s.z - k.L / 2 - 0.05 }, max: { x: s.x + 1.0, y: k.top, z: s.z + k.L / 2 + 0.05 } });
+    blobs.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(s.x, y + 0.012, s.z), q, new THREE.Vector3(2.25, 1, k.L + 0.6)));
+    // (the cross-street rows only within ~120 m: they sit behind the hotels from Ocean Drive)
+    cars.push({ x: s.x, z: s.z, parts, lod: 0, vis: true, blob: i, far2: s.cross ? 120 * 120 : null });
+    const hx = s.cross ? k.L / 2 + 0.05 : 1.0, hz = s.cross ? 1.0 : k.L / 2 + 0.05;
+    colliders.push({ min: { x: s.x - hx, y: 0, z: s.z - hz }, max: { x: s.x + hx, y: k.top, z: s.z + hz } });
   });
   blobs.instanceMatrix.needsUpdate = true;
   scene.add(blobs);
@@ -498,7 +654,7 @@ function buildFleet(scene, gltf, M) {
     let changed = false;
     for (const c of cars) {
       const d2 = (c.x - p.x) ** 2 + (c.z - p.z) ** 2;
-      const vis = d2 < far2, lod = d2 < near2 ? 0 : 1;
+      const vis = d2 < (c.far2 ?? far2), lod = d2 < near2 ? 0 : 1;
       if (vis === c.vis && lod === c.lod) continue;
       for (const pt of c.parts) {
         const g = lod === 0 ? pt.g0 : pt.g1;
@@ -618,6 +774,9 @@ export async function buildCarsGlb(scene, renderer) {
       pose: { x: CAR.x, z: CAR.z, yaw: Math.PI },
       apply: (v) => poseHero(hero, v),
       eye: (out) => hero.car.userData.eyeAnchor.getWorldPosition(out),
+      // the eye's frame is the sprung body's (squat, dive, roll and shake move the view
+      // against the horizon); the model's nose is +z, a camera looks down -z
+      eyeQuat: (out) => hero.car.userData.eyeAnchor.getWorldQuaternion(out).multiply(FLIP_Y),
       root: hero.car,
     },
     update(dt, cars, camera) {

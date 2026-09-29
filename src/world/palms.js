@@ -7,7 +7,7 @@
 // shadows show the gaps between them. Wind sways crowns and frond tips in the vertex
 // shader (frozen in ?shot mode through the time passed to update()).
 import * as THREE from 'three';
-import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, CROSS_STREETS, crossLegs, crossStreetAt, DISTRICT } from './layout.js';
+import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, CROSS, CROSS_STREETS, crossLegs, crossStreetAt, DISTRICT } from './layout.js';
 import { registerLodHook, LOD } from './lod.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 import { QUALITY } from '../quality.js';
@@ -91,6 +91,14 @@ function plan() {
       const x = PARK.x0 + 2 + rnd() * (PARK.x1 - PARK.x0 - 4);
       if (promenade(x, z) || x > PARK.x1 - 1.0) continue;
       tree(x, z, 'park', 1);
+    }
+  }
+  // cross streets: palms along both sidewalks out past the hotels into the haze (own stream)
+  rnd = mulberry32(3303);
+  for (const c of CROSS_STREETS.filter((q) => !q.far)) for (const s of [-1, 1]) {
+    for (let x = -60 - rnd() * 6; x > -205; x -= 12 + rnd() * 7) {
+      if (rnd() < 0.12) continue;
+      tree(x, c.z + s * (CROSS.hw + 1.25 + (rnd() - 0.5) * 0.2), 'cross', 0, { hs: 0.7 + rnd() * 0.4 });
     }
   }
   // no tree grates in the cross-street mouths or on the crosswalk ramps

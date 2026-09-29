@@ -16,6 +16,30 @@ FLOOR = 0.44
 DF, DR = -0.12, -0.05      # cockpit furniture offsets (front / rear) from the first layout
 LAMP_S, LAMP_H = 0.72, 0.785   # headlamp centres
 GR_W, GR_H = 0.63, 0.59        # grille half width / centre height (fills the width between the lamps)
+# driver's station (car coords s, h, u): a real seated eye well behind the wheel, the hub on
+# a column raked 30 deg below horizontal, the dial cluster in a hooded pod above the hub
+EYE = (0.42, 1.18, -0.38)
+HUB = (0.42, 0.90, 0.24)
+COL_ANG = math.radians(30)
+RIM_R = 0.215
+SPEEDO = (0.42, 0.90, 0.566, 0.066)   # s, h, u (dial face), radius
+AUX = [('gauge_fuel', 0.42 + 0.13), ('gauge_temp', 0.42 - 0.13)]
+AUX_H, AUX_R = 0.895, 0.03
+
+
+def col_frame():
+    """wheel / column frame in blender space: X = car left, Y = up in the rim plane,
+    Z = down the column (away from the driver, into the dash)"""
+    X = V(1, 0, 0)
+    Z = V(0, -math.sin(COL_ANG), math.cos(COL_ANG))
+    Y = Z.cross(X).normalized()
+    return X, Y, Z
+
+
+def frame_matrix(X, Y, Z, origin):
+    M = Matrix((X, Y, Z)).transposed().to_4x4()
+    M.translation = origin
+    return M
 
 
 def hs(u):
@@ -123,7 +147,7 @@ def build_body(lod, name):
         for s in (-1, 1):
             cut.append(cutter_cyl(V(s * LAMP_S, LAMP_H, HALF + 0.07), (0, -1, 0), 0.088, 0.30, segs=40))
         # panel gaps: doors, hood, trunk
-        G = 0.0045
+        G = 0.0065
         d0, d1 = OPEN[1] - 0.04, -0.62
         for s in (-1, 1):
             for uz in (d0, d1):
@@ -309,39 +333,6 @@ def build_wheel(lod, side, name, parent, loc):
 
 
 # ---------------------------------------------------------------------------
-def gauge_image():
-    img = bpy.data.images.get('gauge_face')
-    if img:
-        return img
-    import numpy as np
-    N = 256
-    y, x = np.mgrid[0:N, 0:N]
-    cx = (x - N / 2 + 0.5) / (N / 2)
-    cy = (y - N / 2 + 0.5) / (N / 2)
-    r = np.hypot(cx, cy)
-    ang = np.degrees(np.arctan2(cx, cy))            # 0 = up, clockwise positive
-    face = np.stack([0.86 - 0.18 * r, 0.83 - 0.18 * r, 0.74 - 0.2 * r], -1)
-    ticks = (np.abs(ang) < 135) & (r > 0.72) & (r < 0.86)
-    major = ticks & ((np.abs((ang + 135) % 27) < 1.6) | (np.abs((ang + 135) % 27) > 25.4))
-    minor = ticks & (r > 0.78) & ((np.abs((ang + 135) % 6.75) < 0.7))
-    band = (np.abs(ang) < 135) & (r > 0.88) & (r < 0.9)
-    ring = (r > 0.25) & (r < 0.27)
-    ink = major | minor | band | ring
-    face[ink] = [0.08, 0.08, 0.09]
-    red = (ang > 100) & (ang < 135) & (r > 0.86) & (r < 0.9)
-    face[red] = [0.6, 0.08, 0.06]
-    face[r > 0.97] = [0.35, 0.35, 0.36]
-    rgba = np.concatenate([face, np.ones((N, N, 1))], -1).astype(np.float32)
-    img = bpy.data.images.new('gauge_face', N, N)
-    img.pixels.foreach_set(rgba[::-1].ravel())
-    img.file_format = 'PNG'
-    import os
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_src', 'gauge_face.png')
-    img.filepath_raw = path
-    img.save()
-    return img
-
-
 def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1), bolster=0.13, mat='vinyl',
             mat2=None, piping=None):
     """pleated seat block: rounded (u, h) profile lofted across s, ends rounded. M: car-space transform
@@ -371,7 +362,8 @@ def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1),
         tx, ty = b[0] - a[0], b[1] - a[1]
         L = math.hypot(tx, ty) or 1
         nrm.append((ty / L, -tx / L))
-    per = 2
+    # enough rings per pleat for a rounded tuck and a crisp sewn groove between tucks
+    per = 7
     ns = max(8, int(2 * s_half / pleat_w * per)) if not lod else 12
     rings = []
     for i in range(ns + 1):
@@ -387,7 +379,7 @@ def cushion(part, s_half, u0, u1, h0, h1, lod, M, pleat_w=0.1, pleat_dir=(0, 1),
         ring = []
         for (pu, ph), (nu, nh) in zip(prof, nrm):
             w = max(0.0, nu * pleat_dir[0] + nh * pleat_dir[1])
-            d = (0.018 * pl - 0.007) * w * (1 if abs(s) < inner else 0.6)
+            d = (0.022 * pl - 0.009) * w * (1 if abs(s) < inner else 0.6)
             qu, qh = pu + nu * d, ph + nh * d
             qu, qh = cu + (qu - cu) * k_end, ch + (qh - ch) * k_end
             ring.append(M @ V(s, qh, qu))
@@ -429,7 +421,7 @@ def shift_from(part, n0, M):
     part.transform([part.bm.faces[i] for i in range(n0, len(part.bm.faces))], M)
 
 
-def build_interior(part, lod):
+def build_interior(part, lod, glass):
     I = Matrix.Identity(4)
     Bd = Body(SPEC, 0)
     # carpet floor with transmission tunnel and a raised toe board
@@ -447,7 +439,7 @@ def build_interior(part, lod):
     f = part.grid(rings, mat='carpet', uv_tile=0.5)
     orient(part, f, lambda c: c - Vector((0, 0, 1)))
     # benches: front (driver's) and rear; ivory pleats, seafoam bolsters and welts
-    for (u0, u1, top, bu0, bu1, bh1, tilt) in ((-0.33 + DF, 0.2 + DF, 0.62, -0.47 + DF, -0.33 + DF, 1.06, 0.2),
+    for (u0, u1, top, bu0, bu1, bh1, tilt) in ((-0.33 + DF, 0.2 + DF, 0.60, -0.47 + DF, -0.33 + DF, 1.05, 0.2),
                                                (-1.13, -0.70, 0.6, -1.27, -1.13, 1.0, 0.17)):
         cushion(part, 0.8, u0, u1, FLOOR + 0.02, top, lod, I, pleat_dir=(0, 1), mat='vinyl', mat2='vinyl2', piping='vinyl2')
         Mb = rot_about_s(-tilt, (0, top, bu1))
@@ -458,78 +450,51 @@ def build_interior(part, lod):
             # chrome capping along the top of the front seat back
             pts = [Mb @ V(-0.74 + 1.48 * k / 16, bh1 - 0.012, bu0 + 0.01) for k in range(17)]
             sweep(part, pts, [(-0.012, 0), (0, 0.005), (0.012, 0), (0, -0.003)], mat='chrome', up=(0, 0, 1))
-    # canvas boot over the folded top, behind the rear seat: a tapered, lumpy fabric cover
+    # fitted padded boot over the folded top: taut ivory vinyl in three padded panels, a
+    # full front roll against the seat back, seafoam welts and chrome snaps round the hem
     rings = []
-    nb = 32 if lod == 0 else 8
-    nk = 14 if lod == 0 else 6
+    nb = 60 if lod == 0 else 8
+    nk = 16 if lod == 0 else 6
+    SEAM = 0.31
+
+    def boot_h(s, a):
+        e = clamp((0.86 - abs(s)) / 0.2)
+        kk = math.sqrt(max(0.0, 1 - (1 - e) ** 2))
+        u = -1.56 + 0.26 * math.cos(a)
+        pad = math.sin(a) ** 0.45 * (1 - 0.25 * max(0.0, -math.cos(a)) ** 2)
+        h = hc(u) + 0.01 + (0.115 * kk + 0.006) * pad
+        if lod == 0:
+            # sewn seams between the padded panels, the panels puffed between them
+            g = math.exp(-((abs(s) - SEAM) / 0.022) ** 2)
+            h += (0.006 * (1 - g) - 0.009 * g) * kk * math.sin(a) ** 0.8
+        return h, u
     for i in range(nb + 1):
         s = -0.86 + 1.72 * i / nb
-        e = clamp((0.86 - abs(s)) / 0.16)
-        kk = math.sqrt(max(0.0, 1 - (1 - e) ** 2))
         ring = []
         for k in range(nk + 1):
-            a = math.pi * k / nk
-            u = -1.55 + 0.25 * math.cos(a)
-            # loose fabric: a few soft folds running fore-aft, sharper creases over the frame bows
-            fold = (0.014 * math.sin(s * 8.5 + 0.7) + 0.006 * math.sin(s * 23.0 + 1.9) ** 3) * math.sin(a) ** 1.5 if lod == 0 else 0.0
-            h = hc(u) + 0.012 + (0.085 * kk + 0.008) * math.sin(a) ** 0.7 + fold * kk
+            h, u = boot_h(s, math.pi * k / nk)
             ring.append(V(s, h, u))
         rings.append(ring)
-    f = part.grid(rings, mat='canvas', uv_tile=0.25)
-    orient(part, f, lambda c: V(C(c)[0], 0.8, -1.55))
+    f = part.grid(rings, mat='vinyl', uv_tile=0.3)
+    orient(part, f, lambda c: V(C(c)[0], 0.8, -1.56))
     if lod == 0:
+        tube6 = [(0.0065 * math.cos(a), 0.0065 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]]
         # welted hem round the boot where it snaps to the body
-        tube6 = [(0.006 * math.cos(a), 0.006 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]]
-        sweep(part, [V(s, hc(-1.30) + 0.014, -1.30) for s in [-0.84 + 1.68 * k / 20 for k in range(21)]], tube6, mat='canvas', up=(0, 0, 1))
+        hem = [V(s, hc(-1.30) + 0.014, -1.30) for s in [-0.84 + 1.68 * k / 24 for k in range(25)]]
+        sweep(part, hem, tube6, mat='vinyl2', up=(0, 0, 1))
         for sg in (-1, 1):
-            sweep(part, [V(sg * 0.86, hc(u) + 0.014, u) for u in [-1.32 - 0.45 * k / 8 for k in range(9)]], tube6, mat='canvas', up=(0, 0, 1))
-    # dashboard: painted steel across the cowl, chrome strip, gauges, radio (laid out at the
-    # first cowl position, then moved forward by DF)
-    n0 = len(part.bm.faces)
-    rings = []
-    prof = [(0.8, 0.93), (0.72, 0.962), (0.64, 0.968), (0.595, 0.952), (0.572, 0.915), (0.565, 0.86), (0.572, 0.78), (0.6, 0.72), (0.66, 0.69), (0.78, 0.68)]
-    nd = 36 if lod == 0 else 8
-    for i in range(nd + 1):
-        s = -0.87 + 1.74 * i / nd
-        rings.append([V(s, h, u) for (u, h) in prof])
-    f = part.grid(rings, mat='paint', cap0=True, cap1=True)
-    orient(part, f, lambda c: V(C(c)[0] * 0.9, 0.83, 0.74))
-    if lod == 0:
-        strip = [V(-0.85 + 1.7 * i / 20, 0.858, 0.5645 - 0.0) for i in range(21)]
-        sweep(part, strip, [(0, -0.009), (0.004, -0.006), (0.005, 0), (0.004, 0.006), (0, 0.009)], up=(0, -1, 0))
-        # gauge pod before the driver
-        image_material('gauge', gauge_image())
-        nrm = V(0, 0.34, -1).normalized()
-        upv = V(0, 1, 0.34).normalized()
-        for (s, h, r) in ((0.42, 0.893, 0.072), (0.265, 0.9, 0.034), (0.575, 0.9, 0.034)):
-            c = V(s, h, 0.575)
-            disc(part, c - nrm * 0.004, nrm, upv, r, 'gauge', segs=32)
-            lathe(part, [(r + 0.002, -0.004), (r + 0.012, 0.004), (r + 0.01, 0.013), (r + 0.002, 0.012)], 32, c, nrm, mat='chrome')
-            nd_ = (upv * math.cos(0.9) + upv.cross(nrm) * math.sin(0.9)).normalized()
-            sweep(part, [c + nrm * 0.003, c + nrm * 0.003 + nd_ * r * 0.78], [(0.0022, 0.0006), (0, 0.0012), (-0.0022, 0.0006), (0, 0)], mat='tail', up=nrm)
-        lathe(part, [(0.0, 0.0), (0.02, 0.0), (0.02, 0.02), (0.0, 0.02)], 24, V(0.42, 0.893, 0.575) - nrm * 0.004, nrm, mat='chrome')
-        # instrument pod: a painted hood over the three dials, chrome-edged
-        pod = [V(s_, 1.004 - 0.035 * ((s_ - 0.42) / 0.24) ** 2, 0.598) for s_ in [0.17 + 0.5 * k / 16 for k in range(17)]]
-        sweep(part, pod, [(-0.03, -0.006), (0.03, -0.006), (0.03, 0.006), (-0.03, 0.006)], mat='paint', up=(0, 0, 1))
-        sweep(part, [q + V(0, -0.006, -0.031) for q in pod], [(0.004 * math.cos(a), 0.004 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='chrome', up=(0, 0, 1))
-        # radio face and knobs, glovebox
-        box(part, V(0, 0.905, 0.575), (0.24, 0.07, 0.012), mat='chrome', bevel=0.004)
-        for k in range(5):
-            box(part, V(0, 0.885 + k * 0.01, 0.567), (0.19, 0.0035, 0.004), mat='dark')
-        for s in (-0.16, 0.16):
-            lathe(part, [(0.0, 0.0), (0.016, 0.0), (0.015, 0.018), (0.0, 0.02)], 16, V(s, 0.905, 0.568), V(0, 0, -1), mat='chrome')
-        box(part, V(-0.42, 0.84, 0.574), (0.3, 0.1, 0.008), mat='chrome', bevel=0.003)
-        box(part, V(-0.42, 0.84, 0.570), (0.28, 0.085, 0.006), mat='paint', bevel=0.002)
-    # column and shifter (the wheel itself is its own node)
-    top = V(0.42, 0.965, 0.37)
-    d = V(0, -math.sin(math.radians(30)), math.cos(math.radians(30)))
-    col = [top + d * (0.05 + 0.3 * k / 6) for k in range(7)]
-    sweep(part, col, [(0.02 * math.cos(a), 0.02 * math.sin(a)) for a in [2 * math.pi * k / 12 for k in range(12)]], mat='paint', up=(1, 0, 0))
-    if lod == 0:
-        sh = [top + d * 0.1 + V(0, 0, 0), top + d * 0.1 + V(-0.08, 0.02, -0.03), top + d * 0.1 + V(-0.2, 0.05, -0.08)]
-        sweep(part, sh, [(0.006 * math.cos(a), 0.006 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(0, 0, 1))
-        lathe(part, [(0.0, -0.02), (0.016, -0.012), (0.016, 0.012), (0.0, 0.02)], 12, sh[-1], (sh[-1] - sh[-2]).normalized(), mat='ivory')
-    shift_from(part, n0, Matrix.Translation(V(0, 0, DF)))
+            sweep(part, [V(sg * 0.86, hc(u) + 0.014, u) for u in [-1.32 - 0.5 * k / 10 for k in range(11)]], tube6, mat='vinyl2', up=(0, 0, 1))
+            # welts along the panel seams, over the crown of the boot
+            seam = []
+            for k in range(nk + 1):
+                h, u = boot_h(sg * SEAM, math.pi * k / nk)
+                seam.append(V(sg * SEAM, h + 0.002, u))
+            sweep(part, seam, [(0.0045 * math.cos(a), 0.0045 * math.sin(a)) for a in [2 * math.pi * k / 6 for k in range(6)]], mat='vinyl2', up=(1, 0, 0))
+        # snaps along the front hem
+        for k in range(9):
+            s = -0.76 + 1.52 * k / 8
+            lathe(part, [(0.0, 0.0), (0.009, 0.0), (0.008, 0.004), (0.0, 0.005)], 10, V(s, hc(-1.30) + 0.018, -1.285), V(0, 0.3, 1), mat='chrome')
+    build_dash(part, glass, lod)
     # doors: pleated ivory insert panel, chrome strip, armrest, lever handle, window crank;
     # chrome capping along the door tops and rear quarters
     tube = lambda r, n=8: [(r * math.cos(a), r * math.sin(a)) for a in [2 * math.pi * k / n for k in range(n)]]
@@ -538,13 +503,13 @@ def build_interior(part, lod):
         if lod == 0:
             rings = []
             for i in range(29):
-                u = 0.5 - 1.02 * i / 28
+                u = 0.44 - 0.96 * i / 28
                 inset = 0.012 + (0.004 + 0.004 * (i % 2) if 0 < i < 28 else 0.0)
                 x = sg * (wall(u) - inset)
                 rings.append([V(x, h, u) for h in (0.645, 0.66, 0.74, 0.82, 0.835)])
             f = part.grid(rings, mat='vinyl', uv_tile=0.3)
             orient(part, f, lambda c, sg=sg: c + Vector((sg, 0, 0)))
-            sweep(part, [V(sg * (wall(u) - 0.02), 0.632, u) for u in [0.52 - 1.06 * k / 12 for k in range(13)]],
+            sweep(part, [V(sg * (wall(u) - 0.02), 0.632, u) for u in [0.46 - 1.0 * k / 12 for k in range(13)]],
                   [(-0.004, -0.007), (0.004, -0.007), (0.005, 0.007), (-0.005, 0.007)], mat='chrome', up=(sg, 0, 0))
             box(part, V(sg * (wall(-0.1) - 0.045), 0.705, -0.12), (0.075, 0.05, 0.42), mat='vinyl2', bevel=0.022)
             box(part, V(sg * (wall(-0.1) - 0.03), 0.672, -0.12), (0.05, 0.012, 0.36), mat='chrome', bevel=0.004)
@@ -571,37 +536,272 @@ def build_interior(part, lod):
         sweep(part, pts, [(-0.03, -0.004), (-0.026, 0.004), (0.0, 0.007), (0.026, 0.004), (0.03, -0.004)], mat='chrome', up=(0, 0, 1))
 
 
-def build_steering(lod, parent):
-    """wheel in its own frame: rim in local XZ, axis local +Y pointing down the column"""
-    p = Part('steering_wheel' if lod == 0 else 'steering_wheel_L1')
-    o = Vector((0, 0, 0))
-    Y = Vector((0, 1, 0))
-    rim_r, tube = 0.205, 0.0115
-    segs = 48 if lod == 0 else 24
-    rim = [Vector((rim_r * math.cos(2 * math.pi * k / segs), 0, rim_r * math.sin(2 * math.pi * k / segs))) for k in range(segs)]
-    tube_prof = [(tube * math.cos(a), tube * 1.15 * math.sin(a)) for a in [2 * math.pi * k / (12 if lod == 0 else 6) for k in range(12 if lod == 0 else 6)]]
-    sweep(p, rim, tube_prof, mat='ivory', closed_path=True, up=(0, 1, 0))
-    for ang in (-12, 192):
-        a = math.radians(ang)
-        d = Vector((math.cos(a), 0, math.sin(a)))
-        path = [d * 0.03 + Y * 0.035, d * 0.1 + Y * 0.02, d * (rim_r - 0.004)]
-        sweep(p, path, [(0.012 * math.cos(t), 0.005 * math.sin(t)) for t in [2 * math.pi * k / 8 for k in range(8)]], mat='ivory', up=(0, 1, 0))
+def pod_b(s):
+    """1 over the driver's instrument pod, 0 across the rest of the dash"""
+    return 1 - smoothstep(0.17, 0.25, abs(s - HUB[0]))
+
+
+# dash cross-section (u, h), from under the screen base back over the shelf, round the
+# padded lip and down the face; A across the dash, B through the hooded dial pod
+DASH_A = [(0.76, 0.93), (0.68, 0.958), (0.60, 0.975), (0.53, 0.988), (0.505, 0.982), (0.492, 0.965), (0.50, 0.948),
+          (0.515, 0.94), (0.525, 0.93), (0.53, 0.87), (0.535, 0.815), (0.54, 0.80), (0.555, 0.74), (0.585, 0.70),
+          (0.64, 0.68), (0.76, 0.675)]
+DASH_B = [(0.76, 0.93), (0.68, 0.958), (0.60, 1.004), (0.50, 1.036), (0.462, 1.032), (0.448, 1.018), (0.452, 1.004),
+          (0.50, 1.0), (0.575, 0.99), (0.578, 0.90), (0.575, 0.815), (0.545, 0.80), (0.555, 0.74), (0.585, 0.70),
+          (0.64, 0.68), (0.76, 0.675)]
+
+
+def dash_point(s, j):
+    b = pod_b(s)
+    (ua, ha), (ub, hb) = DASH_A[j], DASH_B[j]
+    return V(s, lerp(ha, hb, b), lerp(ua, ub, b))
+
+
+def shelf_h(u):
+    """dash top height (outside the pod) at u"""
+    for (u0, h0), (u1, h1) in zip(DASH_A[1:4], DASH_A[2:5]):
+        if u1 <= u <= u0:
+            return lerp(h0, h1, (u0 - u) / (u0 - u1))
+    return DASH_A[1][1]
+
+
+def dial_frame(c):
+    """dial normal (half-way between straight back and the driver's eye) and its up"""
+    to_eye = (V(*EYE) - c).normalized()
+    nrm = (to_eye + V(0, 0, -1)).normalized()
+    upv = (V(0, 1, 0) - nrm * V(0, 1, 0).dot(nrm)).normalized()
+    return nrm, upv
+
+
+def tube_prof(r, n=8, ry=None):
+    return [(r * math.cos(a), (ry or r) * math.sin(a)) for a in [2 * math.pi * k / n for k in range(n)]]
+
+
+def build_dash(part, glass, lod):
+    ns = 88 if lod == 0 else 12
+    ss = [-0.87 + 1.74 * i / ns for i in range(ns + 1)]
     if lod == 0:
-        ring = [Vector((0.14 * math.cos(math.radians(a)), 0.02, 0.14 * math.sin(math.radians(a)))) for a in range(-10, 191, 10)]
-        sweep(p, ring, [(0.004 * math.cos(t), 0.004 * math.sin(t)) for t in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(0, 1, 0))
-    lathe(p, [(0.0, 0.0), (0.03, 0.005), (0.042, 0.02), (0.045, 0.04), (0.04, 0.05)], 24 if lod == 0 else 10, o, -Y, mat='chrome')
+        # extra rings where the pod's side walls rise out of the dash
+        ss = sorted(set(ss + [HUB[0] + sg * (0.17 + 0.08 * k / 6) for sg in (-1, 1) for k in range(7)]))
+    rings = [[dash_point(s, j) for j in range(len(DASH_A))] for s in ss]
+
+    def fm(i, j):
+        s = (ss[i] + ss[min(i + 1, len(ss) - 1)]) / 2
+        return 'interior' if 8 <= j <= 9 and pod_b(s) > 0.6 else 'paint'
+    f = part.grid(rings, mat='paint', cap0=True, cap1=True, face_mat=fm if lod == 0 else None)
+    orient(part, f, lambda c: V(C(c)[0] * 0.9, 0.83, 0.70))
+    # column: painted tube from behind the hub down into the dash face, a collar at the hub
+    X, Y, Z = col_frame()
+    hub = V(*HUB)
+    sweep(part, [hub + Z * (0.05 + 0.38 * k / 6) for k in range(7)], tube_prof(0.026, 14 if lod == 0 else 8), mat='paint', up=tuple(X))
+    lathe(part, [(0.028, 0.03), (0.044, 0.04), (0.046, 0.075), (0.03, 0.095)], 24 if lod == 0 else 10, hub, Z, mat='paint')
+    if lod:
+        return
+    # chrome: lower lip of the dash face, a strip under the padded lip, the pod's brow edge
+    lip = [V(-0.85 + 1.7 * k / 30, 0.80, 0.537) for k in range(31)]
+    sweep(part, lip, [(0, -0.008), (0.004, -0.005), (0.005, 0), (0.004, 0.005), (0, 0.008)], up=(0, -1, 0))
+    for s0, s1 in ((-0.85, HUB[0] - 0.26), (HUB[0] + 0.26, 0.85)):
+        pts = [V(s0 + (s1 - s0) * k / 16, 0.935, 0.519) for k in range(17)]
+        sweep(part, pts, [(0, -0.006), (0.003, -0.004), (0.004, 0), (0.003, 0.004), (0, 0.006)], up=(0, -1, 0))
+    brow = [dash_point(HUB[0] - 0.2 + 0.4 * k / 24, 5) + V(0, -0.002, 0) for k in range(25)]
+    sweep(part, brow, tube_prof(0.004, 6), mat='chrome', up=(0, 0, 1))
+    # dial cluster: a chrome panel in the pod recess, the speedometer flanked by fuel and
+    # temperature dials; printed faces (runtime), chrome bezels with a deep hood, glass lenses
+    box(part, V(HUB[0], 0.903, 0.573), (0.37, 0.135, 0.004), mat='chrome', bevel=0.002)
+    dials = [('gauge_speedo', SPEEDO[0], SPEEDO[1], SPEEDO[2], SPEEDO[3])] + [(m, s, AUX_H, SPEEDO[2] + 0.004, AUX_R) for m, s in AUX]
+    for (mat, s, h, u, r) in dials:
+        c = V(s, h, u)
+        nrm, upv = dial_frame(c)
+        disc(part, c, nrm, upv, r, mat, segs=40)
+        lathe(part, [(r + 0.001, -0.012), (r + 0.004, -0.004), (r + 0.004, 0.003), (r + 0.011, 0.006), (r + 0.01, 0.012), (r + 0.002, 0.011)],
+              40, c, nrm, mat='chrome')
+        lathe(glass, [(r + 0.002, 0.004), (r * 0.7, 0.009), (r * 0.35, 0.0115), (0.0, 0.012)], 24, c, nrm, mat='glass')
+        if mat != 'gauge_speedo':
+            # fixed needles: fuel at three quarters, temperature mid-scale
+            th = math.radians(35 if mat == 'gauge_fuel' else 0)
+            xv = upv.cross(nrm).normalized()
+            dv = upv * math.cos(th) + xv * math.sin(th)
+            base = c + nrm * 0.003 - dv * r * 0.25
+            sweep(part, [base, c + nrm * 0.003 + dv * r * 0.8], [(0.0016, 0.0005), (0, 0.001), (-0.0016, 0.0005), (0, 0)],
+                  mat='needle', up=tuple(nrm), scales=[1.3, 0.5])
+            lathe(part, [(0.0, 0.0), (0.005, 0.0), (0.004, 0.003), (0.0, 0.004)], 12, c + nrm * 0.003, nrm, mat='chrome')
+    # radio in the centre of the dash face: chrome face, printed-look dial window with its
+    # pointer, push buttons, chrome-skirted ivory knobs
+    rc = V(0.0, 0.868, 0.521)
+    box(part, rc, (0.28, 0.086, 0.012), mat='chrome', bevel=0.004)
+    box(part, rc + V(0, 0.014, -0.007), (0.17, 0.026, 0.004), mat='ivory', bevel=0.001)
+    for k in range(11):
+        box(part, rc + V(-0.075 + 0.015 * k, 0.019 - 0.004 * (k % 2), -0.0095), (0.0015, 0.008 + 0.004 * (k % 2), 0.001), mat='dark')
+    box(part, rc + V(0.028, 0.014, -0.0098), (0.0022, 0.022, 0.001), mat='tail')
+    for k in range(5):
+        box(part, rc + V(-0.05 + 0.025 * k, -0.02, -0.009), (0.018, 0.012, 0.008), mat='chrome', bevel=0.002)
+
+    def knob(c, r=0.015, depth=0.02):
+        ax = V(0, 0, -1)
+        lathe(part, [(r + 0.006, 0.0), (r + 0.007, 0.003), (r + 0.004, 0.006), (r, 0.006)], 20, c, ax, mat='chrome')
+        lathe(part, [(r, 0.004), (r * 0.95, depth * 0.6), (r * 0.8, depth), (0.0, depth + 0.002)], 20, c, ax, mat='ivory')
+        lathe(part, [(r * 0.55, depth + 0.0005), (r * 0.5, depth + 0.0025), (0.0, depth + 0.003)], 12, c, ax, mat='chrome')
+    for s in (-0.165, 0.165):
+        knob(rc + V(s, 0, -0.006))
+    # speaker grille on the dash top, centre: chrome frame round fine chrome slats
+    gu0, gu1 = 0.58, 0.655
+    for k in range(13):
+        s = -0.15 + 0.3 * k / 12
+        box(part, V(s, shelf_h((gu0 + gu1) / 2) + 0.004, (gu0 + gu1) / 2), (0.006, 0.004, gu1 - gu0 - 0.012), mat='chrome')
+    box(part, V(0, shelf_h((gu0 + gu1) / 2) + 0.0015, (gu0 + gu1) / 2), (0.31, 0.003, gu1 - gu0), mat='dark')
+    frame = [V(0.16, 0, gu0), V(0.16, 0, gu1), V(-0.16, 0, gu1), V(-0.16, 0, gu0)]
+    frame = [V(C(p)[0], shelf_h(C(p)[2]) + 0.004, C(p)[2]) for p in frame]
+    sweep(part, frame, tube_prof(0.004, 6), mat='chrome', closed_path=True, up=(0, 0, 1))
+    # light / wiper knobs either side of the pod, glovebox door on the passenger side
+    for s in (0.70, 0.77, 0.12):
+        knob(V(s, 0.845, 0.528), r=0.012, depth=0.016)
+    box(part, V(-0.45, 0.866, 0.524), (0.3, 0.092, 0.006), mat='chrome', bevel=0.003)
+    box(part, V(-0.45, 0.866, 0.520), (0.28, 0.076, 0.004), mat='paint', bevel=0.002)
+    lathe(part, [(0.0, 0.0), (0.012, 0.0), (0.011, 0.006), (0.0, 0.008)], 16, V(-0.45, 0.895, 0.517), V(0, 0, -1), mat='chrome')
+    # slim column shifter: from a collar under the wheel, angled up and out to the right,
+    # ahead of the rim plane (seen through the wheel), an ivory knob on the end
+    p0 = hub + Z * 0.078 - X * 0.03
+    p1 = p0 - X * 0.07 + Y * 0.02 - Z * 0.012
+    p2 = p0 - X * 0.15 + Y * 0.058 - Z * 0.03
+    lathe(part, [(0.0, -0.012), (0.012, -0.01), (0.013, 0.012), (0.0, 0.014)], 12, p0, -X, mat='chrome')
+    sweep(part, [p0, p1, p2], [(0.0055 * math.cos(a), 0.0045 * math.sin(a)) for a in [2 * math.pi * k / 10 for k in range(10)]],
+          mat='chrome', up=tuple(Y), scales=[1.25, 1.0, 0.8])
+    ax = (p2 - p1).normalized()
+    lathe(part, [(0.0, -0.004), (0.009, -0.002), (0.012, 0.012), (0.01, 0.024), (0.0, 0.028)], 14, p2, ax, mat='ivory')
+    # pedals: brake hanging from under the dash, the throttle on the toe board
+    box(part, V(0.49, 0.62, 0.40), (0.11, 0.075, 0.016), mat='rubber', bevel=0.006, rot=Matrix.Rotation(0.5, 3, 'X'))
+    box(part, V(0.49, 0.62, 0.405), (0.12, 0.084, 0.008), mat='chrome', bevel=0.003, rot=Matrix.Rotation(0.5, 3, 'X'))
+    sweep(part, [V(0.49, 0.65, 0.41), V(0.49, 0.72, 0.47), V(0.49, 0.74, 0.56)], tube_prof(0.008, 6), mat='dark', up=(1, 0, 0))
+    box(part, V(0.305, 0.585, 0.47), (0.06, 0.16, 0.012), mat='rubber', bevel=0.005, rot=Matrix.Rotation(0.9, 3, 'X'))
+
+
+def build_steering(lod, parent):
+    """period two-spoke wheel in its own frame (local X left, Y up the rim, Z down the column):
+    ivory rim with finger grips, dished flat spokes flowing into a domed horn hub with a
+    chrome cap, a chrome half horn ring below the hub"""
+    name = 'steering_wheel' if lod == 0 else 'steering_wheel_L1'
+    p = Part(name)
+    X, Y, Z = Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))
+    segs = 144 if lod == 0 else 36
+    rim = [Vector((RIM_R * math.cos(2 * math.pi * k / segs), RIM_R * math.sin(2 * math.pi * k / segs), 0)) for k in range(segs)]
+    grips = [1.0 + (0.1 * max(0.0, math.cos(36 * 2 * math.pi * k / segs)) ** 6 if lod == 0 else 0.0) for k in range(segs)]
+    sweep(p, rim, [(0.0115 * math.cos(a), 0.0135 * math.sin(a)) for a in [2 * math.pi * k / (12 if lod == 0 else 6) for k in range(12 if lod == 0 else 6)]],
+          mat='ivory', closed_path=True, up=(0, 0, 1), scales=grips)
+    for ang in (200, 340):
+        a = math.radians(ang)
+        d = Vector((math.cos(a), math.sin(a), 0))
+        path = [d * 0.05 + Z * 0.04, d * 0.09 + Z * 0.032, d * 0.13 + Z * 0.02, d * 0.17 + Z * 0.008, d * (RIM_R - 0.003)]
+        sweep(p, path, [(0.017 * math.cos(t), 0.0055 * math.sin(t)) for t in [2 * math.pi * k / 10 for k in range(10)]],
+              mat='ivory', up=(0, 0, 1), scales=[(1.7, 1.3), (1.25, 1.1), (1.0, 1.0), (0.85, 1.0), (0.75, 1.1)])
+    hub = Z * 0.045
+    lathe(p, [(0.03, 0.03), (0.05, 0.012), (0.063, 0.002), (0.065, 0.01), (0.059, 0.024), (0.045, 0.035), (0.026, 0.041), (0.0, 0.043)],
+          32 if lod == 0 else 12, hub, -Z, mat='ivory')
+    lathe(p, [(0.03, 0.0), (0.031, 0.003), (0.025, 0.008), (0.012, 0.011), (0.0, 0.012)], 24 if lod == 0 else 8, hub - Z * 0.035, -Z, mat='chrome')
+    if lod == 0:
+        lathe(p, [(0.0655, 0.0), (0.068, 0.004), (0.066, 0.008), (0.062, 0.007)], 32, hub, -Z, mat='chrome')
+        ring = []
+        for k in range(29):
+            a = math.radians(196 + 148 * k / 28)
+            ring.append(Vector((0.15 * math.cos(a), 0.15 * math.sin(a), 0.004)))
+        sweep(p, ring, tube_prof(0.0048, 8), mat='chrome', up=(0, 0, 1))
+        for ang in (196, 344):
+            a = math.radians(ang)
+            d = Vector((math.cos(a), math.sin(a), 0))
+            lathe(p, [(0.0, -0.004), (0.007, -0.002), (0.007, 0.006), (0.0, 0.008)], 10, d * 0.15 + Z * 0.004, Z, mat='chrome')
     ob = p.object(sharp=50)
-    ob.name = p.name + '_mesh'
-    top = V(0.42, 0.965, 0.37)
-    d = V(0, -math.sin(math.radians(30)), math.cos(math.radians(30)))
-    X = Vector((1, 0, 0))
-    Z = X.cross(d).normalized()
-    M = Matrix((X, d, Z)).transposed().to_4x4()
-    M.translation = top
-    piv = empty(p.name, (0, 0, 0), parent, size=0.1)
-    piv.matrix_world = M
+    ob.name = name + '_mesh'
+    Xw, Yw, Zw = col_frame()
+    piv = empty(name, (0, 0, 0), parent, size=0.1)
+    piv.matrix_world = frame_matrix(Xw, Yw, Zw, V(*HUB))
     ob.parent = piv
     return piv
+
+
+def build_needle(parent):
+    """speedometer needle on its own pivot (local Z out of the dial, Y = the dial's up):
+    turned by the runtime with the road speed"""
+    c = V(*SPEEDO[:3])
+    nrm, upv = dial_frame(c)
+    xv = upv.cross(nrm).normalized()
+    p = Part('speedo_needle')
+    path = [Vector((0, -0.014, 0.002)), Vector((0, 0.02, 0.002)), Vector((0, SPEEDO[3] * 0.86, 0.002))]
+    sweep(p, path, [(0.0024, 0.0005), (0, 0.001), (-0.0024, 0.0005), (0, 0)], mat='needle', up=(0, 0, 1), scales=[1.5, 1.0, 0.3])
+    lathe(p, [(0.0, 0.0), (0.008, 0.0), (0.007, 0.003), (0.0, 0.0045)], 16, Vector((0, 0, 0.002)), Vector((0, 0, 1)), mat='chrome')
+    ob = p.object(sharp=50)
+    ob.name = 'speedo_needle_mesh'
+    piv = empty('speedo_needle', (0, 0, 0), parent, size=0.03)
+    piv.matrix_world = frame_matrix(xv, upv, nrm, c + nrm * 0.002)
+    ob.parent = piv
+    return piv
+
+
+def limb(part, pts, radii, mat, n=12):
+    sweep(part, pts, tube_prof(1.0, n), mat=mat, up=(1, 0, 0), scales=radii)
+
+
+def build_driver(parent):
+    """the driver's hands on the wheel at ten and two (own pivot, same frame as the wheel,
+    turned with it up to a limit), forearms back to the short shirt sleeves, and the legs
+    (thighs on the cushion, knees under the rim, feet on the pedals). Shown only while
+    someone drives."""
+    Xw, Yw, Zw = col_frame()
+    M = frame_matrix(Xw, Yw, Zw, V(*HUB))
+    Mi = M.inverted()
+    h = Part('driver_hands')
+    wrists = []
+    for sg in (1, -1):
+        th = math.radians(60) * sg
+        pr = Vector((RIM_R * math.sin(th), RIM_R * math.cos(th), 0))
+        n_r = pr.normalized()
+        t = Vector((math.cos(th), -math.sin(th), 0))
+        Zl = Vector((0, 0, 1))
+        cs = lambda ph, r: pr + (n_r * math.cos(math.radians(ph)) + Zl * math.sin(math.radians(ph))) * r
+        # back of the hand: a flattened pad on the outer / driver's side of the rim
+        c = cs(-35, 0.02)
+        pad = lathe(h, [(0.006, -0.047), (0.017, -0.042), (0.023, -0.028), (0.025, -0.008), (0.024, 0.014), (0.02, 0.032), (0.012, 0.044), (0.004, 0.047)],
+                    20, c, t * -sg, mat='skin')
+        Q = n_r.lerp(-Zl, 0.45).normalized()
+        # four fingers wrapped over the far side of the rim, their tips curling back on the
+        # inside, knuckles in a row along the pad
+        for k in range(4):
+            dt = (-0.028 + 0.0187 * k) * -sg
+            arc = [cs(ph, 0.022) + t * dt for ph in (-25, 20, 70, 115, 160, 195)]
+            sweep(h, arc, tube_prof(0.0092, 8), mat='skin', up=tuple(t), scales=[1.1, 1.05, 1.0, 0.95, 0.9, 0.75])
+            lathe(h, [(0.0, -0.011), (0.0095, -0.006), (0.0098, 0.004), (0.0, 0.01)], 10, cs(-28, 0.029) + t * dt, Q, mat='skin')
+        # thumb along the inner side of the rim, pointing up it
+        tb = [cs(-70, 0.024) + t * sg * 0.022, cs(-115, 0.022) + t * sg * 0.002, cs(-150, 0.02) - t * sg * 0.026]
+        sweep(h, tb, tube_prof(0.0105, 8), mat='skin', up=tuple(t), scales=[1.15, 1.0, 0.75])
+        # the wrist, heading back toward the elbow (the runtime hangs the forearm between the
+        # 'wrist' anchor and an elbow fixed by the driver's side, so turning hands keep arms)
+        elbow = Mi @ V(HUB[0] + sg * 0.3, 0.78, -0.2)
+        w0 = cs(-75, 0.026)
+        wrist = w0 + (elbow - w0).normalized() * 0.05
+        limb(h, [w0, w0.lerp(wrist, 0.5), wrist], [0.026, 0.024, 0.023], 'skin')
+        wrists.append(('driver_wrist_' + ('L' if sg > 0 else 'R'), wrist))
+    ob = h.object(sharp=60)
+    ob.name = 'driver_hands_mesh'
+    piv = empty('driver_hands', (0, 0, 0), parent, size=0.05)
+    piv.matrix_world = M
+    ob.parent = piv
+    for nm, w in wrists:
+        e = empty(nm, (0, 0, 0), piv, size=0.02)
+        e.location = w
+    # legs
+    L = Part('driver_legs')
+    for off, ankle in ((0.11, (0.55, 0.52, 0.36)), (-0.11, (0.305, 0.6, 0.42))):
+        hip = V(HUB[0] + off, 0.685, -0.34)
+        knee = V(HUB[0] + off * 1.12, 0.69, 0.04)
+        an = V(*ankle)
+        pts = [hip, hip.lerp(knee, 0.35), hip.lerp(knee, 0.7), knee.lerp(hip, 0.08), knee, knee.lerp(an, 0.1), knee.lerp(an, 0.5), an]
+        limb(L, pts, [0.09, 0.085, 0.074, 0.064, 0.062, 0.056, 0.05, 0.043], 'cloth2', n=14)
+        # shoe
+        fwd = V(0, -0.35 if off < 0 else -0.6, 1).normalized()
+        box(L, an + fwd * 0.085 + V(0, -0.02, 0), (0.09, 0.075, 0.25), mat='rubber', bevel=0.028,
+            rot=Matrix.Rotation(-math.atan2(C(fwd)[1], C(fwd)[2]), 3, 'X'))
+    ob2 = L.object(sharp=60)
+    ob2.name = 'driver_legs'
+    ob2.parent = parent
+    return piv, ob2
 
 
 def windscreen(part_chrome, part_glass, caster, lod):
@@ -795,10 +995,52 @@ def trims(part, caster, lod):
                 if len(pts) > 2:
                     sweep(part, pts, [(-0.005, 0), (0, 0.004), (0.005, 0), (0, -0.002)], mat='chrome', up=(sg, 0, 0))
         if lod == 0:
-            # push-button door handle
-            loc, nor = caster.hit((sg * 2, 0.895, -0.5), (-sg, 0, 0))
-            if loc:
-                box(part, loc + nor * 0.008, (0.018, 0.026, 0.16), mat='chrome', bevel=0.007)
+            # door handle: a tapered chrome bar standing off the skin on two posts, the push
+            # button in its front end
+            path, sc = [], []
+            for k in range(11):
+                uu = -0.36 - 0.2 * k / 10
+                l2, n2 = caster.hit((sg * 2, 0.878, uu), (-sg, 0, 0))
+                if l2:
+                    path.append(l2 + n2 * 0.011)
+                    sc.append(max(0.45, min(1.0, 0.6 + k / 5, (10 - k) / 4 + 0.3)))
+            if len(path) > 2:
+                sweep(part, path, [(-0.011, -0.005), (-0.008, 0.004), (0.0, 0.007), (0.008, 0.004), (0.011, -0.005), (0.0, -0.007)],
+                      mat='chrome', up=(sg, 0, 0), scales=[(s, 1.0) for s in sc])
+                for q in (path[1], path[-2]):
+                    box(part, q - Vector((sg * 0.006, 0, 0)), (0.012, 0.012, 0.014), mat='chrome', bevel=0.004)
+                lathe(part, [(0.0, 0.0), (0.0065, 0.0), (0.006, 0.004), (0.0, 0.005)], 12, path[0] + Vector((sg * 0.005, 0, 0)), Vector((sg, 0, 0)), mat='chrome')
+            # dark backing behind the door shut lines so the gaps read as shadowed slots
+            for uz in (OPEN[1] - 0.04, -0.62):
+                col = []
+                for k in range(15):
+                    hh = 0.37 + (hs(uz) - 0.02 - 0.37) * k / 14
+                    l2, n2 = caster.hit((sg * 2, hh, uz), (-sg, 0, 0))
+                    if l2:
+                        col.append((l2 - n2 * 0.004, n2))
+                if len(col) > 2:
+                    strip = [[p + V(0, 0, 0.012), p + V(0, 0, -0.012)] for p, _n in col]
+                    f = part.grid(strip, mat='dark')
+                    orient(part, f, lambda c, sg=sg: c + Vector((sg, 0, 0)))
+    # dark backing under the hood and trunk shut lines: through the cut slot the eye used to
+    # see the ground under the car, which aliased into broken black and bright dashes
+    if lod == 0:
+        for loop in ([(0.6, 0.69), (0.6, 2.57), (-0.6, 2.57), (-0.6, 0.69)], [(0.56, -1.66), (0.56, -2.4), (-0.56, -2.4), (-0.56, -1.66), (0.56, -1.66)]):
+            for (s0, u0), (s1, u1) in zip(loop[:-1], loop[1:]):
+                L = math.hypot(s1 - s0, u1 - u0)
+                n = max(2, int(L / 0.04))
+                ds, du = (s1 - s0) / L, (u1 - u0) / L
+                rows = []
+                for k in range(n + 1):
+                    s, u = s0 + (s1 - s0) * k / n, u0 + (u1 - u0) * k / n
+                    loc, nor = caster.hit((s, 2.5, u), (0, -1, 0))
+                    if not loc:
+                        continue
+                    p = loc - nor * 0.005
+                    rows.append([p + V(-du * 0.014, 0, ds * 0.014), p + V(du * 0.014, 0, -ds * 0.014)])
+                if len(rows) > 1:
+                    f = part.grid(rows, mat='dark')
+                    orient(part, f, lambda c: c - Vector((0, 0, 1)))
     # hood: two chrome spears on the crown and a generic jet-shaped ornament (no emblem)
     if lod == 0:
         for sg in (-1, 1):
@@ -910,7 +1152,7 @@ def build(lod, coll):
     trims(extra, caster, lod)
     glass = Part('glass' + tag)
     windscreen(extra, glass, caster, lod)
-    build_interior(extra, lod)
+    build_interior(extra, lod, glass)
     arches(extra, lod)
     # dark chassis core between the wheels only (nothing shows under the overhangs)
     box(extra, V(0, 0.31, (WB_F + WB_R) / 2), (1.2, 0.06, WB_F - WB_R - 1.0), mat='dark')
@@ -923,8 +1165,10 @@ def build(lod, coll):
         wheels.append(build_wheel(lod, s, 'wheel_' + nm + tag, root, V(s * TRACK, HUB_H, u)))
     sw = build_steering(lod, root)
     if lod == 0:
-        empty('driver_seat', V(0.42, 0.62, -0.1 + DF), root)
-        empty('driver_eye', V(0.42, 1.24, -0.12 + DF), root)
+        empty('driver_seat', V(0.42, 0.60, -0.1 + DF), root)
+        empty('driver_eye', V(*EYE), root)
+        build_needle(root)
+        build_driver(root)
     objs = [root] + list(root.children_recursive)
     for o in objs:
         for c in list(o.users_collection):

@@ -175,6 +175,32 @@ check('ATV runs the whole beach north -> south (z -335 -> 330)', r.z > 330 - 1, 
   v = car({ x: -22.75, z: 40, yaw: S });
   drive(v, { throttle: 1, steer: 0, hard: true }, 8);
   check('car stops at a parked car', v.z + 2.88 < 58 + 0.05 && v.z > 50, { z: +v.z.toFixed(2), lon: +v.lon.toFixed(2) });
+  // swerving into a row of parked cars at speed from the lane: the body (a 2.0 x 5.4 m
+  // rectangle, rounded 0.2 m at the corners) never ends up inside one
+  {
+    const row = [];
+    for (let k = 0; k < 8; k++) row.push({ min: { x: -23.75, y: 0, z: -140 + k * 6.2 }, max: { x: -21.75, y: 1.4, z: -140 + k * 6.2 + 4.8 } });
+    const rw = { ...world, grid: buildGrid([...boxes, ...row], []) };
+    let worst = 0, n = 0;
+    for (const steer of [-1, -0.6, -0.3]) for (const kmh of [15, 40, 70]) for (const z0 of [-170, -160, -152]) {
+      const q = createVehicle('car', { x: -18.5, z: z0, yaw: S }, rw); q.parked = false; q.ridden = true; q.engineOn = true;
+      q.vx = 0; q.vz = kmh / 3.6; q.lon = kmh / 3.6;
+      for (let t = 0; t < 4; t += 1 / 60) {
+        stepVehicle(q, { throttle: 1, steer: t < 1.2 ? -steer : 0, hard: true }, 1 / 60, rw);
+        // body corners / sides against each parked box
+        const s = Math.sin(q.yaw), c = Math.cos(q.yaw);
+        for (const [lx, lz] of [[-0.8, -2.7], [0.8, -2.7], [-0.8, 2.7], [0.8, 2.7], [-1.0, -2.3], [1.0, -2.3], [-1.0, 2.3], [1.0, 2.3], [-1.0, 0], [1.0, 0]]) {
+          const px = q.x + lx * c + lz * s, pz = q.z - lx * s + lz * c;
+          for (const b of row) {
+            const d = Math.min(px - b.min.x, b.max.x - px, pz - b.min.z, b.max.z - pz);
+            if (d > 0) worst = Math.max(worst, d);
+          }
+        }
+      }
+      n++;
+    }
+    check('car never ends up inside a parked car (swerves at 15-70 km/h)', worst < 0.1, { runs: n, deepestM: +worst.toFixed(3) });
+  }
   v = car({ x: -19.75, z: -10, yaw: S });
   drive(v, { throttle: 1, steer: 0, hard: true }, 25);
   check('car at speed stops at a lamp post (no tunnelling)', v.z < 150 - 0.12 - 0.9 && v.z > 140, { z: +v.z.toFixed(2) });

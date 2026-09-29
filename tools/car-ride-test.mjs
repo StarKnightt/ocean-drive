@@ -32,7 +32,7 @@ const walker = {
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 2000);
 // a stand-in for the hero model: the eye rides at the anchor offset in the car frame
 const root = new THREE.Group(), eye = new THREE.Object3D();
-eye.position.set(0.42, 1.24, -0.24);
+eye.position.set(0.42, 1.18, -0.38);
 root.add(eye);
 let applied = 0;
 const car = {
@@ -62,7 +62,7 @@ for (let i = 0; i < 120; i++) { V.update(1 / 60); if (caught === null && cv.engi
 check('the engine catches after the starter (~1 s)', caught > 0.9 && caught < 1.2 && cv.rpm > 500, { caught, rpm: Math.round(cv.rpm) });
 check('audio got car states (cranking, then running)', audioStates.some((s) => s.kind === 'car' && !s.engineOn) && audioStates.at(-1).engineOn, { n: audioStates.length });
 const eyeY = camera.position.y;
-check('camera at the driver eye (~1.24 m above the road)', eyeY > 1.1 && eyeY < 1.45, { y: +eyeY.toFixed(3) });
+check('camera at the driver eye (~1.18 m above the road)', eyeY > 1.08 && eyeY < 1.3, { y: +eyeY.toFixed(3) });
 // drive: W for 6 s
 const r = V.simulate(['KeyW'], 6);
 check('W drives it down the west lane (south)', cv.z > CAR.z + 20 && r.maxSpeed > 8, { z: +cv.z.toFixed(1), max: r.maxSpeed, gear: cv.gear });
@@ -81,10 +81,10 @@ const v0 = cv.lon;
 V.simulate(['Space'], 1);
 check('Space handbrake slows it', cv.lon < v0 - 3, { from: +v0.toFixed(2), to: +cv.lon.toFixed(2) });
 // park at the curb and get out: sidewalk side
-V.place(CAR.x, -40, Math.PI);
+V.place(CAR.x, CAR.z, Math.PI);
 V.update(1 / 60);
 listeners.keydown.forEach((fn) => fn({ code: 'KeyE', repeat: false }));
-check('E gets out on the sidewalk side, engine off, car stays', !V.riding && walker.pos.x < -24 && !cv.engineOn && Math.abs(cv.z + 40) < 0.2,
+check('E gets out on the sidewalk side, engine off, car stays', !V.riding && walker.pos.x < -24 && !cv.engineOn && Math.abs(cv.z - CAR.z) < 0.2,
   { walker: [+walker.pos.x.toFixed(2), +walker.pos.y.toFixed(2)], car: [cv.x, +cv.z.toFixed(2)] });
 check('audio told to switch the engine off', audioStates.at(-1).kind === null, audioStates.at(-1));
 // the traffic car as a moving collider

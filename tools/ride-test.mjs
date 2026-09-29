@@ -242,17 +242,48 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   c = await carV();
   check('the V8 catches and idles ~620 rpm', c.on && c.rpm > 500 && c.rpm < 1400, c);
   await shot('14-car-driver-view', 300);
+  // head turned: down at the knees / seat edge, right across the screen to the far pillar
+  await page.evaluate(() => { window.__walker.pitch = -0.62; });
+  await shot('14b-car-look-down', 300);
+  await page.evaluate(() => { window.__walker.pitch = -0.05; window.__walker.yaw -= 1.1; });
+  await shot('14c-car-look-right', 300);
+  await page.evaluate(() => { window.__walker.yaw += 1.1; window.__walker.pitch = -0.052; });
+  await page.waitForTimeout(300);
   // real keys: W pulls away down the west lane
+  await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
+  // the view rides the sprung body: squat pulling away and dive under braking tip the
+  // horizon (camera pitch against the world) the opposite ways
+  const camPitch = () => page.evaluate(() => { const c = window.__walker.camera, d = c.getWorldDirection(new c.position.constructor()); return Math.asin(d.y) * 57.3; });
+  const p0 = await camPitch();
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(700);
+  const pAcc = await camPitch();
+  await page.waitForTimeout(2300);
+  await shot('15-car-driving', 0);
+  await page.keyboard.up('KeyW');
+  await page.keyboard.down('KeyS');
+  await page.waitForTimeout(450);
+  const pBrk = await camPitch();
+  await page.keyboard.up('KeyS');
+  check('driver view squats under power and dives under braking', pAcc - p0 > 0.4 && pBrk - p0 < -0.4, { rest: +p0.toFixed(2), accel: +pAcc.toFixed(2), brake: +pBrk.toFixed(2) });
   await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(3000);
-  await shot('15-car-driving', 0);
   await page.keyboard.up('KeyW');
   c = await carV();
   check('real W key drives the car', c.lon > 4, c);
   // steer (A / D) and the steering wheel turns with it
   const steer = await page.evaluate(() => { const V = window.__vehicles; V.simulate(['KeyW', 'KeyD'], 1.2); return +V.current.steer.toFixed(3); });
   check('D steers right', steer > 0.05, { steer });
+  // the rim turns about the column by steer / lock x 450 deg (2.5 turns lock to lock)
+  const wheel = await page.evaluate(() => {
+    const v = window.__vehicles.current, st = window.__cars.hero.getObjectByName('steering_wheel');
+    const q = st.userData.q0.clone().invert().multiply(st.quaternion);
+    const ang = 2 * Math.atan2(Math.hypot(q.x, q.y, q.z), q.w) * Math.sign(q.y || 1) * 57.3;
+    return { deg: +ang.toFixed(1), want: +(v.steer / v.spec.steerMax * 450).toFixed(1), offAxis: +Math.hypot(q.x, q.z).toFixed(4) };
+  });
+  const wrapDeg = (a) => (((a % 360) + 540) % 360) - 180;
+  check('steering wheel turns steer/lock x 450 deg about the column', Math.abs(wrapDeg(wheel.deg - wheel.want)) < 3 && wheel.offAxis < 1e-3 && Math.abs(wheel.want) > 60, wheel);
   await shot('16-car-steering', 0);
   // down the drive to the south end at speed, then brake (traffic sent off to the loop ends
   // first: this measures the car, not the 25 km/h cruiser ahead of it)
@@ -282,13 +313,29 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
     check('a parked car stops it (no tunnelling)', r.at[1] < pk.z - 2.5, { ...r, parkedZ: pk.z });
   }
   // exit: sidewalk side when parked at the curb; the car stays
-  await page.evaluate(() => window.__vehicles.place(-22.75, -40, Math.PI));
-  await brake(1);
+  // (back in its own bay at the curb: an empty spot, not the parked row)
+  const bay = await page.evaluate((p) => window.__vehicles.place(p.x, p.z, Math.PI), start);
+  await page.evaluate(() => window.__vehicles.simulate([], 0.5));
+  const inside = () => page.evaluate(() => {
+    const v = window.__vehicles.list.find((e) => e.kind === 'car').v, s = Math.sin(v.yaw), c = Math.cos(v.yaw);
+    let worst = 0;
+    for (const [lx, lz] of [[-0.8, -2.7], [0.8, -2.7], [-0.8, 2.7], [0.8, 2.7], [-1, 0], [1, 0], [0, -2.8], [0, 2.8]]) {
+      const px = v.x + lx * c + lz * s, pz = v.z - lx * s + lz * c;
+      for (const b of window.__cars.colliders) {
+        if (b.hero) continue;
+        const d = Math.min(px - b.min.x, b.max.x - px, pz - b.min.z, b.max.z - pz);
+        if (d > 0) worst = Math.max(worst, d);
+      }
+    }
+    return +worst.toFixed(3);
+  });
   await page.keyboard.press('KeyE');
   await page.waitForTimeout(500);
   s = await st();
   c = await carV();
-  check('E gets out on the sidewalk side; engine off; car stays', !s.riding && s.walker.x < -24 && !c.on && Math.abs(c.z + 40) < 0.5, { walker: s.walker, car: c });
+  check('E gets out on the sidewalk side; engine off; car stays', !s.riding && s.walker.x < -24 && !c.on && Math.abs(c.z - start.z) < 0.5, { walker: s.walker, car: c, bay });
+  const overlap = await inside();
+  check('the parked convertible does not overlap any parked car', overlap < 0.02, { deepestM: overlap });
   await shot('18-car-after-exit', 300);
   // the parked car is solid to the walker
   const solid = await page.evaluate(() => {

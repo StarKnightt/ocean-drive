@@ -18,7 +18,7 @@ export const PARKED = {
   atv: { x: TOWER.x + 1.2, z: TOWER.z + 4.8, yaw: 0.35 - Math.PI },
 };
 const REACH = { bike: 2.5, atv: 2.9, car: 3.4 };   // m to the nearest collider circle centre
-const RIDE_PITCH = { bike: -13, atv: -9, car: -5 };   // deg, the view settles to this on mounting
+const RIDE_PITCH = { bike: -13, atv: -9, car: -3 };   // deg, the view settles to this on mounting
 const CAR_LOOK = { yaw: 1.85, up: 0.5, down: -0.85 };   // rad: head turn limits in the driver's seat
 const STARTER = 1.05;   // s of cranking before the V8 catches
 const BASE_FOV = 50;
@@ -222,6 +222,11 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
   }
   function headQuat(e, out) {
     const { v } = e;
+    if (e.kind === 'car' && e.drive.eyeQuat) {
+      e.drive.eyeQuat(out);
+      _e.set(walker.pitch, rel, 0, 'YXZ');
+      return out.multiply(_q2.setFromEuler(_e));
+    }
     const k = e.kind === 'bike' ? 0.55 : 0.8;
     // (in the car the head rides the sprung body: its pitch and roll are the body's)
     _e.set(v.pitch * (e.kind === 'car' ? 1 : 0.85), v.yaw, v.roll * (e.kind === 'car' ? 1 : k), 'YXZ');
@@ -419,9 +424,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
       bob.y = 0.012 * a * Math.sin(v.crank * 2);
       bob.x = 0.008 * a * Math.sin(v.crank);
     } else if (e.kind === 'car') {
-      // the V8 through the column and the seat: a faint shake, more at idle lope
-      const j = v.engineOn ? 0.00035 + 0.0003 * Math.max(0, 1 - Math.abs(v.lon) / 4) : 0;
-      bob.y = j * Math.sin(clock * 41) + j * 0.7 * Math.sin(clock * 10.3);
+      // (the engine and road shake live in the sprung body the eye is anchored to)
     } else {
       const j = 0.0006 + 0.0012 * (v.rpm - 1400) / 6000;
       bob.y = j * Math.sin(clock * 83) + j * 0.6 * Math.sin(clock * 131);
@@ -509,13 +512,21 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     mount: (kind) => mount(list.find((e) => e.kind === kind)),
     dismount,
     // test hook: move the ridden (or named) vehicle to a pose, at rest
+    // (the car never lands inside something solid: a blocked spot slides to the nearest
+    // clear one along its heading, e.g. the next gap in a parked row; returns where it ended up)
     place(x, z, yaw, kind) {
       const e = kind ? list.find((q) => q.kind === kind) : rider;
-      if (!e) return false;
-      Object.assign(e.v, { x, z, yaw, vx: 0, vz: 0, lon: 0, steer: 0 });
-      settle(e.v, world);
+      if (!e) return null;
+      const put = (px, pz) => { Object.assign(e.v, { x: px, z: pz, yaw, vx: 0, vz: 0, lon: 0, steer: 0 }); settle(e.v, world); return !blockedAt(e.v, px, pz, yaw, world); };
+      let ok = put(x, z);
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      for (let k = 1; !ok && e.kind === 'car' && k <= 120; k++) {
+        const d = Math.ceil(k / 2) * 0.25 * (k % 2 ? 1 : -1);
+        ok = put(x + fx * d, z + fz * d);
+      }
+      if (!ok) put(x, z);
       pose3(e, clock);
-      return !blockedAt(e.v, x, z, yaw, world);
+      return { x: e.v.x, z: e.v.z, ok };
     },
     // test hook: hold `keys` for `seconds` of simulated time while riding; returns the path
     simulate(keys, seconds, dt = 1 / 60) {

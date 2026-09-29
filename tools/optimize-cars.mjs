@@ -22,7 +22,10 @@ for (const n of names) {
   run(`resize "${b}" "${a}" --width 1024 --height 1024`);
   run(`webp "${a}" "${c}" --quality 88`);
   const out = path.join(OUT, `${n}.glb`);
-  run(`meshopt "${c}" "${out}" --level medium`);
+  // the hero is seen from inches away: 14-bit positions opened hairline cracks along the
+  // boolean-cut body's T-junctions (black streaks across the hood), coarse normals banded
+  const q = n === 'convertible' ? ' --quantize-position 16 --quantize-normal 12' : '';
+  run(`meshopt "${c}" "${out}" --level medium${q}`);
   console.log(n, (fs.statSync(src).size / 1024).toFixed(0), 'KB ->', (fs.statSync(out).size / 1024).toFixed(0), 'KB');
 }
 fs.rmSync(TMP, { recursive: true, force: true });

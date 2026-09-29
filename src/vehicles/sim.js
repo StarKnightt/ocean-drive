@@ -51,7 +51,9 @@ export const SPECS = {
     kind: 'car',
     wheelbase: 2.96, track: 1.61, wheelR: 0.36,
     wheels: [[-0.805, -1.34], [0.805, -1.34], [-0.805, 1.62], [0.805, 1.62]],   // FL FR RL RR
-    circles: [-1.95, -1.3, -0.65, 0, 0.65, 1.3, 1.95].map((z) => [z, 0.93]),
+    // (a chain down the middle plus four at the corners, so an angled nose or tail can't
+    // swing into a parked car: local z, radius, local x)
+    circles: [...[-1.95, -1.3, -0.65, 0, 0.65, 1.3, 1.95].map((z) => [z, 0.93]), ...[[-2.2, -0.4], [-2.2, 0.4], [2.2, -0.4], [2.2, 0.4]].map(([z, x]) => [z, 0.62, x])],
     maxStep: 0.1, accessStep: 0.1, maxDepth: 0.1, xMin: -Infinity, maxGround: 0.1,
     // west bound: the hotel patios, except down the cross streets
     x0At: (z, x0) => (crossStreetAt(z, -0.5) ? -52 : x0),
@@ -182,7 +184,7 @@ function targets(v) {
 }
 export function syncCircles(v) {
   const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
-  v.spec.circles.forEach(([lz], i) => { const o = v.circlesWorld[i]; o.x = v.x + lz * s; o.z = v.z + lz * c; });
+  v.spec.circles.forEach(([lz, , lx = 0], i) => { const o = v.circlesWorld[i]; o.x = v.x + lx * c + lz * s; o.z = v.z - lx * s + lz * c; });
 }
 
 const _h = [0, 0, 0, 0];
@@ -206,8 +208,8 @@ export function blockedAt(v, x, z, yaw, world, airY = 0, turnOnly = false) {
   // fine); turning at the limit may swing a corner up to 5 cm further, so it can turn back
   if (turnOnly ? SEA_LEVEL - deepest > S.maxDepth + 0.05 : deepest < now) return 'deep';
   const gy = v.groundY;
-  for (const [lz, r] of S.circles) {
-    const cx = x + lz * s, cz = z + lz * c;
+  for (const [lz, r, lx = 0] of S.circles) {
+    const cx = x + lx * c + lz * s, cz = z - lx * s + lz * c;
     const x0 = S.x0At ? S.x0At(cz, B.x0) : Math.max(B.x0, S.xMin);
     if (cx - r < x0 || cx + r > B.x1 || cz - r < B.z0 || cz + r > B.z1) return 'bounds';
     const hit = world.grid.query(cx - r, cz - r, cx + r, cz + r, (q) => {
@@ -378,7 +380,7 @@ function post(v, input, dt, world, hard) {
   // pitch / roll springs (with squat and dive from the acceleration)
   const accel = dLon / dt;
   const car = v.kind === 'car';
-  const pT = v.pitchT + (v.kind === 'atv' ? clamp(accel, -8, 8) * 0.006 : car ? clamp(accel, -8, 8) * 0.0065 : 0);
+  const pT = v.pitchT + (v.kind === 'atv' ? clamp(accel, -8, 8) * 0.006 : car ? clamp(accel, -8, 8) * 0.0095 : 0);
   const Kp = v.kind === 'bike' ? 260 : car ? 34 : 90, Cp = 2 * (car ? 0.3 : 0.45) * Math.sqrt(Kp);
   v.pitchV += (Kp * (pT - v.pitch) - Cp * v.pitchV) * dt;
   v.pitch += v.pitchV * dt;

@@ -955,6 +955,19 @@ function districtFurniture(mat, G) {
     place(L, signalHeadGeo(), west.x - 0.2, H + 2.6, west.z, -Math.PI / 2);
     lit.push({ x: west.x - 0.2, y: H + 2.6, z: west.z, rot: -Math.PI / 2, lamp: 0 });
   }
+  // lamps and the odd hydrant / bin on the cross-street sidewalks, out past the hotels
+  for (const c of NEAR_CROSS) {
+    for (const s of [-1, 1]) {
+      const z = c.z + s * (CROSS.hw + 0.75);
+      for (let x0 = -46 - (s > 0 ? 14 : 0); x0 > -236; x0 -= 28) {
+        let x = x0;
+        while (G.palmNear(x, z, 1.6)) x -= 1.2;
+        place(L, G.lamp, x, H, z, 0, 0.14);
+        if (rnd() < 0.3) place(L, G.trash, x - 1.6, H, z, 0, 0.3);
+        else if (rnd() < 0.2) place(L, G.hyd, x - 2.2, H, z + s * 0.2, 0, 0.2);
+      }
+    }
+  }
   FORCE = false;
   // one merged mesh per block (split at the cross streets) for culling
   const edges = [-Infinity, ...NEAR_CROSS.map((c) => c.z), Infinity];

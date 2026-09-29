@@ -56,6 +56,15 @@ MAT_DEFS = {
     'interior': dict(color=(0.08, 0.08, 0.085), rough=0.7),
     'alloy': dict(color=(0.62, 0.64, 0.66), rough=0.3, metal=1.0),
     'gauge': dict(color=(1, 1, 1), rough=0.2),
+    # dial faces: the runtime prints them (CanvasTexture) by material name
+    'gauge_speedo': dict(color=(0.9, 0.87, 0.78), rough=0.35),
+    'gauge_fuel': dict(color=(0.9, 0.87, 0.78), rough=0.35),
+    'gauge_temp': dict(color=(0.9, 0.87, 0.78), rough=0.35),
+    'needle': dict(color=(0.85, 0.25, 0.08), rough=0.3),
+    'skin': dict(color=(0.72, 0.5, 0.38), rough=0.55),
+    'cloth': dict(color=(0.55, 0.68, 0.8), rough=0.85),
+    'cloth2': dict(color=(0.12, 0.15, 0.22), rough=0.9),
+    'rubber': dict(color=(0.03, 0.03, 0.03), rough=0.7),
 }
 
 

@@ -274,6 +274,20 @@ function buildBackground(group) {
     bg.push({ x0: x1 - (14 + rnd() * 16), x1, z0: z, w, h: 7 + rnd() * rnd() * 16, rot: 0, kind: 1 });
     z += w + 1 + rnd() * 5;
   }
+  // cross-street frontage: 2-6 storey pastel blocks lining both sides of each cross street
+  // past the back row, far out into the haze (own random stream)
+  {
+    const r2 = mulberry32(4321);
+    const pastel = [0xf2d9c4, 0xe9c9cf, 0xcfe3dc, 0xf1e6c8, 0xd9dfe8, 0xf4e2d4, 0xdcd4e6, 0xeed8b8];
+    for (const c of CROSS_STREETS.filter((q) => !q.far)) for (const s of [-1, 1]) {
+      for (let x1 = -94 - r2() * 3; x1 > -300;) {
+        const len = 11 + r2() * 15, depth = 12 + r2() * 10, h = 7 + r2() * r2() * 15;
+        const zEdge = c.z + s * (CROSS.hw + 3.6 + r2() * 0.6);
+        bg.push({ x0: x1 - len, x1, z0: s > 0 ? zEdge : zEdge - depth, w: depth, h, rot: 0, kind: 1, col: pastel[Math.floor(r2() * pastel.length)] });
+        x1 -= len + (r2() < 0.25 ? 2 + r2() * 5 : 0.3);
+      }
+    }
+  }
   const bgMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
   bgMat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -362,7 +376,7 @@ function buildBackground(group) {
     } else {
       bq.setFromAxisAngle(yAxis, b.rot);
       m4.compose(new THREE.Vector3(b.x0, 0, b.z0), bq, new THREE.Vector3(b.x1 - b.x0, b.h, b.w));
-      bm.setColorAt(i, c.setHex(bgCols[i % bgCols.length]));
+      bm.setColorAt(i, c.setHex(b.col ?? bgCols[i % bgCols.length]));
     }
     if (inRoad(b)) m4.makeScale(0, 0, 0);
     bm.setMatrixAt(i, m4);
