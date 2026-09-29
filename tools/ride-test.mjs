@@ -249,8 +249,10 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   await shot('14c-car-look-right', 300);
   await page.evaluate(() => { window.__walker.yaw += 1.1; window.__walker.pitch = -0.052; });
   await page.waitForTimeout(300);
-  // real keys: W pulls away down the west lane
-  await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
+  // real keys: W pulls away down the west lane (traffic sent off to the loop ends first: a
+  // cruiser ahead or one stopped at the 8 ST crosswalk would measure itself, not the car)
+  await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } });
+  const lane0 = await page.evaluate(() => { const v = window.__vehicles.current; return window.__vehicles.place(-19.75, v.z, Math.PI); });
   // the view rides the sprung body: squat pulling away and dive under braking tip the
   // horizon (camera pitch against the world) the opposite ways
   const camPitch = () => page.evaluate(() => { const c = window.__walker.camera, d = c.getWorldDirection(new c.position.constructor()); return Math.asin(d.y) * 57.3; });
@@ -266,7 +268,7 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   const pBrk = await camPitch();
   await page.keyboard.up('KeyS');
   check('driver view squats under power and dives under braking', pAcc - p0 > 0.4 && pBrk - p0 < -0.4, { rest: +p0.toFixed(2), accel: +pAcc.toFixed(2), brake: +pBrk.toFixed(2) });
-  await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
+  await page.evaluate((p) => window.__vehicles.place(-19.75, p.z, Math.PI), lane0);
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(3000);
   await page.keyboard.up('KeyW');
@@ -285,9 +287,7 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   const wrapDeg = (a) => (((a % 360) + 540) % 360) - 180;
   check('steering wheel turns steer/lock x 450 deg about the column', Math.abs(wrapDeg(wheel.deg - wheel.want)) < 3 && wheel.offAxis < 1e-3 && Math.abs(wheel.want) > 60, wheel);
   await shot('16-car-steering', 0);
-  // down the drive to the south end at speed, then brake (traffic sent off to the loop ends
-  // first: this measures the car, not the 25 km/h cruiser ahead of it)
-  await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } });
+  // down the drive to the south end at speed, then brake (the traffic is still away)
   await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
   r = await rideTo(-19.75, 300, { maxT: 60, stopAt: 3 });
   report.checks.carDrive = r;
@@ -316,6 +316,10 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   // (back in its own bay at the curb: an empty spot, not the parked row)
   const bay = await page.evaluate((p) => window.__vehicles.place(p.x, p.z, Math.PI), start);
   await page.evaluate(() => window.__vehicles.simulate([], 0.5));
+  // (a previous run found it 0.72 m back from the bay here, engine idling, no keys: that
+  // is the rate of full reverse throttle, so log what the sim was being fed)
+  const rest = await page.evaluate(() => { const V = window.__vehicles, v = V.current; return { z: +v.z.toFixed(2), lon: +v.lon.toFixed(2), pitchT: +v.pitchT.toFixed(4), keys: [...(window.__walker.keys ?? [])], stick: window.__walker.stick ?? null }; });
+  check('the convertible rests in its bay (no creep, no keys held)', Math.abs(rest.z - bay.z) < 0.1, { bay, rest });
   const inside = () => page.evaluate(() => {
     const v = window.__vehicles.list.find((e) => e.kind === 'car').v, s = Math.sin(v.yaw), c = Math.cos(v.yaw);
     let worst = 0;
@@ -333,7 +337,7 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   await page.waitForTimeout(500);
   s = await st();
   c = await carV();
-  check('E gets out on the sidewalk side; engine off; car stays', !s.riding && s.walker.x < -24 && !c.on && Math.abs(c.z - start.z) < 0.5, { walker: s.walker, car: c, bay });
+  check('E gets out on the sidewalk side; engine off; car stays', !s.riding && s.walker.x < -24 && !c.on && Math.abs(c.z - rest.z) < 0.2, { walker: s.walker, car: c, bay, rest });
   const overlap = await inside();
   check('the parked convertible does not overlap any parked car', overlap < 0.02, { deepestM: overlap });
   await shot('18-car-after-exit', 300);

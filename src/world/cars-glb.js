@@ -244,6 +244,8 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     // the hero's wraparound screen: a green-tinted pane that carries the sky, the facades
     // and (from the seat) the painted dash top, going to a green mirror at grazing angles
     screen: glassMaterial(env, { color: 0xa9d2bd, opacity: 0.2, edge: 0.55, key: 'screen', edgeTint: 0x5fae8c, under: 0x5d9689, ior: 1.95, envI: 1.3 }),
+    // the dial lenses: a faint glint, the printed faces must read through them
+    dial_glass: glassMaterial(env, { color: 0xf2f6f4, opacity: 0.04, edge: 0.3, key: 'dial', envI: 0.35 }),
     gauge_speedo: std({ map: dialTexture('speedo'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_fuel: std({ map: dialTexture('fuel'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
     gauge_temp: std({ map: dialTexture('temp'), roughness: 0.4, envMapIntensity: 0.6 }, 'dial', true),
@@ -272,18 +274,17 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
   };
 }
 
-function applyMaterials(root, M, paint, paint2, hero = false) {
+function applyMaterials(root, M, paint, paint2) {
   root.traverse((o) => {
     if (!o.isMesh) return;
     const name = o.material.name;
-    if (hero && name === 'glass') o.material = M.screen;
-    else if (name === 'paint') o.material = paint;
+    if (name === 'paint') o.material = paint;
     else if (name === 'paint2') o.material = paint2;
     else if (name === 'gauge') {
       o.material.envMap = M.chrome.envMap;
       o.material.roughness = 0.35;
     } else if (M[name]) o.material = M[name];
-    const clear = o.material === M.glass || o.material === M.tint || o.material === M.screen;
+    const clear = o.material === M.glass || o.material === M.tint || o.material === M.screen || o.material === M.dial_glass;
     o.castShadow = !clear;
     o.receiveShadow = true;
     if (clear) o.renderOrder = 2;
@@ -313,7 +314,7 @@ function heroInstance(gltf, paint, paint2, M) {
     const src = gltf.scene.getObjectByName(n);
     const c = src.clone(true);
     c.position.set(0, 0, 0);
-    applyMaterials(c, M, paint, paint2, true);
+    applyMaterials(c, M, paint, paint2);
     body.add(c);
     return c;
   });

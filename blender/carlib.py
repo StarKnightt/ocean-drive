@@ -57,9 +57,13 @@ MAT_DEFS = {
     'alloy': dict(color=(0.62, 0.64, 0.66), rough=0.3, metal=1.0),
     'gauge': dict(color=(1, 1, 1), rough=0.2),
     # dial faces: the runtime prints them (CanvasTexture) by material name
+    # (each a shade apart: identical materials are merged by the optimiser's dedup)
     'gauge_speedo': dict(color=(0.9, 0.87, 0.78), rough=0.35),
-    'gauge_fuel': dict(color=(0.9, 0.87, 0.78), rough=0.35),
-    'gauge_temp': dict(color=(0.9, 0.87, 0.78), rough=0.35),
+    'gauge_fuel': dict(color=(0.89, 0.86, 0.77), rough=0.35),
+    'gauge_temp': dict(color=(0.88, 0.85, 0.76), rough=0.35),
+    # the hero's wraparound screen and the dial lenses (own shaders at runtime)
+    'screen': dict(color=(0.66, 0.82, 0.74), rough=0.02, alpha=0.25),
+    'dial_glass': dict(color=(0.9, 0.93, 0.92), rough=0.02, alpha=0.1),
     'needle': dict(color=(0.85, 0.25, 0.08), rough=0.3),
     'skin': dict(color=(0.72, 0.5, 0.38), rough=0.55),
     'cloth': dict(color=(0.55, 0.68, 0.8), rough=0.85),

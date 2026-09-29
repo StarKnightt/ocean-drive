@@ -360,10 +360,11 @@ function buildBackground(group) {
   // are drawn empty (zero scale, so the random stream and every other building stay)
   const inRoad = (b) => {
     if (b.parent) return b.parent.hidden;
-    const reach = b.kind === 1 && b.x1 > -64 ? Infinity : 110;
-    if (b.x1 < -reach) return false;
+    // (the near cross streets now run on past their frontage into the haze: nothing stands
+    // in them at any depth; the far ones only lose the back row)
+    const backRow = b.kind === 1 && b.x1 > -64;
     const slack = Math.abs(Math.sin(b.rot)) * (b.x1 - b.x0);
-    return CROSS_STREETS.some((c) => (c.far ? reach === Infinity : true) && b.z0 - slack < c.z + CROSS.hw + 1 && b.z0 + b.w + slack > c.z - CROSS.hw - 1);
+    return CROSS_STREETS.some((c) => (c.far ? backRow : true) && b.z0 - slack < c.z + CROSS.hw + 1 && b.z0 + b.w + slack > c.z - CROSS.hw - 1);
   };
   for (const b of bg) if (!b.parent) b.hidden = inRoad(b);
   bg.forEach((b, i) => {

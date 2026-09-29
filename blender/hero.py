@@ -615,7 +615,7 @@ def build_dash(part, glass, lod):
         disc(part, c, nrm, upv, r, mat, segs=40)
         lathe(part, [(r + 0.001, -0.012), (r + 0.004, -0.004), (r + 0.004, 0.003), (r + 0.011, 0.006), (r + 0.01, 0.012), (r + 0.002, 0.011)],
               40, c, nrm, mat='chrome')
-        lathe(glass, [(r + 0.002, 0.004), (r * 0.7, 0.009), (r * 0.35, 0.0115), (0.0, 0.012)], 24, c, nrm, mat='glass')
+        lathe(glass, [(r + 0.002, 0.004), (r * 0.7, 0.009), (r * 0.35, 0.0115), (0.0, 0.012)], 24, c, nrm, mat='dial_glass')
         if mat != 'gauge_speedo':
             # fixed needles: fuel at three quarters, temperature mid-scale
             th = math.radians(35 if mat == 'gauge_fuel' else 0)
@@ -845,7 +845,7 @@ def windscreen(part_chrome, part_glass, caster, lod):
         return B[k].lerp(T[k], t) + V(0, 0, 0.04 * wk[k] * knee)
     ts = [0, 0.25, 0.5, 0.75, 1.0] if lod == 0 else [0, 0.25, 1.0]
     rings = [[pos(k, t) for t in ts] for k in range(len(B))]
-    part_glass.grid(rings, mat='glass', uv_tile=1)
+    part_glass.grid(rings, mat='screen', uv_tile=1)
     # chrome surround: header, dogleg posts, base channel
     tp = [(0.007 * math.cos(a), 0.012 * math.sin(a)) for a in [2 * math.pi * k / 10 for k in range(10)]]
     sweep(part_chrome, [t + Vector((0, 0, 0.004)) for t in T], tp, mat='chrome', up=(0, 0, 1))
@@ -864,7 +864,7 @@ def windscreen(part_chrome, part_glass, caster, lod):
             rb = V(s_ - sg * 0.004, C(loc)[1] + 0.01, rear_u)
             rt = V(s_ - sg * 0.02, 1.19, rear_u)
             quad = [[B[k].lerp(t, j / 3) for j in range(4)], [rb.lerp(rt, j / 3) for j in range(4)]]
-            part_glass.grid(quad, mat='glass', uv_tile=1)
+            part_glass.grid(quad, mat='screen', uv_tile=1)
             sweep(part_chrome, [t, rt, rb], [(0.006 * math.cos(a), 0.006 * math.sin(a)) for a in [2 * math.pi * k / 8 for k in range(8)]], mat='chrome', up=(sg, 0, 0))
         # driver's outside mirror on the screen post, just above the base
         pb = pos(0, 0.1)
@@ -1022,8 +1022,9 @@ def trims(part, caster, lod):
                     strip = [[p + V(0, 0, 0.012), p + V(0, 0, -0.012)] for p, _n in col]
                     f = part.grid(strip, mat='dark')
                     orient(part, f, lambda c, sg=sg: c + Vector((sg, 0, 0)))
-    # dark backing under the hood and trunk shut lines: through the cut slot the eye used to
-    # see the ground under the car, which aliased into broken black and bright dashes
+    # backing under the hood and trunk shut lines: through the cut slot the eye used to see
+    # the ground under the car. Body colour, not black: seen across the long flat hood at a
+    # grazing angle a black slot aliased into broken black and bright streaks
     if lod == 0:
         for loop in ([(0.6, 0.69), (0.6, 2.57), (-0.6, 2.57), (-0.6, 0.69)], [(0.56, -1.66), (0.56, -2.4), (-0.56, -2.4), (-0.56, -1.66), (0.56, -1.66)]):
             for (s0, u0), (s1, u1) in zip(loop[:-1], loop[1:]):
@@ -1039,20 +1040,11 @@ def trims(part, caster, lod):
                     p = loc - nor * 0.005
                     rows.append([p + V(-du * 0.014, 0, ds * 0.014), p + V(du * 0.014, 0, -ds * 0.014)])
                 if len(rows) > 1:
-                    f = part.grid(rows, mat='dark')
+                    f = part.grid(rows, mat='paint')
                     orient(part, f, lambda c: c - Vector((0, 0, 1)))
-    # hood: two chrome spears on the crown and a generic jet-shaped ornament (no emblem)
+    # hood: a generic jet-shaped ornament (no emblem). (No spears along the crown: thin
+    # chrome lying on the flat hood broke into flickering streaks at grazing angles.)
     if lod == 0:
-        for sg in (-1, 1):
-            pts, sc = [], []
-            for k in range(25):
-                u = OPEN[1] + 0.12 + (HALF - 0.5 - OPEN[1] - 0.12) * k / 24
-                loc, nor = caster.hit((sg * 0.27, 2.5, u), (0, -1, 0))
-                if loc:
-                    pts.append(loc + nor * 0.002)
-                    sc.append(max(0.3, min(1.0, k / 3, (24 - k) / 5)))
-            sweep(part, pts, [(-0.007, 0), (-0.005, 0.004), (0, 0.006), (0.005, 0.004), (0.007, 0), (0, -0.001)],
-                  mat='chrome', up=(0, 0, 1), scales=[(s, 1.0) for s in sc])
         loc, nor = caster.hit((0, 2.5, HALF - 0.3), (0, -1, 0))
         if loc:
             base = loc + nor * 0.004
