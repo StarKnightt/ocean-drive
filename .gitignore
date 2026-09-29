@@ -5,3 +5,5 @@ shots
 blender/_raw/
 __pycache__/
 *.blend1
+assets/mixamo/**/*.fbx
+assets/mixamo/_tmp/

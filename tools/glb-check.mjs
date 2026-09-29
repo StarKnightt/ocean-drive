@@ -37,7 +37,8 @@ for (const kind of ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crosso
     check(wheels.every((w) => w && w.children.length), `${kind}${sfx} wheel meshes under the pivots`);
     check(cabinGlass > 0, `${kind}${sfx} has glass`);
     const size = box.getSize(new THREE.Vector3());
-    console.log(`${(kind + sfx).padEnd(13)} L ${size.z.toFixed(2)} W ${size.x.toFixed(2)} H ${size.y.toFixed(2)}  mats ${Object.keys(mats).length}  glass ${cabinGlass}v  roof ${roofTop.toFixed(2)}`);
+    check((mats.tail ?? 0) > 0, `${kind}${sfx} has tail lamps`);
+    console.log(`${(kind + sfx).padEnd(13)} L ${size.z.toFixed(2)} W ${size.x.toFixed(2)} H ${size.y.toFixed(2)}  mats ${Object.keys(mats).length}  glass ${cabinGlass}v  tail ${mats.tail ?? 0}v  roof ${roofTop.toFixed(2)}  ${Object.keys(mats).sort().join(' ')}`);
   }
 }
 const hero = await load('public/models/convertible.glb');

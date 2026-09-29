@@ -18,7 +18,8 @@ import {
 // a soft pastel seafoam (the period's greyed turquoise, not a saturated cyan)
 const HERO_PAINT = 0x8fc6bf;
 const HERO_PAINT2 = 0xf1eee4;   // the two-tone side sweep
-const MOVER_PAINTS = [0xe8a4b8, 0xf2e6c4, 0x9fc8e0];
+// the traffic classics: body colour and the contrast panel between the chrome spears
+const CLASSIC_TONES = [[0xd9788f, 0xf1eee4], [0x8fb8d8, 0xf1eee4], [0xa3312b, 0xf1eee4], [0xefe2bb, 0x3f7d6a]];
 const WHEEL_R = 0.36;
 // distance (m) at which the hero / parked cars drop to LOD1
 const LOD1_AT = { high: { hero: 38, parked: 42 }, medium: { hero: 30, parked: 32 }, low: { hero: 25, parked: 25 } }[QUALITY.tier] ?? { hero: 38, parked: 42 };
@@ -176,9 +177,9 @@ function rearMirror(renderer, scene, inst) {
 
 // ---------------------------------------------------------------------------
 // runtime materials by the Blender material name
-function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under = null, ior = 1.5, envI = 1.0, rough = 0.015, inside = null }) {
+function glassMaterial(env, { color, opacity, edge, key, edgeTint = null, under = null, ior = 1.5, envI = 1.0, rough = 0.015, inside = null, spec = 1 }) {
   const m = new THREE.MeshPhysicalMaterial({
-    color, roughness: rough, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: envI, ior,
+    color, roughness: rough, metalness: 0, transparent: true, opacity, envMap: env, envMapIntensity: envI, ior, specularIntensity: spec,
     clearcoat: 1, clearcoatRoughness: Math.max(0.015, rough), depthWrite: false, side: THREE.DoubleSide,
   });
   // inside: { edge, dash } for the hero's screen seen from the driver's seat (uInside = 1):
@@ -384,7 +385,11 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     enamel: coat({ color: 0x9b1a17, roughness: 0.2, clearcoatRoughness: 0.05, envMapIntensity: 0.8 }, 'enamel'),
     // padded dash top: matte grained vinyl a shade deeper than the paint
     dashtop: std({ color: 0x6b9f93, roughness: 0.75, envMapIntensity: 0.6, ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.3, 0.3) } : {}) }, 'dashtop', true),
-    tint: glassMaterial(env, { color: 0x1c2428, opacity: 0.42, edge: 0.97, key: 'tint' }),
+    // the modern fleet's glass: dark tinted panels that mirror the sky and the palms (the
+    // specular boost stands in for the reflection off the dark interior behind the pane);
+    // the windscreen a lighter tint
+    tint: glassMaterial(env, { color: 0x0c1215, opacity: 0.8, edge: 0.9, key: 'tint', spec: 2.6, envI: 1.25 }),
+    windshield: glassMaterial(env, { color: 0x131b1f, opacity: 0.6, edge: 0.9, key: 'windshield', spec: 2.2, envI: 1.2 }),
     tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.8, envMapIntensity: 0.5 }, 'tyre', true),
     trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
     grille: coat({ color: 0x0e0f10, roughness: 0.3, clearcoatRoughness: 0.08, envMapIntensity: 0.9 }, 'grille'),
@@ -397,12 +402,28 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     ivory: coat({ color: 0xf1e9d6, roughness: 0.22, clearcoat: 0.6, envMapIntensity: 1.0 }, 'ivory'),
     lens: coat({ color: 0xdfe6ea, metalness: 0.9, roughness: 0.06, envMapIntensity: 1.0 }, 'lens'),
     amber: coat({ color: 0xd98a2e, roughness: 0.18, emissive: 0x2a1200 }, 'amber'),
-    tail: coat({ color: 0x9a1016, roughness: 0.16, emissive: 0x2a0304 }, 'tail'),
-    makeTail: () => coat({ color: 0x9a1016, roughness: 0.16, emissive: 0x2a0304 }, 'tail'),
+    tail: lampMaterial(env, 0x9a1016, 0x2a0304),
+    brake3: lampMaterial(env, 0x7a0c10, 0x140102),
+    // (the traffic's own lamps: its brake lights are lit per car)
+    makeTail: () => lampMaterial(env, 0x9a1016, 0x2a0304),
+    makeBrake3: () => lampMaterial(env, 0x7a0c10, 0x140102),
     plate: std({ color: 0xe6e2d2, roughness: 0.55 }),
     interior: std({ color: 0x3a3b3e, roughness: 0.7, envMapIntensity: 0.9 }),
     seat: std({ color: 0x2a2b2e, roughness: 0.62, envMapIntensity: 0.9 }),
   };
+}
+
+// lamp lens: the lit emissive stays unclamped (a brake light blooms), only the lit surface
+// under the sun is capped like the rest of the car
+function lampMaterial(env, color, emissive) {
+  const m = new THREE.MeshPhysicalMaterial({ color, roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.05, envMap: env, emissive });
+  m.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace('#include <opaque_fragment>',
+      `outgoingLight = min(outgoingLight - totalEmissiveRadiance, vec3(${CAR_MAX_RADIANCE.toFixed(2)})) + totalEmissiveRadiance;
+#include <opaque_fragment>`);
+  };
+  m.customProgramCacheKey = () => 'car-lamp';
+  return m;
 }
 
 function applyMaterials(root, M, paint, paint2) {
@@ -415,7 +436,7 @@ function applyMaterials(root, M, paint, paint2) {
       o.material.envMap = M.chrome.envMap;
       o.material.roughness = 0.35;
     } else if (M[name]) o.material = M[name];
-    const clear = o.material === M.glass || o.material === M.tint || o.material === M.screen || o.material === M.dial_glass;
+    const clear = o.material === M.glass || o.material === M.tint || o.material === M.windshield || o.material === M.screen || o.material === M.dial_glass;
     o.castShadow = !clear;
     o.receiveShadow = true;
     if (clear) o.renderOrder = 2;
@@ -466,7 +487,8 @@ function heroInstance(gltf, paint, paint2, M) {
     steering.push(st);
   });
   levels[1].visible = false;
-  g.add(blobMesh(2.35, 6.1));
+  const blob = blobMesh(2.35, 6.1);
+  g.add(blob);
   const L0 = levels[0];
   const needle = L0.getObjectByName('speedo_needle');
   if (needle) needle.userData.q0 = needle.quaternion.clone();
@@ -481,7 +503,7 @@ function heroInstance(gltf, paint, paint2, M) {
     levels, wheels, steering,
     seatAnchor: L0.getObjectByName('driver_seat'), eyeAnchor: L0.getObjectByName('driver_eye'),
   };
-  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R, needle, driverRig };
+  return { car: g, sway, wheels, wheelSets, steering, levels, wheelR: WHEEL_R, needle, driverRig, blob };
 }
 
 function setLevel(inst, k) {
@@ -716,7 +738,7 @@ function buildFleet(scene, gltf, M) {
     bm.name = 'parked-' + mat;
     const ids = {};
     for (const [kind, list] of Object.entries(geos)) ids[kind] = list.map((g) => (g ? bm.addGeometry(g) : null));
-    const clear = material === M.tint || material === M.glass;
+    const clear = material === M.tint || material === M.glass || material === M.windshield;
     bm.castShadow = !clear;
     bm.receiveShadow = true;
     if (clear) bm.renderOrder = 2;
@@ -805,39 +827,141 @@ function mergeList(list) {
 }
 
 // ---------------------------------------------------------------------------
-// Traffic cars (world/traffic.js): modern models cloned from the parked fleet GLB, each with
-// its wheel pivots, both LODs, its own paint and tail-lamp materials, plus the classic
-// convertible copies. Geometry is shared with the GLB; no shadow casting (a contact blob).
+// Traffic cars (world/traffic.js): modern models cloned from the parked fleet GLB (the same
+// paint, tinted glass and lamp setup as the parked batches, fed by the same reflection
+// probe), each instance with its own paint, tail-lamp and stop-lamp materials, wheel pivots,
+// both LODs and driver hooks, plus the two-tone classic convertibles. No shadow casting (the
+// sun's shadow map is static): a contact blob under the body and tyres, and a soft sun shadow
+// quad stretched away from the sun.
 const WHEEL_RADII = { sedan: 0.335, hatch: 0.315, suv: 0.37, pickup: 0.39, coupe: 0.34, wagon: 0.33, crossover: 0.355 };
+function softRectTexture() {
+  const N = 64, px = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const u = Math.abs((i + 0.5) / N - 0.5), v = Math.abs((j + 0.5) / N - 0.5);
+    const a = (1 - THREE.MathUtils.smoothstep(u, 0.3, 0.48)) * (1 - THREE.MathUtils.smoothstep(v, 0.34, 0.48));
+    px[(j * N + i) * 4 + 3] = Math.round(255 * a);
+  }
+  const t = new THREE.DataTexture(px, N, N);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
+}
+// brake-lamp glow: small additive halos at the lamps (the bloom pass thresholds luminance, so a
+// saturated red lamp would have to be pushed to white before it bloomed)
+function haloTexture() {
+  const N = 64, px = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const r = Math.min(1, Math.hypot((i + 0.5) / N - 0.5, (j + 0.5) / N - 0.5) * 2);
+    const a = (1 - r) ** 2.2;
+    px.set([255, 255, 255, Math.round(255 * a)], (j * N + i) * 4);
+  }
+  const t = new THREE.DataTexture(px, N, N);
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+let HALO = null;
+function lampHalos(level, parent, tailMat, stopMat) {
+  HALO ??= new THREE.SpriteMaterial({ map: haloTexture(), color: 0xff1406, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.85 });
+  parent.updateMatrixWorld(true);
+  const inv = parent.matrixWorld.clone().invert(), m = new THREE.Matrix4(), v = new THREE.Vector3();
+  const pts = { L: [], R: [], S: [] };
+  level.traverse((o) => {
+    if (!o.isMesh || (o.material !== tailMat && o.material !== stopMat)) return;
+    const pos = o.geometry.attributes.position;
+    m.multiplyMatrices(inv, o.matrixWorld);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m);
+      (o.material === stopMat ? pts.S : v.x > 0 ? pts.L : pts.R).push(v.clone());
+    }
+  });
+  const g = new THREE.Group();
+  for (const [k, list] of Object.entries(pts)) {
+    if (!list.length) continue;
+    const zMin = Math.min(...list.map((p) => p.z));
+    const back = list.filter((p) => p.z < zMin + 0.06);
+    const c = back.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / back.length);
+    const s = new THREE.Sprite(HALO);
+    s.position.set(c.x, c.y, c.z - 0.04);
+    s.scale.setScalar(k === 'S' ? 0.32 : 0.5);
+    s.renderOrder = 3;
+    g.add(s);
+  }
+  g.visible = false;
+  parent.add(g);
+  return g;
+}
 function trafficKit(scene, gltf, M, env, pool, probe) {
   const kinds = gltf ? KINDS.filter((k) => gltf.scene.getObjectByName(k)) : [];
   const box = new THREE.Box3();
   gltf?.scene.updateMatrixWorld(true);
   const lens = Object.fromEntries(kinds.map((k) => [k, box.setFromObject(gltf.scene.getObjectByName(k)).max.z - box.min.z]));
+  const sunMat = new THREE.MeshBasicMaterial({ color: 0x000000, map: softRectTexture(), transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const sunGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const sunShadow = () => {
+    const m = new THREE.Mesh(sunGeo, sunMat);
+    m.renderOrder = 1;
+    m.castShadow = false;
+    return m;
+  };
+  let light = null;
+  const _d = new THREE.Vector3();
+  for (const m of pool) {
+    m.sun = sunShadow();
+    m.car.add(m.sun);
+    const body = m.sway.children[0];
+    m.halos = lampHalos(m.levels[0], body, m.tail, null);
+  }
   return {
-    kinds, lens, classics: pool, paints: PAINTS, heroPaints: MOVER_PAINTS,
+    kinds, lens, classics: pool, paints: PAINTS,
     lod1At: LOD1_AT.parked,
-    // one instance of `kind` for a traffic slot (paint and tail are the slot's materials)
-    makeModern(kind, paint, tail) {
+    // one instance of `kind` with its own paint / lamp materials (world/traffic.js pools them)
+    makeModern(kind) {
+      const paint = paintMaterial(env, 0xffffff, 'fleet');   // (the fleet's program: nothing new to compile)
+      const tail = M.makeTail(), brake3 = M.makeBrake3();
       const root = new THREE.Group();
       const levels = [kind, kind + '_L1'].map((n, k) => {
         const c = gltf.scene.getObjectByName(n).clone(true);
         c.position.set(0, 0, 0);
         applyMaterials(c, M, paint, paint);
-        c.traverse((o) => { if (o.isMesh) { o.castShadow = false; if (o.material === M.tail) o.material = tail; } });
+        c.traverse((o) => {
+          if (!o.isMesh) return;
+          o.castShadow = false;
+          if (o.material === M.tail) o.material = tail;
+          else if (o.material === M.brake3) o.material = brake3;
+        });
         c.visible = k === 0;
         root.add(c);
         return c;
       });
       const wheels = levels.map((lv, k) => ['FL', 'FR', 'RL', 'RR'].map((w) => lv.getObjectByName(`${kind}_wheel_${w}${k ? '_L1' : ''}`)).filter(Boolean));
-      root.add(blobMesh(2.2, lens[kind] + 0.5));
+      const blob = blobMesh(2.25, lens[kind] + 0.6);
+      const sun = sunShadow();
+      root.add(blob, sun);
+      const halos = lampHalos(levels[0], root, tail, brake3);
       root.visible = false;
       scene.add(root);
       probe.hide.push(root);
-      return { root, levels, wheels, wheelR: WHEEL_RADII[kind] ?? 0.34, len: lens[kind] };
+      const rig = {
+        pelvis: levels[0].getObjectByName(kind + '_driver_pelvis'),
+        gripL: levels[0].getObjectByName(kind + '_grip_L'), gripR: levels[0].getObjectByName(kind + '_grip_R'),
+      };
+      return { root, levels, wheels, wheelR: WHEEL_RADII[kind] ?? 0.34, len: lens[kind], paint, tail, brake3, rig, sun, halos, kind };
     },
-    paint: (color) => paintMaterial(env, color, 'fleet'),   // (the fleet's program: nothing new to compile)
-    tail: () => M.makeTail(),
+    // where a car's shadow falls on the road (unit ground direction, away from the sun) and
+    // how far it reaches for a car-height caster
+    sun(out) {
+      if (!light) scene.traverse((o) => { if (!light && o.isDirectionalLight && o.castShadow) light = o; });
+      if (!light) return null;
+      _d.subVectors(light.position, light.target.position).normalize();
+      const el = Math.max(0.05, Math.asin(THREE.MathUtils.clamp(_d.y, -1, 1)));
+      const g = Math.hypot(_d.x, _d.z) || 1;
+      out.x = -_d.x / g; out.z = -_d.z / g;
+      out.len = Math.min(4.5, 1.05 / Math.tan(el));
+      return out;
+    },
     setLevel,
   };
 }
@@ -864,8 +988,8 @@ export async function buildCarsGlb(scene, renderer) {
   colliders.push(...(fleet ? fleet.colliders : buildParkedProcedural(scene)));
   // classic copies for the traffic (world/traffic.js): no shadow casting (a contact blob),
   // each with its own tail-lamp material so its brake lights are its own
-  const pool = MOVER_PAINTS.map((c, i) => {
-    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i, LACQUER), paint2, M);
+  const pool = CLASSIC_TONES.map(([c, c2], i) => {
+    const m = heroInstance(heroGltf, paintMaterial(env, c, 'mover' + i, LACQUER), paintMaterial(env, c2, 'mover2-' + i, LACQUER), M);
     const tail = M.makeTail();
     m.car.traverse((o) => { if (o.isMesh) { o.castShadow = false; if (o.material === M.tail) o.material = tail; } });
     m.car.visible = false;

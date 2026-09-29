@@ -52,6 +52,9 @@ MAT_DEFS = {
     'lens': dict(color=(0.85, 0.85, 0.82), rough=0.1, metal=0.3),
     'amber': dict(color=(0.9, 0.5, 0.1), rough=0.15),
     'tail': dict(color=(0.55, 0.02, 0.02), rough=0.15),
+    # the modern fleet's windscreen (lighter tint than the side glass) and high-mounted stop lamp
+    'windshield': dict(color=(0.05, 0.065, 0.07), rough=0.03, alpha=0.6),
+    'brake3': dict(color=(0.5, 0.03, 0.03), rough=0.2),
     'plate': dict(color=(0.9, 0.9, 0.86), rough=0.4),
     'interior': dict(color=(0.08, 0.08, 0.085), rough=0.7),
     'alloy': dict(color=(0.62, 0.64, 0.66), rough=0.3, metal=1.0),

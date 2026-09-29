@@ -2,7 +2,7 @@
 // crosswalk stops for pedestrians, the 11 ST signal, stopping short of a player obstacle
 // (and honking once), and a continuous flow with no overlaps.
 // Usage: node tools/traffic-sim-test.mjs
-import { createTrafficSim, CROSSWALKS, stopLine, signalLine, signalState, SIGNAL, SIGNAL_CYCLE, LANE_X, END_Z } from '../src/world/traffic-sim.js';
+import { createTrafficSim, createPicker, CROSSWALKS, stopLine, signalLine, signalState, SIGNAL, SIGNAL_CYCLE, LANE_X, END_Z } from '../src/world/traffic-sim.js';
 import { CROSSWALK_Z } from '../src/world/layout.js';
 
 const results = [];
@@ -161,6 +161,49 @@ const pick = () => ({ model: 'sedan', len: 4.8 });
   check('cruise speed 20-30 km/h', maxSpeed * 3.6 > 19 && maxSpeed * 3.6 < 31, { maxKmh: +(maxSpeed * 3.6).toFixed(1) });
   const far = sim.cars.every((c) => Math.abs(c.z) <= END_Z + 1);
   check('cars stay within the loop', far, { zs: sim.cars.map((c) => +c.z.toFixed(0)) });
+}
+
+// 8. the high-tier fleet (30 cars, the renderer's picker): a steady line in loose platoons,
+// every body style on the road, never two consecutive cars of the same model and colour
+{
+  const KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crossover'];
+  const lens = Object.fromEntries(KINDS.map((k, i) => [k, 4.2 + 0.18 * i]));
+  const paints = Array.from({ length: 16 }, (_, i) => 0x101010 * (i + 1));
+  let sim = null;
+  const onRoad = () => (sim ? sim.cars.filter((c) => c.classic && !c.hidden).length : 0);
+  const pickModel = createPicker({ kinds: KINDS, lens, paints, classicFree: () => 4 - onRoad(), classicOnRoad: onRoad });
+  sim = createTrafficSim({ count: 30, seed: 11, pickModel });
+  const viewer = { x: -26, z: 0 };
+  let same = 0, pairs = 0, overlaps = 0, minNear = Infinity, under30 = 0, gapsAll = 0;
+  const follow = [];
+  const models = new Set();
+  for (let t = 0; t < 900; t += DT) {
+    sim.update(DT, { viewer });
+    if (Math.round(t / DT) % 60) continue;
+    let nearN = 0;
+    for (const dir of [1, -1]) {
+      const l = sim.cars.filter((c) => !c.hidden && c.dir === dir).sort((a, b) => (a.z - b.z) * dir);
+      for (const c of l) { models.add(c.model); if (Math.abs(c.z) < 250) nearN++; }
+      for (let i = 1; i < l.length; i++) {
+        const a = l[i - 1], b = l[i];
+        pairs++;
+        if (a.model === b.model && a.color === b.color) same++;
+        const gap = Math.abs(b.z - a.z) - (a.len + b.len) / 2;
+        if (gap < 0.3) overlaps++;
+        gapsAll++;
+        if (gap < 30) under30++;
+        if (gap < 40) follow.push(gap / ((a.len + b.len) / 2));
+      }
+    }
+    if (t > 60) minNear = Math.min(minNear, nearN);
+  }
+  check('30 cars: never two consecutive cars of one model and colour', same === 0 && pairs > 1000, { same, pairs });
+  check('30 cars: all seven bodies and a classic on the road', KINDS.every((k) => models.has(k)) && models.has('classic'), { models: [...models] });
+  check('30 cars: no overlaps', overlaps === 0, { overlaps });
+  check('30 cars: a steady line (>= 10 within 250 m of the viewer)', minNear >= 10, { minNear });
+  follow.sort((a, b) => a - b);
+  const med = follow[follow.length >> 1];
+  check('30 cars: platoons 2-4 car lengths apart (median following gap), most gaps < 30 m', med > 2 && med < 4 && under30 / gapsAll > 0.5, { medianLengths: +med.toFixed(2), under30: +(under30 / gapsAll).toFixed(2) });
 }
 
 const failed = results.filter((ok) => !ok).length;

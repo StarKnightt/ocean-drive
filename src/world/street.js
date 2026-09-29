@@ -330,8 +330,8 @@ function markings() {
       quad(PARKING.x0 + GUTTER_W, LANES.x1 - GUTTER_W, z0, z0 + 0.3, WHT, 0.95, 16);
       quad(PARKING.x0 + GUTTER_W, LANES.x1 - GUTTER_W, z1 - 0.3, z1, WHT, 0.95, 16);
     }
-    // the signalised intersection stops Ocean Drive too
-    if (c.signal) {
+    // stop bars on Ocean Drive's approaches (cars hold here for the crossing and the signal)
+    {
       const [n, s] = crossLegs(c.z);
       quad(cx + 0.2, LANES.x1 - GUTTER_W, s[1] + 1.6, s[1] + 2.0, WHT, 0.9, 6);
       quad(PARKING.x1, cx - 0.2, n[0] - 2.0, n[0] - 1.6, WHT, 0.9, 6);
@@ -690,6 +690,17 @@ function curbs(concrete) {
 
 // ---------------------------------------------------------------------------
 // Street furniture, merged into one vertex-coloured mesh.
+function haloTexture() {
+  const N = 64, px = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const r = Math.min(1, Math.hypot((i + 0.5) / N - 0.5, (j + 0.5) / N - 0.5) * 2);
+    px.set([255, 255, 255, Math.round(255 * (1 - r) ** 2.2)], (j * N + i) * 4);
+  }
+  const t = new THREE.DataTexture(px, N, N);
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
 function colored(g, hex) {
   g = g.index ? g.toNonIndexed() : g;
   g.deleteAttribute('uv');
@@ -984,12 +995,25 @@ function districtFurniture(mat, G) {
   // for the cross-street heads; SIGNAL_LIGHTS.set() shows the lit one (world/traffic.js
   // runs the cycle; until then Ocean Drive shows green, the cross street red)
   if (lit.length) {
-    const HEX = [0xff4f3c, 0xffb43a, 0x7dffb0];
+    // the lit lens: saturated and bright, with a small additive halo (the bloom pass keys on
+    // luminance and would need a red pushed to white)
+    const HEX = [0xff1a0a, 0xffa010, 0x10ff70];
+    const glow = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+    glow.color.setScalar(1.8);
+    const haloTex = haloTexture();
     for (const group of ['od', 'cross']) {
       const heads = lit.filter((q) => (q.lamp === 2) === (group === 'od'));
       SIGNAL_LIGHTS[group] = HEX.map((hex, lamp) => {
-        const lens = heads.map((q) => colored(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 14).rotateX(Math.PI / 2).translate(0, 0.35 - lamp * 0.35, 0.14), hex).rotateY(q.rot).translate(q.x, q.y, q.z));
-        const m = new THREE.Mesh(mergeGeometries(lens), new THREE.MeshBasicMaterial({ vertexColors: true }));
+        const lens = heads.map((q) => colored(new THREE.CylinderGeometry(0.102, 0.102, 0.02, 16).rotateX(Math.PI / 2).translate(0, 0.35 - lamp * 0.35, 0.13), hex).rotateY(q.rot).translate(q.x, q.y, q.z));
+        const m = new THREE.Mesh(mergeGeometries(lens), glow);
+        const halo = new THREE.SpriteMaterial({ map: haloTex, color: HEX[lamp], blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8 });
+        for (const q of heads) {
+          const sp = new THREE.Sprite(halo);
+          sp.position.set(0, 0.35 - lamp * 0.35, 0.2).applyAxisAngle(new THREE.Vector3(0, 1, 0), q.rot).add(new THREE.Vector3(q.x, q.y, q.z));
+          sp.scale.setScalar(0.62);
+          sp.renderOrder = 3;
+          m.add(sp);
+        }
         m.visible = group === 'od' ? lamp === 2 : lamp === 0;
         out.push(m);
         return m;
@@ -1010,12 +1034,18 @@ function signalPoleGeo(x0, armTo) {
   ]);
 }
 function signalHeadGeo() {
-  // three-lens head facing +z (lenses unlit here; the lit one is a separate emissive disc)
-  const Hs = 0x2b2d27, parts = [box(0.36, 1.05, 0.24, 0, -0.52, 0, Hs), box(0.52, 1.2, 0.02, 0, -0.6, -0.13, 0x1c1d1a)];
+  // three-lamp head facing +z, as on Collins Av: a yellow housing on a black backplate, a
+  // tunnel visor over each lamp, dark lenses (the lit one is a separate glowing disc)
+  const Y = 0xe3ac14, K = 0x0b0b0a;
+  const parts = [box(0.34, 1.02, 0.22, 0, -0.51, 0, Y), box(0.6, 1.26, 0.025, 0, -0.63, -0.125, K)];
+  const visor = new THREE.Shape();
+  visor.absarc(0, 0, 0.128, 0, Math.PI, false);
+  visor.absarc(0, 0, 0.114, Math.PI, 0, true);
   for (let i = 0; i < 3; i++) {
     const y = 0.35 - i * 0.35;
-    parts.push(colored(new THREE.CylinderGeometry(0.1, 0.1, 0.015, 14).rotateX(Math.PI / 2).translate(0, y, 0.125), [0x3a1512, 0x3a2c10, 0x0f2a1a][i]));
-    parts.push(box(0.26, 0.02, 0.16, 0, y + 0.12, 0.2, Hs));
+    parts.push(colored(new THREE.CylinderGeometry(0.105, 0.105, 0.015, 16).rotateX(Math.PI / 2).translate(0, y, 0.115), [0x2a0907, 0x2c1e05, 0x05200f][i]));
+    parts.push(colored(new THREE.CylinderGeometry(0.13, 0.13, 0.012, 16).rotateX(Math.PI / 2).translate(0, y, 0.112), K));
+    parts.push(colored(new THREE.ExtrudeGeometry(visor, { depth: 0.2, bevelEnabled: false, curveSegments: 8 }).translate(0, y, 0.11), K));
   }
   parts.push(box(0.06, 0.2, 0.06, 0, 0.5, 0, 0x3a3f3c));
   return mergeGeometries(parts);

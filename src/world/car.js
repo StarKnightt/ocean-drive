@@ -147,9 +147,9 @@ export function blobTexture() {
   const box = (d, half, soft) => 1 - THREE.MathUtils.smoothstep(d, half - soft, half + soft);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const u = (i + 0.5) / N - 0.5, v = (j + 0.5) / N - 0.5;
-    const body = 0.66 * box(Math.abs(u), 0.27, 0.12) * box(Math.abs(v), 0.36, 0.1);
+    const body = 0.8 * box(Math.abs(u), 0.27, 0.12) * box(Math.abs(v), 0.36, 0.1);
     const du = (Math.abs(u) - 0.345) / 0.075, dv = (Math.abs(v) - 0.26) / 0.085;
-    const tyre = 0.55 * Math.max(0, 1 - Math.hypot(du, dv)) ** 1.5;
+    const tyre = 0.85 * Math.max(0, 1 - Math.hypot(du, dv)) ** 1.3;
     px[(j * N + i) * 4 + 3] = Math.round(255 * (1 - (1 - body) * (1 - tyre)));
   }
   const t = new THREE.DataTexture(px, N, N);

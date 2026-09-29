@@ -41,7 +41,7 @@ K = {
                   belt=0.9, cowl=0.9, nose=0.84, deck=0.9, tail=0.86, zb=0.28, zbe=0.4,
                   zA=0.62, zRf=0.0, zRr=-0.95, zR=-1.5, top=1.36, Wt=0.7, pillars=[], sg=(-1.12, 0.46),
                   doors=[0.62, -0.74], rake=0.04, trake=0.02, rim_style='vintage', vintage=True, amp=0.012,
-                  tail_l=((0.6, 0.66), (0.9, 0.8)), glass='glass', frit='trim'),
+                  tail_l=((0.6, 0.66), (0.9, 0.8)), frit='trim'),
     # long-roof estate: the sedan's nose, the roof carried to a near-vertical tailgate
     'wagon': dict(L=4.86, W0=0.905, uF=1.43, uR=-1.47, R=0.33, rim=0.225, tw=0.11, track=0.79, arch=0.385,
                   belt=0.965, cowl=0.94, nose=0.73, deck=1.0, tail=0.95, zb=0.25, zbe=0.36,
@@ -95,9 +95,6 @@ def spec_for(kind):
 
     def classify(s, h, u):
         if k.get('clad'):
-            for z in wb:
-                if math.hypot(u - z, h - (k['R'] - 0.01)) < k['arch'] + 0.07 and abs(s) > k['W0'] - 0.2:
-                    return 'trim'
             if h < k['zb'] + 0.12 and abs(s) > 0.5:
                 return 'trim'
         if abs(u) > half - 0.3 and h < k['zbe'] - 0.035 and not k.get('vintage'):
@@ -200,19 +197,27 @@ def greenhouse(kind, B, lod, glass_part, gl_mat):
                 if 0 <= a < nst - 1 and 0 <= b < n - 1 and cls[a][b] in ('paint',):
                     out[i][j] = frit
     names = {'glass': gl_mat, 'paint': 'paint', 'pillar': 'trim', 'trim': 'trim', 'chrome': 'chrome'}
+
+    def fmat(i, j):
+        if out[i][j] != 'glass':
+            return names[out[i][j]]
+        # the windscreen (a lighter tint than the side and rear glass)
+        return '__screen' if (us[i] + us[i + 1]) / 2 > zRf else '__glass'
     gh = Part(kind + '_gh')
-    f = gh.grid(rings, face_mat=lambda i, j: names[out[i][j]] if out[i][j] != 'glass' else '__glass', uv_tile=1)
+    f = gh.grid(rings, face_mat=fmat, uv_tile=1)
     orient(gh, f, lambda c: Vector((0, c.y, belt)))
     # glass faces move to the glass part (own object, own material)
-    gi = gh.mats.index('__glass') if '__glass' in gh.mats else -1
-    gfaces = [x for x in gh.bm.faces if x.material_index == gi]
-    for x in gfaces:
-        vs = [glass_part.bm.verts.new(v.co) for v in x.verts]
-        nf = glass_part.bm.faces.new(vs)
-        nf.material_index = glass_part.mi(gl_mat)
-        nf.smooth = True
-    bmesh.ops.delete(gh.bm, geom=gfaces, context='FACES_ONLY')
-    if '__glass' in gh.mats:
+    for tag, mat in (('__glass', gl_mat), ('__screen', 'windshield')):
+        if tag not in gh.mats:
+            continue
+        gi = gh.mats.index(tag)
+        gfaces = [x for x in gh.bm.faces if x.material_index == gi]
+        for x in gfaces:
+            vs = [glass_part.bm.verts.new(v.co) for v in x.verts]
+            nf = glass_part.bm.faces.new(vs)
+            nf.material_index = glass_part.mi(mat)
+            nf.smooth = True
+        bmesh.ops.delete(gh.bm, geom=gfaces, context='FACES_ONLY')
         gh.mats[gi] = 'trim'
     return gh, roof_y, rings
 
@@ -357,6 +362,118 @@ def interior(part, kind, lod):
 
 
 # ---------------------------------------------------------------------------
+def groove(bm, plane_co, plane_no, weight, depth=0.0032, w=0.0075):
+    """a soft shut-line: three loops cut across the skin, the middle one pushed in along the
+    normal where weight((s, h, u), normal_shu) > 0. Shading draws the line, so there is no
+    dark slot to alias the way a boolean gap through the shell does"""
+    co, no = V(*plane_co), V(*plane_no).normalized()
+    for off in (-w, w):
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], dist=1e-6, plane_co=co + no * off, plane_no=no)
+    r = bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], dist=1e-6, plane_co=co, plane_no=no)
+    bm.normal_update()
+    moves = []
+    for v in r['geom_cut']:
+        if not isinstance(v, bmesh.types.BMVert):
+            continue
+        wt = weight(C(v.co), C(v.normal))
+        if wt > 0:
+            moves.append((v, v.normal * (depth * wt)))
+    for v, d in moves:
+        v.co -= d
+
+
+def shut_lines(bm, kind, S):
+    """door, bumper-cover and bonnet shut-lines as grooves"""
+    k = K[kind]
+    ramp = lambda x, a, b, f=0.03: smoothstep(a, a + f, x) * (1 - smoothstep(b - f, b, x))
+    side = lambda s, n: abs(s) > 0.55 and n[0] * (1 if s > 0 else -1) > 0.35
+    for uz in k['doors']:
+        h0, h1 = k['zb'] + 0.06, k['belt'] + 0.03
+        groove(bm, (0, 0, uz), (0, 0, 1), lambda c, n, h0=h0, h1=h1: ramp(c[1], h0, h1, 0.02) if side(c[0], n) else 0)
+    if not k.get('vintage'):
+        hb = k['zbe'] + 0.1
+        for sgn, wz in ((1, k['uF']), (-1, k['uR'])):
+            ua = wz + sgn * (k['arch'] + 0.04)
+            groove(bm, (0, 0, ua), (0, 0, 1), lambda c, n: ramp(c[1], k['zb'] + 0.05, hb, 0.015) if side(c[0], n) else 0)
+            groove(bm, (0, hb, 0), (0, 1, 0), lambda c, n, sgn=sgn, ua=ua: 1.0 if (c[2] - ua) * sgn > 0.005 and abs(n[1]) < 0.75 else 0)
+    if 'bed' not in k:
+        hu = k['zA'] + 0.06
+        groove(bm, (0, 0, hu), (0, 0, 1), lambda c, n: (1 - smoothstep(0.8, 0.9, abs(c[0]))) if c[1] > k['cowl'] - 0.1 and n[1] > 0.3 else 0)
+
+
+def arch_lips(ext, caster, kind, lod):
+    """a rolled lip round each wheel opening (a wide black flare on the clad bodies): hides the
+    raw boolean edge, which otherwise shows as a stepped dark outline"""
+    k = K[kind]
+    clad = k.get('clad')
+    hub_h = k['R']
+    rad = k['arch'] + (0.01 if clad else 0.004)
+    n = 20 if lod == 0 else 9
+    prof = ([(-0.034, -0.004), (-0.028, 0.007), (0.0, 0.011), (0.022, 0.007), (0.03, -0.004)] if clad
+            else [(-0.011, -0.003), (-0.007, 0.005), (0.0, 0.0075), (0.007, 0.005), (0.011, -0.003)])
+    for wz in (k['uF'], k['uR']):
+        for sg in (-1, 1):
+            pts = []
+            for i in range(n + 1):
+                a = math.radians(-4 + 188 * i / n)
+                u, h = wz + rad * math.cos(a), hub_h + rad * math.sin(a)
+                if h < k['zb'] - 0.02:
+                    continue
+                loc, nor = caster.hit((sg * 3, h, u), (-sg, 0, 0))
+                if loc is not None and abs(nor.x) > 0.3:
+                    pts.append(loc + nor * 0.001)
+            if len(pts) > 3:
+                sweep(ext, pts, prof, mat='trim' if clad else 'paint', up=(sg, 0, 0))
+
+
+def rear_lamps(ext, caster, kind, S, lod):
+    """tail-lamp clusters wrapping the rear corners: rays straight back across the tail, then
+    fanned round the corner, so no ray misses the body (the old flat patch was dropped whole
+    whenever one did). The inboard end is the clear reverse lamp"""
+    k = K[kind]
+    half = S['half']
+    (t0s, t0h), (t1s, t1h) = k['tail_l']
+    # (on the tall tailgates the lamp band sits below the body's tail edge, not beside the glass)
+    t1h = min(t1h, S['hs'](-half + 0.15) - 0.03)
+    t0h = min(t0h, t1h - 0.14)
+    cs, cu = t1s - 0.14, -half + 0.32
+    na, nb = (12, 3) if lod == 0 else (5, 1)
+    wrap = math.radians(72)
+    for sg in (-1, 1):
+        rows = []
+        for i in range(na + 1):
+            a = i / na
+            row = []
+            for j in range(nb + 1):
+                b = j / nb
+                if a <= 0.6:
+                    h = lerp(t0h, t1h, b)
+                    loc, nor = caster.hit((sg * lerp(t0s, cs, a / 0.6), h, -5), (0, 0, 1))
+                else:
+                    t = (a - 0.6) / 0.4
+                    th = wrap * t
+                    hm, hh = (t0h + t1h) / 2, (t1h - t0h) / 2 * (1 - 0.35 * t)
+                    h = hm + hh * (2 * b - 1)
+                    loc, nor = caster.hit((sg * (cs + 3 * math.sin(th)), h, cu - 3 * math.cos(th)), (-sg * math.sin(th), 0, math.cos(th)))
+                for _ in range(8):
+                    if loc is not None:
+                        break
+                    h -= 0.015
+                    loc, nor = caster.hit((sg * lerp(t0s, cs, min(1.0, a / 0.6)), h, -5), (0, 0, 1))
+                if loc is None:
+                    row = None
+                    break
+                row.append(loc + nor * 0.004)
+            if row:
+                rows.append((a, row))
+        if len(rows) < 3:
+            continue
+        cols = [a for a, _ in rows]
+        f = ext.grid([r for _, r in rows], face_mat=lambda i, j: 'lens' if cols[i + 1] <= 0.17 else 'tail', uv_tile=1)
+        orient(ext, f, lambda c: V(0, C(c)[1], cu))
+
+
+# ---------------------------------------------------------------------------
 def build(kind, lod, coll):
     k = K[kind]
     tag = '' if lod == 0 else '_L1'
@@ -371,30 +488,17 @@ def build(kind, lod, coll):
     p, faces = B.build(kind + '_body' + tag, us)
     bmesh.ops.remove_doubles(p.bm, verts=p.bm.verts, dist=1e-5)
     bmesh.ops.recalc_face_normals(p.bm, faces=p.bm.faces)
+    if lod == 0:
+        shut_lines(p.bm, kind, S)
     body = p.object(sharp=45)
     cut = []
     hub_h = k['R'] - 0.012
     for wz in (k['uF'], k['uR']):
         for s in (-1, 1):
             cut.append(cutter_cyl(V(s * 1.05, hub_h + 0.012, wz), (1, 0, 0), k['arch'], 0.8, segs=48 if lod == 0 else 24))
-    if lod == 0:
-        G = 0.004
-        for s in (-1, 1):
-            for uz in k['doors']:
-                cut.append(fence([(s * 0.62, uz), (s * 1.3, uz)], k['zb'] + 0.06, k['belt'] + 0.03, G))
-        if not k.get('vintage'):
-            gw, g0, g1 = k['grille']
-            cut.append(cutter_box(V(0, (g0 + g1) / 2, half), (gw * 2, g1 - g0, 0.34), bevel=0.02))
-            # bumper covers: a horizontal seam across each end, split from the fenders at the arches
-            for sgn, wz in ((1, k['uF']), (-1, k['uR'])):
-                hb = k['zbe'] + 0.1
-                cut.append(cutter_box(V(0, hb, sgn * (half - 0.1)), (2.4, G, 0.5)))
-                ua = wz + sgn * (k['arch'] + 0.04)
-                for s_ in (-1, 1):
-                    cut.append(fence([(s_ * 0.55, ua), (s_ * 1.3, ua)], k['zb'] + 0.05, hb, G))
-        if 'bed' not in k:
-            hood_u = k['zA'] + 0.06
-            cut.append(fence([(-0.9, hood_u), (0.9, hood_u)], k['cowl'] - 0.1, k['cowl'] + 0.2, G))
+    if lod == 0 and not k.get('vintage'):
+        gw, g0, g1 = k['grille']
+        cut.append(cutter_box(V(0, (g0 + g1) / 2, half), (gw * 2, g1 - g0, 0.34), bevel=0.02))
     boolean(body, cut)
     resmooth(body, 45)
     caster = Caster(body)
@@ -512,15 +616,17 @@ def build(kind, lod, coll):
                     pts.append(loc + nor * 0.002)
             if len(pts) > 2:
                 sweep(ext, pts, [(-0.006, 0), (0, 0.005), (0.006, 0), (0, -0.001)], mat='chrome', up=(sg, 0, 0))
-    (t0s, t0h), (t1s, t1h) = k['tail_l']
-    for sg in (-1, 1):
-        if vint:
+    arch_lips(ext, caster, kind, lod)
+    if vint:
+        for sg in (-1, 1):
             loc, nor = caster.hit((sg * 0.75, 0.74, -5), (0, 0, 1))
             if loc:
                 lathe(ext, [(0.0, 0.0), (0.055, 0.0), (0.057, 0.012), (0.045, 0.02), (0.0, 0.024)], 20, loc - nor * 0.004, nor, mat='tail')
                 lathe(ext, [(0.055, 0.0), (0.066, 0.008), (0.062, 0.016), (0.056, 0.016)], 20, loc - nor * 0.004, nor, mat='chrome')
-        else:
-            surface_patch(ext, caster, lambda a, b, sg=sg: (sg * lerp(t0s, t1s, a), lerp(t0h, t1h, b)), na, 3, False, 'tail')
+    else:
+        rear_lamps(ext, caster, kind, S, lod)
+        # high-mounted stop lamp on the roof's trailing edge
+        box(ext, V(0, roof_y(k['zRr']) + 0.006, k['zRr'] - 0.03), (0.3, 0.026, 0.05), mat='brake3', bevel=0.008)
     # rear plate
     ph = (k['zbe'] + k['tail']) / 2 - 0.04 if not vint else 0.6
     surface_patch(ext, caster, lambda a, b: (lerp(-0.155, 0.155, a), lerp(ph - 0.075, ph + 0.075, b)), 3, 2, False, 'plate', lift=0.006)
@@ -567,7 +673,13 @@ def build(kind, lod, coll):
     # underbody and exhaust
     box(ext, V(0, k['zb'] - 0.03, 0), (1.5, 0.08, k['L'] - 1.1), mat='dark')
     if lod == 0:
-        lathe(ext, [(0.035, -0.15), (0.037, 0.0), (0.03, 0.005), (0.028, -0.1)], 14, V(-0.55, k['zb'] - 0.02, -half + 0.12), V(0, 0, -1), mat='chrome' if vint else 'trim')
+        # tailpipe tucked up under the rear bumper, running forward to a silencer under the floor
+        zbf = S['zb']
+        path = [V(-0.55, zbf(u) - 0.045, u) for u in (-half + 0.1, -half + 0.3, -half + 0.55, -half + 0.85)]
+        sweep(ext, path, [(0.03 * math.cos(t), 0.03 * math.sin(t)) for t in [2 * math.pi * i / 10 for i in range(10)]], mat='dark', up=(0, 0, 1))
+        lathe(ext, [(0.0, -0.002), (0.028, -0.002), (0.036, 0.0), (0.037, 0.06), (0.032, 0.062), (0.03, 0.01)], 14, path[0], V(0, 0, -1), mat='chrome' if vint else 'trim')
+        u = -half + 1.0
+        box(ext, V(-0.35, zbf(u) - 0.035, u), (0.42, 0.11, 0.34), mat='dark', bevel=0.03)
     # headliner under the roof
     if lod == 0:
         rr = []
@@ -577,6 +689,16 @@ def build(kind, lod, coll):
         f = ext.grid(rr, mat='interior')
         orient(ext, f, lambda c: c + Vector((0, 0, 1)))
     root = empty(kind + tag, (0, 0, 0), size=0.3)
+    if lod == 0:
+        # hooks for a seated skinned driver: hips on the driver's cushion, hand IK targets on
+        # the wheel rim at ten and two (the ring interior() sweeps)
+        fl = 0.42 if kind != 'pickup' else 0.55
+        fu = k['zA'] - (0.95 if kind != 'coupe' else 0.85)
+        sw_c = V(0.36 if kind != 'coupe' else 0.38, k['belt'] + 0.02, k['zA'] - 0.42)
+        empty(f'{kind}_driver_pelvis', V(C(sw_c)[0], fl + 0.3, fu - 0.36), root, size=0.1)
+        for nm, a in (('grip_L', 30), ('grip_R', 150)):
+            a = math.radians(a)
+            empty(f'{kind}_{nm}', sw_c + V(0.18 * math.cos(a), 0.153 * math.sin(a), 0.09 * math.sin(a)), root, size=0.02)
     # each wheel its own mesh on a pivot at the hub (the traffic cars spin them)
     for sg, u, nm in ((1, k['uF'], 'FL'), (-1, k['uF'], 'FR'), (1, k['uR'], 'RL'), (-1, k['uR'], 'RR')):
         loc = V(sg * k['track'], hub_h, u)
