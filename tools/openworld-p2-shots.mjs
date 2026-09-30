@@ -132,6 +132,21 @@ try {
     }
     if (await ev(() => window.__vehicles.riding)) { await page.keyboard.press('KeyE'); await page.waitForTimeout(1500); }
   }
+  if (want.has('radio')) {
+    // in the hero convertible (first person), Q twice: the dial card on the second station;
+    // plus an offline render of each station (levels, no clipping)
+    await ev(() => { const V = window.__vehicles; V.mount('car'); V.simulate([], 1.6); });
+    await page.keyboard.press('KeyQ');
+    await page.waitForTimeout(700);
+    await page.keyboard.press('KeyQ');
+    await ev(() => { const w = window.__walker; w.pitch = 0.05; });
+    await shot('4-radio', 900);
+    console.log('radio', await ev(() => ({ station: window.__radio.station, name: window.__radio.name, ctx: window.__audio.stats().state })));
+    console.log('render', await ev(async () => { const { renderRadioTest } = await import('/src/audio/radio.js'); const out = []; for (const i of [0, 1, 2]) out.push(await renderRadioTest(i, 8)); return out; }));
+    await page.keyboard.press('KeyQ'); await page.keyboard.press('KeyQ');
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(1500);
+  }
   if (want.has('classics')) {
     const c = await ev(() => window.__cars.parkedClassics.map((q) => [+q.position.x.toFixed(1), +q.position.z.toFixed(1)]));
     console.log('parked classics', c);

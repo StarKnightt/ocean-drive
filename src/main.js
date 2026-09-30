@@ -25,6 +25,7 @@ import { createVehicles } from './vehicles/index.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { createExitDrivers } from './world/exit-driver.js';
 import { createMinimap } from './ui/minimap.js';
+import { createRadioUi } from './ui/radio-ui.js';
 import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './renderer/memory.js';
 import { OPEN_WORLD } from './vehicles/specs.js';
 import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
@@ -233,6 +234,15 @@ const minimap = createMinimap({
   getSaved: () => { const e = vehicles.saved; return e && e !== vehicles.currentEntry ? { x: e.v.x, z: e.v.z } : null; },
 });
 window.__minimap = minimap;
+// the car radio: Q (touch: the radio button) steps Off -> three stations -> Off while in a car
+const radioUi = createRadioUi({ shot: SHOT });
+const radioNext = () => {
+  if (vehicles.currentEntry?.kind !== 'car') return;
+  const i = audio.radio.next();
+  radioUi.show(audio.radio.name, i);
+};
+addEventListener('keydown', (ev) => { if (ev.code === 'KeyQ' && !ev.repeat && !SHOT) radioNext(); });
+window.__radio = { next: radioNext, get station() { return audio.radio.station; }, get name() { return audio.radio.name; }, ui: radioUi };
 // what the hero's rear-view mirror draws besides the cars (world/cars-glb.js)
 const MIRRORED = new Set(['placeholders', 'hotels', 'palms', 'street', 'ocean', 'parked-paint', 'parked-dark', 'parked-trim', 'parked-tyre']);
 for (const o of scene.children) if (MIRRORED.has(o.name) || o.material?.name === 'Sky') o.userData.mirror = true;
@@ -298,7 +308,7 @@ const howEl = overlay.querySelector('.how');
 if (OPEN_WORLD && howEl) howEl.innerHTML = '<b>Click to walk</b> — WASD to move, mouse to look, Space to jump, Shift to stroll faster, E to ride the bike or the ATV or get into any parked car (C camera, Space handbrake, H horn, R back to the road), M to mute';
 function enableTouch() {
   if (touch || SHOT) return;
-  touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView() });
+  touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView(), onRadio: () => radioNext() });
   window.__touch = touch;
   if (howEl) howEl.innerHTML = OPEN_WORLD
     ? '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV, Enter at any parked car’s door'
@@ -533,7 +543,12 @@ function frame(t) {
     vehicles.update(dt);
     prof('vehicles');
   }
-  if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
+  if (!SHOT) {
+    audio.update(dt, camera); // SOUND: listener pose + auto footsteps
+    // the radio is heard in a car (the convertible and speed let the wind in)
+    const re = vehicles.currentEntry;
+    audio.radio.cabin({ inside: re?.kind === 'car', open: re?.origin === 'hero', speed: re ? Math.abs(re.v.lon) : 0 });
+  }
   prof('audio');
   sky.update(camera);
   if (updateLod(camera)) requestShadow(); // DISTRICT

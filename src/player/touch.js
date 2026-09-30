@@ -38,7 +38,9 @@ html.touch canvas { touch-action: none; }
 #touch .ride.show { opacity: 1; visibility: visible; transition: opacity 0.3s ease, visibility 0s, background 0.15s ease, transform 0.15s ease; }
 #touch .cam { width: 44px; height: 44px; right: calc(env(safe-area-inset-right, 0px) + 100px); bottom: calc(env(safe-area-inset-bottom, 0px) + 202px);
   opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0s linear 0.3s, background 0.15s ease, transform 0.15s ease; }
-#touch .cam.show { opacity: 1; visibility: visible; transition: opacity 0.3s ease, visibility 0s, background 0.15s ease, transform 0.15s ease; }
+#touch .cam.show, #touch .radio.show { opacity: 1; visibility: visible; transition: opacity 0.3s ease, visibility 0s, background 0.15s ease, transform 0.15s ease; }
+#touch .radio { width: 44px; height: 44px; right: calc(env(safe-area-inset-right, 0px) + 158px); bottom: calc(env(safe-area-inset-bottom, 0px) + 202px);
+  opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0s linear 0.3s, background 0.15s ease, transform 0.15s ease; }
 #touch .mute { width: 36px; height: 36px; right: calc(env(safe-area-inset-right, 0px) + 40px); bottom: calc(env(safe-area-inset-bottom, 0px) + 128px); }
 #touch .mute .x { display: none; }
 #touch .mute.muted .x { display: inline; }
@@ -48,6 +50,7 @@ html.touch canvas { touch-action: none; }
   #touch .mute { bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); right: calc(env(safe-area-inset-right, 0px) + 108px); }
   #touch .ride { bottom: calc(env(safe-area-inset-bottom, 0px) + 104px); }
   #touch .cam { bottom: calc(env(safe-area-inset-bottom, 0px) + 110px); right: calc(env(safe-area-inset-right, 0px) + 100px); }
+  #touch .radio { bottom: calc(env(safe-area-inset-bottom, 0px) + 110px); right: calc(env(safe-area-inset-right, 0px) + 158px); }
 }
 `;
 
@@ -62,12 +65,15 @@ const HTML = `
   <button class="cam" type="button" aria-label="Camera">
     <svg width="20" height="20" viewBox="0 0 20 20"><path d="M3 12.5 Q10 5 17 12.5" /><circle cx="10" cy="12.5" r="2.2" /><path d="M10 3.5 V5.5" /></svg>
   </button>
+  <button class="radio" type="button" aria-label="Radio">
+    <svg width="20" height="20" viewBox="0 0 20 20"><rect x="3" y="7" width="14" height="9" rx="1.5" /><path d="M6 7 L13 3.5" /><circle cx="7.5" cy="11.5" r="2" /><path d="M11.5 10 H14.5 M11.5 13 H14.5" /></svg>
+  </button>
   <button class="mute" type="button" aria-label="Mute">
     <svg width="18" height="18" viewBox="0 0 18 18"><path d="M3 7 H5.5 L9 4 V14 L5.5 11 H3 Z" />
       <path class="w" d="M11.5 6.5 Q13 9 11.5 11.5 M13.5 5 Q16 9 13.5 13" /><path class="x" d="M12 7 L16 11 M16 7 L12 11" /></svg>
   </button>`;
 
-export function createTouchControls(walker, { audio, onRide, onCamera } = {}) {
+export function createTouchControls(walker, { audio, onRide, onCamera, onRadio } = {}) {
   document.documentElement.classList.add('touch');
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -78,7 +84,7 @@ export function createTouchControls(walker, { audio, onRide, onCamera } = {}) {
   document.body.appendChild(root);
   const $ = (s) => root.querySelector(s);
   const stickEl = $('.stick'), knobEl = $('.knob'), hintEl = $('.hint');
-  const jumpBtn = $('.jump'), muteBtn = $('.mute'), rideBtn = $('.ride'), camBtn = $('.cam'), jumpLabel = $('.jump span');
+  const jumpBtn = $('.jump'), muteBtn = $('.mute'), rideBtn = $('.ride'), camBtn = $('.cam'), radioBtn = $('.radio'), jumpLabel = $('.jump span');
 
   const stick = { x: 0, y: 0 };
   walker.stick = stick;
@@ -161,6 +167,7 @@ export function createTouchControls(walker, { audio, onRide, onCamera } = {}) {
   press(jumpBtn, () => { walker.jump(); walker.brakeHeld = true; }, () => { walker.brakeHeld = false; });
   press(rideBtn, () => onRide?.());
   press(camBtn, () => onCamera?.());
+  press(radioBtn, () => onRadio?.());
   const syncMute = () => {
     const m = !!audio?.muted;
     muteBtn.classList.toggle('muted', m);
@@ -187,6 +194,7 @@ export function createTouchControls(walker, { audio, onRide, onCamera } = {}) {
       rideBtn.setAttribute('aria-label', mode === 'off' ? (car ? 'Get out' : 'Get off') : car ? 'Get in' : 'Ride');
       const riding = mode === 'off';
       camBtn.classList.toggle('show', riding && car);
+      radioBtn.classList.toggle('show', riding && car);
       if (!riding) walker.brakeHeld = false;
       jumpLabel.textContent = riding ? (kind === 'atv' ? 'Boost' : car ? 'Brake' : 'Hop') : 'Jump';
       jumpBtn.setAttribute('aria-label', jumpLabel.textContent);

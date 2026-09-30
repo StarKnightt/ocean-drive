@@ -17,6 +17,7 @@ import { createFootsteps } from './footsteps.js';
 import { createVehicleAudio } from './vehicles.js';
 import { createTrafficAudio } from './traffic.js';
 import { surfaceAt } from './surface.js';
+import { createRadio } from './radio.js';
 import { PALM_CLUSTERS } from '../world/palms.js';
 
 export { surfaceAt };
@@ -71,6 +72,7 @@ function buildScene(env, reduced) {
     music: createMusic(env, PATIO),
     steps: createFootsteps(env),
     vehicles: createVehicleAudio(env),
+    radio: createRadio(env, { reduced }),
   };
 }
 
@@ -83,12 +85,16 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
   const waveCbs = new Set();
   const walk = { x: null, z: null, acc: 0, still: 0 };
   let gullSource = null;   // BIRDS hook: calls come from real gulls
+  let ducked = false;
 
   function tick() {
     if (!ctx || ctx.state !== 'running') return;
     const now = ctx.currentTime;
     const ahead = now + (typeof document !== 'undefined' && document.hidden ? 1.5 : 0.35);
     parts.music.tick(now, ahead);
+    parts.radio.tick(now, ahead);
+    const on = parts.radio.on;
+    if (on !== ducked) { ducked = on; parts.music.duck?.(on); }
     if (nextWave < now) nextWave = now + 0.1;
     while (nextWave < ahead) {
       const w = parts.waves.breakAt(nextWave, L);
@@ -162,6 +168,16 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     // traffic (world/traffic.js): the cars' states once per frame; horn(h) = { x, z, classic }
     traffic(cars) { trafficCars = cars; },
     horn(h) { if (ctx && ctx.state === 'running') parts.traffic.horn(h); },
+    // the car radio (audio/radio.js): next() steps Off -> the three stations -> Off (starting
+    // the audio if needed: call from the key / tap); cabin({ inside, open, speed })
+    radio: {
+      next() { if (!ctx) api.start(); return parts ? parts.radio.next() : -1; },
+      set(i) { if (!ctx) api.start(); return parts ? parts.radio.set(i) : -1; },
+      cabin(o) { parts?.radio.setCabin(o); },
+      get station() { return parts?.radio.station ?? -1; },
+      get name() { return parts?.radio.name ?? 'Off'; },
+      get names() { return parts?.radio.names ?? ['Bossa at Dawn', 'Sunrise Synth', 'Clave Café']; },
+    },
     // BIRDS hooks: fn(L) -> { x, y, z, vx, vy, vz } of a visible gull (or null) voices each
     // gull call; wingFlutter(p) plays the wingbeats of a gull taking off near the listener
     setGullSource(fn) { gullSource = fn; parts?.gulls.setSource(fn); },

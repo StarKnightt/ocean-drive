@@ -739,7 +739,7 @@ export function createVehicles(scene, {
     if (offFail > 0) { offFail -= dt; showPrompt('No room to get out here'); }
     else if (v.stalled && !v.engineOn && e.startT <= 0) showPrompt(canRestart(v) ? '<b>W</b>restart' : 'Stalled — the water is too deep');
     else if (v.bogged) showPrompt('<b>S</b><b>W</b>rock it free &nbsp; <b>R</b>recover');
-    else showPrompt(offReq ? 'Stopping…' : hintT > 0 ? (e.kind === 'car' ? '<b>E</b>get out &nbsp; <b>Space</b>handbrake &nbsp; <b>C</b>camera' : '<b>E</b>get off') : '');
+    else showPrompt(offReq ? 'Stopping…' : hintT > 0 ? (e.kind === 'car' ? '<b>E</b>get out &nbsp; <b>Space</b>handbrake &nbsp; <b>C</b>camera &nbsp; <b>Q</b>radio' : '<b>E</b>get off') : '');
     setTouch('off');
   }
   const _cam = new THREE.PerspectiveCamera();

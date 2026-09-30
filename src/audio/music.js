@@ -201,5 +201,7 @@ export function createMusic(env, { x = -29, y = 1.6, z = -10 } = {}) {
     while (nextTime < until) { play(step, nextTime); step++; nextTime += S16; }
   }
 
-  return { tick, spatial: sp };
+  // duck(on): 6 dB down under the car radio
+  const duck = (on) => bus.gain.setTargetAtTime(on ? 0.25 : 0.5, ctx.currentTime, 0.4);
+  return { tick, spatial: sp, duck };
 }
