@@ -1,6 +1,7 @@
 // Normal-mode quality / dynamic-resolution check on the PRIMARY monitor: a muted 1920x1080
 // window at (0, 0), plain http://localhost:5173/ (no quality override), click to start,
-// then 20 s walking, 20 s on the ATV, 20 s in the convertible, 20 s in a parked SUV taken off
+// then 20 s walking, the same in the third-person view, 20 s each first and third person up
+// the park-side sidewalk, 20 s on the ATV, 20 s in the convertible, 20 s in a parked SUV taken off
 // the curb (chase view, handbrake turns). Logs the detected tier and renderer, the canvas
 // size, and once a second: render scale, fps, main-thread work per frame (p50 / p95), GPU ms
 // (timer query) and sun-shadow re-renders per second; per-phase medians in the summary.
@@ -54,11 +55,24 @@ const sampleFor = async (label, sec, drive) => {
     console.log(label.padEnd(5), String(rows.length).padStart(3), `scale ${r.scale} pr ${r.pixelRatio.toFixed(2)} fps ${r.frames} frame p50 ${r.cpuP50} max ${r.cpuMax} | cpu work p50 ${r.workP50} p95 ${r.workP95} | gpu p50 ${r.gpuP50} p95 ${r.gpuP95} ms | shadow ${r.shadow} ${r.shadowPerS}/s calls ${r.calls}`);
   }
 };
+// (getting off a moving vehicle: it brakes first; wait until on foot)
+const offRide = async () => { await page.waitForTimeout(1000); for (let i = 0; i < 40 && (await page.evaluate(() => window.__vehicles.riding)); i++) await page.waitForTimeout(200); await page.waitForTimeout(500); };
 // walk up the sidewalk
 await page.evaluate(() => window.__walker.teleport(-24, 30, 0, 0));
 await page.keyboard.down('KeyW'); await page.keyboard.down('ShiftLeft');
 await sampleFor('walk', 20);
 await page.keyboard.up('ShiftLeft'); await page.keyboard.up('KeyW');
+// the same in the third-person view (C). (That walk comes to a stop against the parked row
+// at z 22; the park-side sidewalk walks 50 m up the drive unobstructed, first then third
+// person.) Back to first person for the rides.
+const walkFrom = (x, z, mode) => page.evaluate(([x, z, mode]) => { window.__footView?.set(mode); window.__walker.teleport(x, z, 0, 0); window.__footCam?.snap(); }, [x, z, mode]);
+for (const [label, x, z, mode] of [['tp', -24, 30, 'tp'], ['walkP', -12.2, 40, 'fp'], ['tpP', -12.2, 40, 'tp']]) {
+  await walkFrom(x, z, mode);
+  await page.keyboard.down('KeyW'); await page.keyboard.down('ShiftLeft');
+  await sampleFor(label, 20);
+  await page.keyboard.up('ShiftLeft'); await page.keyboard.up('KeyW');
+}
+await page.evaluate(() => window.__footView?.set('fp'));
 // ATV on the beach
 await page.evaluate(() => { const v = window.__vehicles.list.find((e) => e.kind === 'atv').v; window.__walker.teleport(v.x - 2.2, v.z, 90, -18); });
 await page.waitForTimeout(500);
@@ -69,7 +83,7 @@ await page.keyboard.down('KeyW'); await page.keyboard.down('ShiftLeft');
 await sampleFor('atv', 20, true);
 await page.keyboard.up('ShiftLeft'); await page.keyboard.up('KeyW');
 await page.keyboard.press('KeyE');
-await page.waitForTimeout(2500);
+await offRide();
 // the convertible down the drive
 await page.evaluate(() => { const v = window.__vehicles.list.find((e) => e.kind === 'car').v; window.__walker.teleport(v.x - 2.4, v.z, 90, -5); });
 await page.waitForTimeout(500);
@@ -81,7 +95,7 @@ await sampleFor('car', 20, true);
 await page.keyboard.up('KeyW');
 await page.keyboard.down('KeyS'); await page.waitForTimeout(2500); await page.keyboard.up('KeyS');
 await page.keyboard.press('KeyE');
-await page.waitForTimeout(1500);
+await offRide();
 // open world: a parked SUV off the curb, chase view, down the drive with handbrake turns
 const suv = await page.evaluate(() => {
   const V = window.__vehicles, s = V.parkedNear?.(-22, -60, 'suv')?.[0];
@@ -109,5 +123,5 @@ const scales = [...new Set(rows.map((r) => r.scale))];
 const all = rows.map((r) => r.gpuP50).sort((a, b) => a - b);
 const med = (a) => { const b = a.filter((x) => x != null).sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
 const phase = (lb) => { const r = rows.filter((q) => q.label === lb); return r.length ? { workP50: med(r.map((q) => q.workP50)), workP95: med(r.map((q) => q.workP95)), gpuP50: med(r.map((q) => q.gpuP50)), shadowPerS: Math.max(...r.map((q) => q.shadowPerS)) } : null; };
-console.log('summary', JSON.stringify({ tier: Q.tier, scalesSeen: scales, minScale: Math.min(...rows.map((r) => r.scale)), gpuP50median: all[Math.floor(all.length / 2)], gpuP95max: Math.max(...rows.map((r) => r.gpuP95)), phases: { walk: phase('walk'), atv: phase('atv'), car: phase('car'), drive: phase('drive') }, guardDrops: g.drops, worstGpuMs: g.worstMs, errors }));
+console.log('summary', JSON.stringify({ tier: Q.tier, scalesSeen: scales, minScale: Math.min(...rows.map((r) => r.scale)), gpuP50median: all[Math.floor(all.length / 2)], gpuP95max: Math.max(...rows.map((r) => r.gpuP95)), phases: { walk: phase('walk'), tp: phase('tp'), walkP: phase('walkP'), tpP: phase('tpP'), atv: phase('atv'), car: phase('car'), drive: phase('drive') }, guardDrops: g.drops, worstGpuMs: g.worstMs, errors }));
 await browser.close();
