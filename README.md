@@ -3,11 +3,17 @@
 A first-person walk along Ocean Drive in Miami Beach at sunrise, built in Three.js. The sun is a
 hand's width above the Atlantic, the pastel Art Deco hotels are lit gold, and the palms throw
 shadows the length of the street. You can walk the sidewalk past the cafés, cross to the park,
-climb a lifeguard tower and go down to the water, where the swash runs in around your feet.
-Everything on screen and everything you hear is generated in code at load time: the hotels, the
-palms, the cars, the sand, the ocean, the sky, the signs and every sound. The scene loads no
-image, model, font or audio files (the only images in the repository are the screenshots in this
-README), and the hotels are invented: there is no real name or brand anywhere in the scene.
+climb a lifeguard tower and go down to the water, where the swash runs in around your feet. Or
+get into any car on the street, a parked one or a stopped one in the traffic, and drive it
+anywhere: down the drive, over the park lawn, down the seawall ramps onto the sand and into the
+surf. It is a sandbox, not a crime game: no weapons, no fighting, and a borrowed car's driver
+gets out and waves.
+
+The hotels, the palms, the sand, the ocean, the sky, the signs and every sound are generated in
+code at load time. The only files the scene loads are the cars, modelled in Blender for this
+project, the people and their animations from Mixamo, and two Poly Haven CC0 normal maps for the
+car interiors (see [CHANGELOG.md](CHANGELOG.md) for the provenance). The hotels are invented:
+there is no real name or brand anywhere in the scene.
 
 ![Ocean Drive, Miami Beach at sunrise](public/og-image.jpg)
 
@@ -44,28 +50,24 @@ the touch controls on an emulated phone.
 
 ## Controls
 
-| Input | Action |
-|---|---|
-| Click | Start walking: locks the pointer (the sound starts on the same click) |
-| Mouse | Look |
-| W A S D | Walk |
-| Shift | Walk faster |
-| Space | Jump |
-| E (or F) | Get on or off the beach cruiser or the lifeguard ATV, or into / out of the convertible, any parked car, or a stopped traffic car at its driver's door (the driver gets out and waves) |
-| W S A D (driving) | Throttle, brake / reverse, steer; Shift for a little more throttle |
-| Space (driving) | Handbrake: held with the wheel turned, the tail steps out |
-| C (or V) | Driver's view / chase camera |
-| H | Horn |
-| Q | Car radio: Off, Bossa at Dawn, Sunrise Synth, Clave Café |
-| N | Hide / show the minimap (Shift+N: north up / heading up) |
-| R (or Backspace) | Back to the nearest road (stuck, bogged in the sand, stalled in the surf) |
-| M | Mute |
-| Esc | Release the pointer |
+| Action | Keyboard and mouse | Touch |
+|---|---|---|
+| Start | Click (locks the pointer; the sound starts on the same click) | Tap (goes fullscreen where the browser allows it) |
+| Look | Mouse | Drag anywhere off the joystick |
+| Walk | W A S D, Shift to walk faster | Left-thumb joystick |
+| Jump | Space | Jump button |
+| Get in / out | E (or F): the beach cruiser, the lifeguard ATV, the convertible, any parked car, or a stopped traffic car at its driver's door (the driver gets out and waves) | Ride / Enter button |
+| Throttle, brake / reverse, steer | W S A D, Shift for a little more throttle | Joystick |
+| Handbrake | Space: held with the wheel turned, the tail steps out | Jump button, held |
+| Driver's view / chase camera | C (or V) | Camera button |
+| Horn | H | |
+| Car radio: Off, Bossa at Dawn, Sunrise Synth, Clave Café | Q | Radio button |
+| Minimap | N hides / shows it, Shift+N north up / heading up | |
+| Back to the nearest road (stuck, bogged in the sand, stalled in the surf) | R (or Backspace) | |
+| Mute | M | Mute button |
+| Release the pointer | Esc | |
 
-On a touch device the scene starts with a tap and goes fullscreen where the browser allows it.
-The left thumb drives a joystick, dragging anywhere else looks around, and there are buttons for
-jump, ride / enter and mute; in a car the jump button is the handbrake while held, a camera
-button switches to the chase view and a radio button steps through the stations.
+The key hints show small at the bottom left for a few seconds after you get in, then fade.
 
 The last car you got out of stays where you left it, across reloads (`localStorage`
 `ocean-drive.car`); the minimap marks it with a small lozenge.
@@ -84,7 +86,7 @@ The last car you got out of stays where you left it, across reloads (`localStora
 
 ## What is in it
 
-- About 14,400 lines of hand-written JavaScript across 34 files in `src/`.
+- About 22,400 lines of hand-written JavaScript across 57 files in `src/`.
 - A district 680 m long, from z −340 to +340, with six cross streets, the park, the promenade
   and the beach. The brief asked for one block.
 - About forty procedural Art Deco hotels: curved bays, eyebrow slabs over the windows, porthole
@@ -99,18 +101,27 @@ The last car you got out of stays where you left it, across reloads (`localStora
   breakers, lace foam and swash that washes around your feet. Three lifeguard towers, all
   climbable.
 - An ocean with a glitter path under the sun and turquoise shallows.
-- People: a jogger, a beach walker on the wet sand, a café worker and a cyclist.
+- People: a crowd of Mixamo characters walking, jogging and skating the sidewalks and the
+  promenade, sitting at the cafés and on the benches, a beach walker on the wet sand and a
+  seated driver in every traffic car. They step out of a car's way and turn their heads to one
+  coming at them.
 - Birds: pelicans in a line over the water, gulls that flee when you walk at them, sanderlings
   chasing the surf, grackles on the patios, a frigatebird and cormorants.
-- A beach cruiser to ride, a lifeguard ATV and the 1950s convertible to drive (V8 synthesized live).
+- Cars modelled in Blender (`blender/`): the two-tone 1950s convertible and seven modern bodies,
+  with cockpits you can sit in. A beach cruiser to ride, a lifeguard ATV and the convertible to
+  drive (V8 synthesized live), and every other car too.
 - Traffic: a few cars cruising the drive at 20–30 km/h, keeping their distance, stopping for
   anyone on a crosswalk, for the 11 ST signal (which cycles) and for you in the lane, with
   brake lights, positional engines and a horn when blocked. They brake for where you will be,
   beep when you cut in, edge round things at the lane edge and pass a car left standing in the
   lane. None in the `?shot` harness frames.
-- Open world: sidewalk bins and news boxes you can knock over, road-closed barricades and
-  cones at the ends, light dents on the modern cars, parked classics in the curb rows, a
-  minimap and a three-station generative car radio.
+- Open world: any parked or stopped traffic car to take (its driver swings the door open, gets
+  out and walks off), the park lawn, the seawall ramps, soft sand you can bog in and surf that
+  can drown the engine, with the car pressed into the sand and the water, gold-backlit spray,
+  thrown sand, ruts and patchy skid marks. Sidewalk bins and news boxes you can knock over,
+  road-closed barricades and cones at the ends, dents on the modern cars, parked classics in the
+  curb rows, the last car you left saved across reloads, a minimap and a three-station
+  generative car radio.
 
 ![The waterline: glitter path, breakers and the wrack line](media/03-waterline.jpg)
 
@@ -218,11 +229,15 @@ src/
   sky.js         sunrise sky, clouds, sun
   quality.js     quality tiers
   renderer/      post chain: bloom, anti-aliasing, grade
-  world/         layout, hotels, palms, street, car, beach, ocean, surf, people, birds, lod
-  vehicles/      beach cruiser and ATV: models and simulation
+  world/         layout, hotels, palms, street, cars (GLB), traffic, crowd (Mixamo), exiting
+                 drivers, beach, ocean, surf, birds, knockable props, world edges, lod
+  vehicles/      bike, ATV and cars: simulation, chase camera, skids, spray, dents
   player/        walker (collisions, surfaces, jump) and touch controls
-  audio/         synthesis, spatial audio, waves, gulls, wind, car, music, footsteps, vehicles
+  ui/            driving HUD, minimap, radio card
+  audio/         synthesis, spatial audio, waves, gulls, wind, car, music, radio, footsteps, vehicles
   textures/      procedural noise
+blender/         the car models: Python build scripts and cars.blend
+public/models/   the car and people GLBs
 tools/           Playwright capture and test harnesses
 ```
 
