@@ -103,7 +103,7 @@ try {
       console.log('barricade', bar);
       await ev((b) => { const V = window.__vehicles; V.place(b.x + 0.3, b.z + 16, 0); const v = V.current; v.lon = 8.5; v.vx = 0; v.vz = -8.5; }, bar);
       await ev(() => { window.__vehicles.simulate(['KeyW'], 1.75); const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 0.25; w.pitch = -0.2; });
-      await shot('6-knocked-bin-flying', 60);
+      await shot('6-knocked-barricades-flying', 60);
       console.log('props', await ev(() => window.__props.state()));
       await ev(() => { window.__vehicles.simulate(['KeyS'], 1.5); const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 0.3; w.pitch = -0.3; window.__vehicles.simulate([], 1.5); });
       await shot('6b-knocked-props-down', 700);
