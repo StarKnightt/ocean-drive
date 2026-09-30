@@ -359,7 +359,8 @@ function buildBackground(group) {
       // into the morning haze, so the simple far blocks don't read as a level's end
       .replace('#include <fog_fragment>', `#include <fog_fragment>
         #ifdef USE_FOG
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, odHaze(normalize(vFogOffset)), smoothstep(-85.0, -165.0, vOdP.x) * 0.75);
+        float odEdge = smoothstep(-85.0, -165.0, vOdP.x);
+        if (odEdge > 0.0) gl_FragColor.rgb = mix(gl_FragColor.rgb, odHaze(normalize(vFogOffset)), odEdge * 0.75);
         #endif`);
   };
   bgMat.customProgramCacheKey = () => 'bg-towers-v4';
