@@ -23,6 +23,7 @@ import { buildBike, buildAtv } from './models.js';
 import { createSkids } from './skids.js';
 import { createChaseCamera } from './camera.js';
 import { createHud } from '../ui/hud.js';
+import { createSpray, createWake, P_WATER, P_SAND, P_SPARK, P_GRASS, P_SMOKE, P_MIST } from './spray.js';
 
 export const PARKED = {
   bike: { x: 7.5, z: -26.5, yaw: -0.17 },
@@ -49,87 +50,6 @@ const CSS = `
 #ride-prompt b + b { margin-left: -0.3em; }
 html.touch #ride-prompt { display: none; }
 `;
-
-// ---------------------------------------------------------------------------
-// spray / roost / sparks / tyre smoke particles (one Points draw call)
-
-const P_WATER = 0, P_SAND = 1, P_SPARK = 2, P_GRASS = 3, P_SMOKE = 4;
-function createSpray(scene) {
-  const N = QUALITY.tier === 'high' ? 260 : QUALITY.tier === 'medium' ? 160 : 70;
-  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), al = new Float32Array(N), sz = new Float32Array(N);
-  const P = Array.from({ length: N }, () => ({ life: 0, max: 1, vx: 0, vy: 0, vz: 0, a: 0, s: 0, g: 1, grow: 1.5, drag: 1.2 }));
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-  g.setAttribute('aCol', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-  g.setAttribute('aA', new THREE.BufferAttribute(al, 1).setUsage(THREE.DynamicDrawUsage));
-  g.setAttribute('aS', new THREE.BufferAttribute(sz, 1).setUsage(THREE.DynamicDrawUsage));
-  const mat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false,
-    uniforms: { uScale: { value: 600 } },
-    vertexShader: /* glsl */ `
-      attribute vec3 aCol; attribute float aA; attribute float aS;
-      uniform float uScale;
-      varying vec3 vCol; varying float vA;
-      void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * mv;
-        gl_PointSize = aA > 0.001 ? clamp(aS * uScale / max(-mv.z, 0.1), 1.0, 90.0) : 0.0;
-        vCol = aCol; vA = aA;
-      }`,
-    fragmentShader: /* glsl */ `
-      varying vec3 vCol; varying float vA;
-      void main() {
-        vec2 c = gl_PointCoord * 2.0 - 1.0;
-        float r2 = dot(c, c);
-        if (r2 > 1.0) discard;
-        gl_FragColor = vec4(vCol, vA * pow(1.0 - r2, 1.5));
-      }`,
-  });
-  const pts = new THREE.Points(g, mat);
-  pts.frustumCulled = false;
-  pts.renderOrder = 6;
-  scene.add(pts);
-  let head = 0, live = 0;
-  // (the sparks are hot: over 1 in the linear target, so the bloom catches them where it runs)
-  const COL = [[0.95, 0.95, 0.93], [0.6, 0.5, 0.38], LOW ? [1.6, 0.95, 0.45] : [6, 2.6, 0.7], [0.2, 0.22, 0.09], [0.62, 0.6, 0.57]];
-  return {
-    emit(x, y, z, vx, vy, vz, type = P_WATER) {
-      const i = head; head = (head + 1) % N;
-      const p = P[i];
-      p.life = 0;
-      if (type === P_SPARK) { p.max = 0.18 + Math.random() * 0.3; p.a = 1; p.s = 0.012 + Math.random() * 0.01; p.g = 1; p.grow = -0.6; p.drag = 0.6; }
-      else if (type === P_SMOKE) { p.max = 0.9 + Math.random() * 0.8; p.a = 0.22; p.s = 0.18 + Math.random() * 0.12; p.g = -0.05; p.grow = 3; p.drag = 2.2; }
-      else if (type === P_WATER) { p.max = 0.45 + Math.random() * 0.5; p.a = 0.8; p.s = 0.04 + Math.random() * 0.05; p.g = 0.9; p.grow = 1.5; p.drag = 1.2; }
-      else { p.max = 0.5 + Math.random() * 0.4; p.a = type === P_GRASS ? 0.8 : 0.55; p.s = (type === P_GRASS ? 0.03 : 0.035) + Math.random() * 0.05; p.g = 1; p.grow = 1.2; p.drag = 1.2; }
-      p.vx = vx; p.vy = vy; p.vz = vz;
-      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
-      col.set(COL[type], i * 3);
-      live = N;
-    },
-    update(dt, renderer, camera) {
-      if (!live) return;
-      let any = false;
-      for (let i = 0; i < N; i++) {
-        const p = P[i];
-        if (p.life >= p.max) { al[i] = 0; continue; }
-        any = true;
-        p.life += dt;
-        p.vy -= 9.8 * p.g * dt;
-        const d = Math.exp(-dt * p.drag);
-        p.vx *= d; p.vz *= d;
-        pos[i * 3] += p.vx * dt; pos[i * 3 + 1] += p.vy * dt; pos[i * 3 + 2] += p.vz * dt;
-        const f = p.life / p.max;
-        al[i] = p.a * (1 - f) * Math.min(1, p.life * 20);
-        sz[i] = Math.max(0.004, p.s * (1 + f * p.grow));
-      }
-      if (!any) live = 0;
-      for (const k of ['position', 'aCol', 'aA', 'aS']) g.attributes[k].needsUpdate = true;
-      renderer.getDrawingBufferSize(_v2);
-      mat.uniforms.uScale.value = _v2.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-    },
-    points: pts,
-  };
-}
 
 // ---------------------------------------------------------------------------
 
@@ -178,6 +98,8 @@ export function createVehicles(scene, {
   // the passing traffic car(s) as moving colliders: circles along the lane
   const moverCircles = movers.map(() => [-1.9, -0.95, 0, 0.95, 1.9].map((dz) => ({ x: 0, z: 0, r: 0.95, dz, owner: null })));
   const spray = createSpray(scene);
+  const wake = shot ? null : createWake(scene);
+  const wakeList = [];
   const skids = shot ? null : createSkids(scene);
   const chase = createChaseCamera();
   const hud = shot ? null : createHud({ units: new URLSearchParams(globalThis.location?.search ?? '').get('units') === 'kmh' ? 'kmh' : 'mph' });
@@ -504,6 +426,7 @@ export function createVehicles(scene, {
   function effects(e, input, dt) {
     const v = e.v, sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), al = Math.abs(v.lon);
     const car = e.kind === 'car';
+    const wakeWheels = wake ? (wakeList.length = v.spec.wheels.length, wakeList) : null;
     // spray from the wheels in the swash, roost from soft sand, grass clumps
     v.spec.wheels.forEach(([lx], i) => {
       const dep = v.wheelDepth[i];
@@ -511,12 +434,20 @@ export function createVehicles(scene, {
       const wx = _w.x, wz = _w.z, gy = _w.y;
       const side = lx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(lx);
       if (dep > 0.015 && al > 1.2) {
-        const rate = (e.kind === 'atv' ? 45 : car ? 60 : 16) * Math.min(1, al / 7) * Math.min(1, dep / 0.07) * (LOW ? 0.5 : 1);
+        const rate = (e.kind === 'atv' ? 55 : car ? 75 : 20) * Math.min(1, al / 7) * Math.min(1, dep / 0.07) * (LOW ? 0.5 : 1);
         for (let n = poisson(rate * dt); n > 0; n--) {
-          const up = (1.2 + Math.random() * 2.2) * Math.min(1.3, al / 6);
-          const back = -v.lon * (0.25 + Math.random() * 0.3), out = side * (0.6 + Math.random() * 1.4);
-          spray.emit(wx + side * 0.1, gy + 0.05, wz, -sy * back + cy * out, up, -cy * back - sy * out, P_WATER);
+          const up = (1.0 + Math.random() * 2.0) * Math.min(1.3, al / 6);
+          const back = -v.lon * (0.2 + Math.random() * 0.35), out = side * (0.5 + Math.random() * 1.6);
+          spray.emit(wx + side * 0.12, gy + dep + 0.02, wz, -sy * back + cy * out, up, -cy * back - sy * out, P_WATER);
+          // (and a fine mist off the sheet, drifting back)
+          if (Math.random() < 0.45) spray.emit(wx + side * 0.25, gy + dep + 0.1, wz, -sy * back * 0.5 + cy * out * 0.4, 0.3 + Math.random() * 0.5, -cy * back * 0.5 - sy * out * 0.4, P_MIST);
         }
+      }
+      if (wakeWheels) {
+        const w = (wakeWheels[i] ??= {});
+        w.x = wx; w.z = wz; w.y = gy + dep; w.depth = dep; w.speed = al; w.R = v.spec.wheelR ?? (e.kind === 'bike' ? 0.33 : 0.36);
+        const sg = v.lon >= 0 ? 1 : -1;
+        w.fx = -sy * sg; w.fz = -cy * sg;
       }
       const rear = i >= 2 || v.spec.wheels.length === 2;
       const soft = v.surf.kind === 'sand' ? v.surf.soft : 0, grass = v.surf.kind === 'grass';
@@ -601,7 +532,8 @@ export function createVehicles(scene, {
       setTouch(near ? (near.kind === 'car' ? 'enter' : 'ride') : null);
       fov += (BASE_FOV - fov) * (1 - Math.exp(-dt * 6));
       applyFov();
-      spray.update(dt, renderer, camera);
+      spray.update(dt);
+      wake?.update(null, dt, clock);
       if (pendingEvent) { audio?.vehicle?.({ kind: null, event: pendingEvent }); pendingEvent = null; }
       return;
     }
@@ -628,7 +560,7 @@ export function createVehicles(scene, {
     }
     stepVehicle(v, input, dt, world);
     if (offReq && Math.abs(v.lon) < 1.0) dismount();
-    if (!rider) { spray.update(dt, renderer, camera); return; }
+    if (!rider) { spray.update(dt); wake?.update(null, dt, clock); return; }
     // stranded outside the world (pushed, a glitch): fade and back to the road
     if (v.outsideT > 3) recover(true);
     pose3(e, clock);
@@ -697,7 +629,8 @@ export function createVehicles(scene, {
     walker.feetY = v.groundY;
     fov += (fov0 - fov) * (1 - Math.exp(-dt * 3));
     applyFov();
-    spray.update(dt, renderer, camera);
+    spray.update(dt);
+    wake?.update(wakeList, dt, clock);
 
     // the ridden vehicle casts a live shadow: refresh the (static) shadow map as it moves
     const st = QUALITY.shadowStep ?? 0.5;
@@ -747,6 +680,8 @@ export function createVehicles(scene, {
     world,
     hud,
     skids,
+    wake,
+    spray,
     get riding() { return !!rider; },
     get current() { return rider?.v ?? null; },
     get currentEntry() { return rider; },

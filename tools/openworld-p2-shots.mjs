@@ -56,12 +56,23 @@ try {
       await shot('1b-suv-roof-chase', 500);
     }
     if (want.has('surf')) {
-      await ev(() => { const V = window.__vehicles; V.place(84, -110, -Math.PI / 2 - 0.25); V.simulate(['KeyW'], 2.5); });
+      // along the swash where it is ~15 cm deep, driving north, seen from the land side; the
+      // surges come and go, so a few takes (the best kept by eye)
       await page.keyboard.down('KeyW');
-      await ev(() => { const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 1.1; w.pitch = 0.05; });
-      await shot('2-surf-spray', 700);
-      await ev(() => { const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 1.7; w.pitch = -0.25; });
-      await shot('2b-surf-spray-close', 400);
+      for (const [k, z] of [['a', -110], ['b', -150], ['c', -190], ['d', -230]]) {
+        await ev((z) => {
+          const B = window.__beach, V = window.__vehicles;
+          let x = 86;
+          for (let q = 60; q < 110; q += 0.25) if (B.waterDepthAt(q, z) > 0.08) { x = q; break; }
+          V.place(x, z + 30, 0); V.simulate(['KeyW'], 3.2);
+          const w = window.__walker, v = V.current; w.yaw = v.yaw - Math.PI / 2 - 0.6; w.pitch = -0.1; V.simulate(['KeyW'], 0.4);
+        }, z);
+        console.log('spray', k, await ev(() => { const V = window.__vehicles, v = V.current; return { alive: V.spray.alive, depth: v.wheelDepth.map((d) => +d.toFixed(2)), lon: +v.lon.toFixed(1), x: +v.x.toFixed(1) }; }));
+        await shot('2-surf-spray-' + k, 150);
+        await ev(() => { const w = window.__walker, V = window.__vehicles, v = V.current; w.yaw = v.yaw - Math.PI / 2 + 0.35; w.pitch = -0.34; V.simulate(['KeyW'], 0.3); });
+        await shot('2b-surf-spray-close-' + k, 150);
+      }
+      console.log('wake', await ev(() => { const v = window.__vehicles.current, m = window.__vehicles.wake.mesh; const p = m.geometry.attributes.iPos.array, d = m.geometry.attributes.iDir.array; return { str: Array.from(window.__vehicles.wake?.strength ?? []).map((s) => +s.toFixed(2)), depth: v.wheelDepth.map((d) => +d.toFixed(2)), wheelH: v.wheelH.map((d) => +d.toFixed(2)), groundY: +v.groundY.toFixed(2), bodyY: +v.bodyY.toFixed(2), x: +v.x.toFixed(1), z: +v.z.toFixed(1), pos: Array.from(p).map((q) => +q.toFixed(2)), dir: Array.from(d).map((q) => +q.toFixed(2)), lon: +v.lon.toFixed(1), vis: m.visible, count: m.geometry.instanceCount }; }));
       await page.keyboard.up('KeyW');
     }
     await page.keyboard.press('KeyE');
