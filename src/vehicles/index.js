@@ -50,6 +50,8 @@ const CSS = `
 #ride-prompt b { display: inline-block; min-width: 1.35em; padding: 0.28em 0.3em; margin-right: 0.55em; border: 1px solid rgba(255, 250, 242, 0.55);
   border-radius: 3px; font-weight: 500; text-align: center; letter-spacing: 0; }
 #ride-prompt b + b { margin-left: -0.3em; }
+#ride-prompt.dock { left: calc(env(safe-area-inset-left, 0px) + 38px); top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 196px); transform: none;
+  font-size: 10.5px; letter-spacing: 0.12em; transition: opacity 0.8s ease; }
 html.touch #ride-prompt { display: none; }
 `;
 
@@ -121,6 +123,8 @@ export function createVehicles(scene, {
   const showPrompt = (html) => {
     if (html !== promptText) { promptText = html; if (html) prompt.innerHTML = html; }
     prompt.classList.toggle('show', !!html);
+    // (riding: small, bottom left over the minimap, clear of the road ahead)
+    prompt.classList.toggle('dock', !!rider);
   };
 
   let rider = null;            // the entry being ridden
@@ -321,7 +325,7 @@ export function createVehicles(scene, {
     trans = { t: 0, dur: e.kind === 'car' ? (slide ? 1.1 : 0.6) : 0.4, dip: e.kind === 'car' ? 0.25 : 0, pos: camera.position.clone(), quat: camera.quaternion.clone(), rel0: rel, pitch0: walker.pitch };
     walker.vel.set(0, 0);
     walker.jumpReq = false;
-    hintT = 3.5;
+    hintT = 4;
     offReq = false;
     if (e.kind === 'car') {
       // (a car taken from the traffic is still running)

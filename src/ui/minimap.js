@@ -9,18 +9,19 @@ import { HOTEL, SIDEWALK_W, SIDEWALK_E, LANES, PARKING, PARK, SAND, OCEAN, CROSS
 import { promenadeX } from '../world/crowd.js';
 
 const CSS = `
-#minimap { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 30px); bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+#minimap { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 36px); bottom: calc(env(safe-area-inset-bottom, 0px) + 32px);
   z-index: 4; width: 150px; height: 150px; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; }
 #minimap.show { opacity: 1; }
 #minimap .disc { position: absolute; inset: 3px; border-radius: 50%; overflow: hidden; background: rgba(40, 30, 28, 0.35);
-  box-shadow: 0 1px 8px rgba(30, 18, 12, 0.45); transform: translateZ(0); }
+  box-shadow: 0 0 0 1px rgba(24, 14, 8, 0.7), 0 2px 14px rgba(20, 12, 8, 0.55); transform: translateZ(0); }
 #minimap .map { position: absolute; left: -3px; top: -3px; transform-origin: 0 0; will-change: transform; }
 #minimap .map canvas { display: block; }
 #minimap .saved { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; background: rgba(255, 246, 228, 0.95); border: 1px solid rgba(120, 72, 40, 0.8); will-change: transform; }
 #minimap svg { position: absolute; inset: 0; width: 150px; height: 150px; overflow: visible; }
 #minimap .compass { will-change: transform; }
-#minimap .compass text { font: italic 400 11px Didot, 'Bodoni 72', 'Bodoni MT', 'Playfair Display', Georgia, serif; fill: #fff4e6; paint-order: stroke; stroke: rgba(40, 24, 14, 0.45); stroke-width: 1.5px; }
-#minimap .you { inset: auto; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); }
+#minimap .compass text { font: italic 600 13px Didot, 'Bodoni 72', 'Bodoni MT', 'Playfair Display', Georgia, serif; fill: #fff4e6; }
+#minimap .compass .badge { fill: rgba(36, 22, 14, 0.82); stroke: rgba(246, 214, 154, 0.95); stroke-width: 1; }
+#minimap .you { inset: auto; left: 50%; top: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 2px rgba(20, 12, 8, 0.8)); }
 html.touch #minimap { left: calc(env(safe-area-inset-left, 0px) + 12px); top: calc(env(safe-area-inset-top, 0px) + 12px); bottom: auto; scale: 0.72; transform-origin: 0 0; }
 `;
 const SIZE = 150, PX = 1.6;            // css px; map pixels per metre (offscreen)
@@ -41,12 +42,12 @@ function drawStatic(footprints) {
   // sidewalks, parking lanes and the drive
   rect(SIDEWALK_W.x0, SIDEWALK_W.x1, MAP.z0, MAP.z1, 'rgba(222, 204, 184, 0.88)');
   rect(SIDEWALK_E.x0, SIDEWALK_E.x1, MAP.z0, MAP.z1, 'rgba(222, 204, 184, 0.88)');
-  rect(PARKING.x0, PARKING.x1, MAP.z0, MAP.z1, 'rgba(66, 56, 54, 0.85)');
-  rect(LANES.x0, LANES.x1, MAP.z0, MAP.z1, 'rgba(48, 40, 40, 0.88)');
+  rect(PARKING.x0, PARKING.x1, MAP.z0, MAP.z1, 'rgba(98, 88, 84, 0.85)');
+  rect(LANES.x0, LANES.x1, MAP.z0, MAP.z1, 'rgba(84, 76, 74, 0.9)');
   // cross streets from the west (the near ones and the far grid)
   for (const s of CROSS_STREETS) {
     rect(MAP.x0, SIDEWALK_W.x1, s.z - CROSS.hw - 2, s.z + CROSS.hw + 2, 'rgba(222, 204, 184, 0.88)');
-    rect(MAP.x0, LANES.x0, s.z - CROSS.hw, s.z + CROSS.hw, 'rgba(48, 40, 40, 0.88)');
+    rect(MAP.x0, LANES.x0, s.z - CROSS.hw, s.z + CROSS.hw, 'rgba(84, 76, 74, 0.9)');
   }
   // the centre line
   g.fillStyle = 'rgba(242, 196, 92, 0.55)';
@@ -85,11 +86,12 @@ export function createMinimap({ footprints = [], shot = false, getPose, getSaved
   el.innerHTML = `
     <div class="disc"><div class="map"></div><i class="saved"></i></div>
     <svg class="compass" viewBox="0 0 ${SIZE} ${SIZE}"><g stroke="rgba(246, 214, 154, 0.9)">${ticks}</g>
-      <text x="${r}" y="${16}" text-anchor="middle" dominant-baseline="middle">N</text></svg>
-    <svg class="frame" viewBox="0 0 ${SIZE} ${SIZE}"><circle cx="${r}" cy="${r}" r="${r - 2.5}" stroke="rgba(246, 214, 154, 0.85)" stroke-width="1" fill="none" />
+      <circle class="badge" cx="${r}" cy="7" r="8.5" /><text x="${r}" y="7.5" text-anchor="middle" dominant-baseline="middle">N</text></svg>
+    <svg class="frame" viewBox="0 0 ${SIZE} ${SIZE}"><circle cx="${r}" cy="${r}" r="${r - 0.5}" stroke="rgba(24, 14, 8, 0.55)" stroke-width="1" fill="none" />
+      <circle cx="${r}" cy="${r}" r="${r - 2.5}" stroke="rgba(246, 214, 154, 0.85)" stroke-width="1" fill="none" />
       <circle cx="${r}" cy="${r}" r="${r - 5.5}" stroke="rgba(255, 236, 214, 0.5)" stroke-width="0.7" fill="none" /></svg>
     <svg class="you" viewBox="-8 -8 16 16"><defs><linearGradient id="mm-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d8" /><stop offset="1" stop-color="#e9b765" /></linearGradient></defs>
-      <path d="M0 -7 L5 5 L0 2.2 L-5 5 Z" fill="url(#mm-gold)" stroke="rgba(60, 34, 20, 0.7)" stroke-width="0.8" /></svg>`;
+      <path d="M0 -7 L5.2 5.4 L0 2.4 L-5.2 5.4 Z" fill="url(#mm-gold)" stroke="rgba(36, 20, 10, 0.95)" stroke-width="1.1" stroke-linejoin="round" /></svg>`;
   document.body.appendChild(el);
   const mapEl = el.querySelector('.map'), compass = el.querySelector('.compass'), you = el.querySelector('.you'), savedEl = el.querySelector('.saved');
   const map = drawStatic(footprints);
