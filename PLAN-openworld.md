@@ -733,6 +733,34 @@ handbrake leaving marks, switch to chase view, and get out anywhere. No pedestri
 be touched, `?shot` frames must be unchanged, and the driving CPU p95 on the 4060 must stay
 at 8 ms or less.
 
+#### Phase 1 status (done; `OPEN_WORLD` on by default, `?openworld=0` / `?shot=1` off)
+
+- **In:** 1.1 ramps at z −95 and **+112** (the planned +95 approach is blocked by park palms),
+  wall and colliders cut, cheek walls, `groundHeightOpen` for the walker, people, visuals and
+  sim; 1.2 walker extent (`insideWorld` / `softDistance`, the cross streets to x −90); 1.3
+  shadow box follows x west of −40; 1.4 any parked modern car enterable at either door (E/F,
+  touch Enter; the passenger door slides across), spot collider `disabled`, batched instance
+  hidden, exit anywhere, six live cars at most (the oldest out of sight goes back to its spot);
+  1.5 cockpit in `modern.py` (steer pivot with the grips under it, eye anchor, binnacle and
+  needle, full inward headliner, pedals, mirror, door cards) plus lighter glass and cabin trim
+  on the driven car; 1.6 the player's body seated in modern cars (`crowd.seatPlayer`); 1.7
+  parametric engines, surface layers, impacts, scrape, curb, skid, horn (H), door; 1.8
+  impulses, sparks, camera jolt, traffic bump with hazards (`stunT`); 1.9 chase camera (C / V,
+  touch button) with arm collision, head shown; 1.10 handbrake drift yaw and pooled skid marks;
+  1.11 HUD (`src/ui/hud.js`, `?units=kmh`) and recovery (R / Backspace) with the turn-back
+  fade; 1.12 threat pass and dodge, crossers check the player's car, `person: true`; 1.13 touch
+  camera button, Brake held = handbrake, Enter label; 1.14 tests. Low tier: 8 substeps, 300 skid
+  segments, fewer particles, no tyre smoke, sparks not HDR.
+- **Deferred to phase 2:** the saved car (5.7) and its `any-car-test` persistence check;
+  classics in the parked pool (none are parked today); standing and seated people don't dodge
+  (the car stops for them); the dodge's "look at the car" beat; the coupe / hero throttle
+  oversteer; a hinged door swing (phase 3 as planned).
+- **Perf (RTX 4060, 1080p high, `perf-primary`):** GPU median 6.35 ms; the open-world drive
+  (SUV, chase view) CPU work p95 4.6–6.4 ms per second away from the densest blocks, 9–12 ms
+  among the parked rows. The hero's first-person view stays at ~10 / 14 ms (p50 / p95) with or
+  without the open world: its rear-view mirror is a second scene pass (now every other frame on
+  high, traffic at LOD1 in it) and its LOD0 cabin is ~100 draws.
+
 ### Phase 2: the world reacts, and it gets bigger
 
 | # | Task | Files |
