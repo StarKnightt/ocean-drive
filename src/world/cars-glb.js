@@ -120,8 +120,8 @@ function createProbe(renderer, scene) {
 // ---------------------------------------------------------------------------
 // The hero's rear-view mirror while someone drives: the street behind rendered into a small
 // target from the driver's eye mirrored in the glass (a virtual camera behind the mirror
-// looking back through it; the near plane clips the mirror and its housing). Every fourth frame
-// on high, every fifth on medium, none on low (the housing's chrome shows instead), and not
+// looking back through it; the near plane clips the mirror and its housing). Every fifth frame
+// on high and medium, none on low (the housing's chrome shows instead), and not
 // while it is off-screen. People, birds, particles and the parked glass are left out of it.
 const MIRROR = { w: 0.176, h: 0.043, r: 0.012 };
 // objects left out of the mirror pass (too small or too costly to matter in it)
@@ -130,7 +130,7 @@ const _mf = new THREE.Frustum(), _mm = new THREE.Matrix4(), _mb = new THREE.Box3
 function rearMirror(renderer, scene, inst) {
   const anchor = inst.levels[0].getObjectByName('rear_mirror');
   if (!anchor || QUALITY.tier === 'low') return null;
-  const every = QUALITY.tier === 'high' ? 4 : 5;
+  const every = 5;
   const rt = new THREE.WebGLRenderTarget(256, 64, { type: THREE.HalfFloatType });
   const { w, h, r } = MIRROR;
   const shape = new THREE.Shape();
@@ -1496,7 +1496,8 @@ export async function buildCarsGlb(scene, renderer) {
       for (const m of all) {
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);
         if (m.parkedClassic) {
-          const near = d < LOD1_AT.hero;
+          // (the full model only up close: past a parked one it's the far level at 16 m)
+          const near = d < Math.min(16, LOD1_AT.hero);
           m.car.visible = near;
           m.far.visible = !near && d < LOD.cars;
           if (!near) continue;
