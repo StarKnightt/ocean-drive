@@ -62,10 +62,12 @@ export function edgeKinds(furnitureMat) {
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) frame.push(colored(new THREE.BoxGeometry(0.06, 1.3, 0.06).rotateX(sz * 0.22).translate(sx * (W / 2 - 0.12), 0.63, sz * 0.14), 0xe9e6de));
     frame.push(box(0.08, 0.06, 0.62, sx * (W / 2 - 0.12), 0, 0, 0x2b2b2b));
+    // a sandbag over each foot (Type III: weighted, not staked)
+    frame.push(colored(new THREE.CylinderGeometry(0.13, 0.15, 0.56, 8).rotateX(Math.PI / 2).scale(1, 0.55, 1).translate(sx * (W / 2 - 0.12), 0.1, 0), 0x9c8a66));
   }
-  const rails = [0.55, 0.86].map((y) => new THREE.BoxGeometry(W, 0.2, 0.025).translate(0, y, -0.02));
-  const sign = new THREE.PlaneGeometry(0.95, 0.3).rotateY(Math.PI).translate(0, 1.22, -0.03);
-  const signBack = mergeGeometries([box(0.97, 0.32, 0.015, 0, 1.06, -0.02, 0xd9d6ce), box(0.05, 0.12, 0.03, 0, 0.95, -0.02, 0xe9e6de)].map(strip));
+  const rails = [0.42, 0.7, 0.98].map((y) => new THREE.BoxGeometry(W, 0.2, 0.025).translate(0, y, -0.02));
+  const sign = new THREE.PlaneGeometry(0.95, 0.3).rotateY(Math.PI).translate(0, 1.32, -0.03);
+  const signBack = mergeGeometries([box(0.97, 0.32, 0.015, 0, 1.16, -0.02, 0xd9d6ce), box(0.05, 0.1, 0.03, 0, 1.07, -0.02, 0xe9e6de)].map(strip));
   const cone = [
     colored(new THREE.CylinderGeometry(0.035, 0.16, 0.62, 16, 1, true).translate(0, 0.35, 0), 0xe8622a),
     colored(new THREE.CylinderGeometry(0.105, 0.125, 0.12, 16, 1, true).translate(0, 0.3, 0).scale(1.02, 1, 1.02), 0xf2f0ea),

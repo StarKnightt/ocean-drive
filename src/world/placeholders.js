@@ -354,9 +354,15 @@ function buildBackground(group) {
           #endif
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, 0.2, odGlass);`);
+        roughnessFactor = mix(roughnessFactor, 0.2, odGlass);`)
+      // past the road-closed barricades on the cross streets (x -69) the frontage goes soft
+      // into the morning haze, so the simple far blocks don't read as a level's end
+      .replace('#include <fog_fragment>', `#include <fog_fragment>
+        #ifdef USE_FOG
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, odHaze(normalize(vFogOffset)), smoothstep(-85.0, -165.0, vOdP.x) * 0.75);
+        #endif`);
   };
-  bgMat.customProgramCacheKey = () => 'bg-towers-v3';
+  bgMat.customProgramCacheKey = () => 'bg-towers-v4';
   const bm = new THREE.InstancedMesh(unit, bgMat, bg.length);
   const aBg = new Float32Array(bg.length * 4);
   const bgCols = [0xf0ece4, 0xe9e3d8, 0xf2ede4, 0xe6e8e6, 0xeee6da, 0xe8ecee, 0xe4e6e2];
