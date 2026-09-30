@@ -775,6 +775,35 @@ at 8 ms or less.
 | 2.8 | Hit traffic cars become registry bodies (they slide and yaw) | `registry.js`, `traffic.js` |
 | 2.9 | Outer ring B and C: Ocean Drive ±960 (far row colliders, furniture, palm far-LOD), Collins Ave corridor; `placeholders.js` carves the corridor; LOD by x as well; traffic `END_Z` out and viewer-relative | new `world/outer.js`, `placeholders.js` `inRoad()`, `lod.js`, `extent.js`, `traffic-sim.js`, `main.js` (a loader stage) |
 
+#### Phase 2 status
+
+- **Step A fixes:** the hero's rear-view mirror every 4th frame at 256x64 with a whitelist
+  (sky, buildings, street, palms, sea, opaque parked batches, traffic at LOD1 within 70 m;
+  180 m far; skipped off-screen and on shadow frames); static BatchedMesh culling from
+  precomputed spheres, in 32-instance chunks; parked glass as back / front batches; traffic
+  LOD1 collapsed to 5 draws; the driven modern car's light glass only from the driver's seat
+  (the SUV roof reads solid from outside); spray as soft stretched droplets and mist, plus a
+  foam ring and wake round the wheels in the surf.
+- **In:** 2.1 enter a stopped traffic car at its driver's door (`traffic.handOff()`,
+  `sim.detach()`, `world/exit-driver.js`: out, wave, walk off to the sidewalk); 2.2 predictive
+  braking, startle beep with `drive_honk`, swerve (`xOff` ≤ 0.9 m), passing a static
+  obstacle after 6 s through a clear other lane; 2.3 (part) standing people turn, watch and
+  back out of a car's line, seated people follow it with their head; 2.4 radio (`audio/radio.js`,
+  three stations, **Q** not R, touch button, cabin filter, patio ducked 6 dB); 2.5 minimap
+  (`ui/minimap.js`, N / Shift+N) and the saved car (`localStorage['ocean-drive.car']`, the
+  any-car-test persistence checks); 2.6 knockable bins, news boxes, barricades and cones
+  (`world/props-dyn.js`); 2.7 dents (`vehicles/damage.js`, kept with the saved car); soft
+  road-closed barricades at the world's ends (`world/edges.js`); four parked classics in the
+  curb rows (scenery).
+- **Deferred:** 2.8 hit traffic cars as registry bodies; 2.9 the outer ring (Ocean Drive to
+  ±960 m and the Collins Ave corridor): walking CPU p95 sits at 5.5–7.5 ms and the hero cockpit
+  at 6–8 ms, too little headroom for twice the street furniture, parked rows and palms, so it
+  moves to phase 3 with the LOD-by-x work; parked classics enterable; broken lamps on a dent;
+  the dodge's look-back for walkers; beach props (chairs, umbrellas) knockable.
+- **Perf (RTX 4060, 1080p high, `perf-primary`):** GPU median 6.3 ms; CPU work p50 / p95 walking
+  6.0 / 7.5 (4.0 / 5.5 on another run), hero cockpit 4.6 / 6.2 (was 9.7 / 13.7), SUV drive
+  2.8 / 4.3 (was 9–12 p95 in the parked rows).
+
 ### Phase 3: reach and beats
 
 | # | Task | Files |

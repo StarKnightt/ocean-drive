@@ -51,19 +51,24 @@ the touch controls on an emulated phone.
 | W A S D | Walk |
 | Shift | Walk faster |
 | Space | Jump |
-| E (or F) | Get on or off the beach cruiser or the lifeguard ATV, or into / out of the convertible or any parked car, at its door |
+| E (or F) | Get on or off the beach cruiser or the lifeguard ATV, or into / out of the convertible, any parked car, or a stopped traffic car at its driver's door (the driver gets out and waves) |
 | W S A D (driving) | Throttle, brake / reverse, steer; Shift for a little more throttle |
 | Space (driving) | Handbrake: held with the wheel turned, the tail steps out |
 | C (or V) | Driver's view / chase camera |
 | H | Horn |
+| Q | Car radio: Off, Bossa at Dawn, Sunrise Synth, Clave Café |
+| N | Hide / show the minimap (Shift+N: north up / heading up) |
 | R (or Backspace) | Back to the nearest road (stuck, bogged in the sand, stalled in the surf) |
 | M | Mute |
 | Esc | Release the pointer |
 
 On a touch device the scene starts with a tap and goes fullscreen where the browser allows it.
 The left thumb drives a joystick, dragging anywhere else looks around, and there are buttons for
-jump, ride / enter and mute; in a car the jump button is the handbrake while held, and a camera
-button switches to the chase view.
+jump, ride / enter and mute; in a car the jump button is the handbrake while held, a camera
+button switches to the chase view and a radio button steps through the stations.
+
+The last car you got out of stays where you left it, across reloads (`localStorage`
+`ocean-drive.car`); the minimap marks it with a small lozenge.
 
 | URL option | Effect |
 |---|---|
@@ -100,7 +105,12 @@ button switches to the chase view.
 - A beach cruiser to ride, a lifeguard ATV and the 1950s convertible to drive (V8 synthesized live).
 - Traffic: a few cars cruising the drive at 20–30 km/h, keeping their distance, stopping for
   anyone on a crosswalk, for the 11 ST signal (which cycles) and for you in the lane, with
-  brake lights, positional engines and a horn when blocked. None in the `?shot` harness frames.
+  brake lights, positional engines and a horn when blocked. They brake for where you will be,
+  beep when you cut in, edge round things at the lane edge and pass a car left standing in the
+  lane. None in the `?shot` harness frames.
+- Open world: sidewalk bins and news boxes you can knock over, road-closed barricades and
+  cones at the ends, light dents on the modern cars, parked classics in the curb rows, a
+  minimap and a three-station generative car radio.
 
 ![The waterline: glitter path, breakers and the wrack line](media/03-waterline.jpg)
 
