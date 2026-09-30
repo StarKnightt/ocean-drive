@@ -67,13 +67,15 @@ function makePath(pts, { closed = false, half = 1.5, cross = null } = {}) {
   if (cross) {
     // find where the path runs over the roadway
     const N = Math.ceil(total / 0.25), q = {};
-    let inside = false, s0 = 0;
+    let inside = false, s0 = 0, deep = 0;
     for (let i = 0; i <= N; i++) {
       const s = (i / N) * total;
       P.at(s, q);
       const on = q.x > SIDEWALK_W.x1 && q.x < SIDEWALK_E.x0;
-      if (on && !inside) { inside = true; s0 = s; }
-      if (!on && inside) { inside = false; P.crossings.push({ s0, s1: s, z: q.z }); }
+      if (on && !inside) { inside = true; s0 = s; deep = 0; }
+      if (on) deep = Math.max(deep, Math.min(q.x - SIDEWALK_W.x1, SIDEWALK_E.x0 - q.x));
+      // (a step down into the gutter round a pinch in the sidewalk isn't a crossing)
+      if (!on && inside) { inside = false; if (deep > 1) P.crossings.push({ s0, s1: s, z: q.z }); }
     }
   }
   return P;
@@ -83,13 +85,15 @@ const sampled = (z0, z1, fx, step = 1) => { const pts = []; for (let z = z0; z <
 // ---------------------------------------------------------------------------
 // static obstacles (palms, lamps, bins, benches...) in a coarse grid
 function staticGrid(furniture = []) {
-  const cell = 4, map = new Map();
+  const cell = 4, map = new Map(), all = [];
   const key = (i, j) => i * 100003 + j;
   const add = (x, z, r) => {
     const i = Math.floor(x / cell), j = Math.floor(z / cell);
     const k = key(i, j);
     if (!map.has(k)) map.set(k, []);
-    map.get(k).push({ x, z, r });
+    const o = { x, z, r };
+    map.get(k).push(o);
+    all.push(o);
   };
   for (const c of STREET_COLLIDERS) {
     if (c.r) add(c.x, c.z, c.r);
@@ -108,6 +112,7 @@ function staticGrid(furniture = []) {
   for (const t of PALM_TREES) add(t.x, t.z, 0.3);
   for (const f of furniture) add(f.x, f.z, f.r);
   return {
+    all,
     near(x, z, out) {
       const i0 = Math.floor(x / cell), j0 = Math.floor(z / cell);
       for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) {
@@ -135,7 +140,8 @@ function outfit(rnd) {
 function castList(benches, chairs, furniture) {
   const P = [];
   const prom = (z0, z1) => makePath(sampled(z0, z1, promenadeX, 1), { half: 1.9 });
-  const hotelWalk = (z0, z1) => makePath(hotelLane(z0, z1, furniture), { half: 0.3 });
+  let laneObs = furniture;
+  const hotelWalk = (z0, z1) => makePath(hotelLane(z0, z1, laneObs), { half: 0.3 });
   const parkWalk = (z0, z1) => makePath(sampled(z0, z1, () => -12.1, 2), { half: 0.8 });
   const beach = (z0, z1, x = 89.6) => makePath(sampled(z0, z1, (z) => x + 1.1 * Math.sin(z / 15) + 0.4 * Math.sin(z / 5.3 + 1), 1), { half: 3 });
   // promenade strollers
@@ -149,21 +155,6 @@ function castList(benches, chairs, furniture) {
   P.push({ tier: 2, kind: 'jog', char: 'sophie', clip: 'run_f', path: prom(-180, 180), s: 60, dir: 1, v: 2.7 });
   P.push({ tier: 1, kind: 'skate', char: 'megan', clip: 'skate', path: prom(-220, 220), s: 300, dir: 1, v: 4.0 });
   P.push({ tier: 2, kind: 'skate', char: 'bryce', clip: 'skate', path: prom(-220, 220), s: 140, dir: -1, v: 4.4 });
-  // sidewalks
-  P.push({ tier: 1, kind: 'walk', char: 'bryce', clip: 'walk_casual_m', path: hotelWalk(-150, 150), s: 180, dir: -1, v: 1.3 });
-  P.push({ tier: 2, kind: 'walk', char: 'elizabeth', clip: 'walk_briefcase_f', path: hotelWalk(-120, 70), s: 120, dir: 1, v: 1.4 });
-  P.push({ tier: 3, kind: 'walk', char: 'lewis', clip: 'walk_shopping_bag_m', path: parkWalk(-150, 150), s: 100, dir: 1, v: 1.3 });
-  // crosser: hotel sidewalk south to the mid-block crosswalk, over, north up the park side,
-  // back over at the 10 ST south leg
-  {
-    const zc = CROSSWALK_Z, leg = crossLegs(CROSS_STREETS.find((c) => c.name === '10 ST').z)[1], z10 = (leg[0] + leg[1]) / 2;
-    const xh = -26.4, xp = -12.3;
-    const pts = [...hotelLane(z10, zc, furniture), ...sampled(z10, zc, () => xp, 2).reverse()];
-    P.push({ tier: 1, kind: 'walk', char: 'sophie', clip: 'walk_casual_f', path: makePath(pts, { closed: true, half: 0.7, cross: true }), s: 20, dir: 1, v: 1.3, crosser: true });
-  }
-  // beach
-  P.push({ tier: 1, kind: 'walk', char: 'lewis', clip: 'walk_stroll_old', path: beach(-60, 60), s: 50, dir: 1, v: 0.85 });
-  P.push({ tier: 2, kind: 'walk', char: 'megan', clip: 'walk_casual_f', path: beach(-170, -110, 88.4), s: 10, dir: 1, v: 1.05 });
   // benches near the start (sitting clips), cafe tables (a pair talking, one drinking)
   const bs = benches.filter((b) => b.z > -60 && b.z < 70).sort((a, b) => Math.abs(a.z - 20) - Math.abs(b.z - 20));
   const sits = [['sophie', 'sit_idle_f', 1], ['bryce', 'sit_drinking', 1], ['lewis', 'sit_looking_around', 2], ['elizabeth', 'sit_fidget_feet', 3]];
@@ -181,6 +172,23 @@ function castList(benches, chairs, furniture) {
   }
   const lone = cs.find((c) => !pair.includes(c) && Math.abs(c.z - (pair[0]?.z ?? 0)) > 8);
   if (lone) P.push({ tier: 3, kind: 'sit', char: 'lewis', clip: 'sit_drinking', seat: { x: lone.x, y: lone.y + 0.45, z: lone.z, yaw: lone.rot, cafe: true } });
+  // (the sidewalk lanes keep clear of the people sat at the cafe tables: hips and knees)
+  laneObs = [...furniture, ...P.filter((c) => c.seat?.cafe).map(({ seat: t }) => ({ x: t.x + Math.sin(t.yaw) * 0.15, z: t.z + Math.cos(t.yaw) * 0.15, r: 0.34 }))];
+  // sidewalks
+  P.push({ tier: 1, kind: 'walk', char: 'bryce', clip: 'walk_casual_m', path: hotelWalk(-150, 150), s: 180, dir: -1, v: 1.3 });
+  P.push({ tier: 2, kind: 'walk', char: 'elizabeth', clip: 'walk_briefcase_f', path: hotelWalk(-120, 70), s: 120, dir: 1, v: 1.4 });
+  P.push({ tier: 3, kind: 'walk', char: 'lewis', clip: 'walk_shopping_bag_m', path: parkWalk(-150, 150), s: 100, dir: 1, v: 1.3 });
+  // crosser: hotel sidewalk south to the mid-block crosswalk, over, north up the park side,
+  // back over at the 10 ST south leg
+  {
+    const zc = CROSSWALK_Z, leg = crossLegs(CROSS_STREETS.find((c) => c.name === '10 ST').z)[1], z10 = (leg[0] + leg[1]) / 2;
+    const xh = -26.4, xp = -12.3;
+    const pts = [...hotelLane(z10, zc, laneObs), ...sampled(z10, zc, () => xp, 2).reverse()];
+    P.push({ tier: 1, kind: 'walk', char: 'sophie', clip: 'walk_casual_f', path: makePath(pts, { closed: true, half: 0.7, cross: true }), s: 20, dir: 1, v: 1.3, crosser: true });
+  }
+  // beach
+  P.push({ tier: 1, kind: 'walk', char: 'lewis', clip: 'walk_stroll_old', path: beach(-60, 60), s: 50, dir: 1, v: 0.85 });
+  P.push({ tier: 2, kind: 'walk', char: 'megan', clip: 'walk_casual_f', path: beach(-170, -110, 88.4), s: 10, dir: 1, v: 1.05 });
   // standing about: a phone call by the promenade, someone looking round on the sidewalk
   P.push({ tier: 2, kind: 'stand', char: 'elizabeth', clip: 'idle_phone_talk_f', at: { x: promenadeX(-28) - 2.6, z: -28, yaw: 1.2 } });
   P.push({ tier: 3, kind: 'stand', char: 'bryce', clip: 'idle_looking_around', at: { x: -12.6, z: 58, yaw: -2.2 } });
@@ -198,10 +206,10 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     ...(hotels?.userData?.tables ?? []).filter((t) => t.y < 0.3).map((t) => ({ x: t.x, z: t.z, r: 0.42 })),
     ...chairs.filter((c) => c.y < 0.3).map((c) => ({ x: c.x, z: c.z, r: 0.27 })),
   ];
-  const lanes = [...furniture, ...STREET_COLLIDERS.filter((c) => c.r && c.x < -23.5).map((c) => ({ x: c.x, z: c.z, r: c.r })),
-    ...STREET_COLLIDERS.filter((c) => c.min && c.max.x < -23.5 && c.max.x - c.min.x < 3 && c.max.z - c.min.z < 3).map((c) => ({ x: (c.min.x + c.max.x) / 2, z: (c.min.z + c.max.z) / 2, r: Math.max(c.max.x - c.min.x, c.max.z - c.min.z) / 2 })), ...PALM_TREES.filter((t) => t.x < -23.5).map((t) => ({ x: t.x, z: t.z, r: 0.3 }))];
-  const cast = castList(BENCHES, chairs, lanes).filter((c) => c.tier <= tierN);
   const grid = staticGrid(furniture);
+  // (the lane planner sees exactly what the steering will: the same circles)
+  const lanes = grid.all.filter((o) => o.x < -23.5 && o.x > -29.5);
+  const cast = castList(BENCHES, chairs, lanes).filter((c) => c.tier <= tierN);
   const rnd = rng(4242);
   const colliders = [];
   const agents = [];
@@ -310,13 +318,18 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
 
   // --- per-frame -----------------------------------------------------------------------
   const frustum = new THREE.Frustum(), projM = new THREE.Matrix4(), sph = new THREE.Sphere();
-  const near = [], q = {};
+  const near = [], q = {}, q2 = {};
   let frame = 0;
   function obstaclesFor(A, out) {
     out.length = 0;
     if (walker && !vehicles?.riding) out.push({ x: walker.pos.x, z: walker.pos.y, r: 0.32, player: true });
     if (vehicles) for (const e of vehicles.list) for (const c of e.v.circlesWorld) if (Math.abs(c.x - A.x) < 10 && Math.abs(c.z - A.z) < 10) out.push({ x: c.x, z: c.z, r: c.r, player: !!e.v.ridden, vehicle: true });
-    for (const B of agents) if (B !== A && !B.hidden && Math.abs(B.x - A.x) < 9 && Math.abs(B.z - A.z) < 9) out.push({ x: B.x, z: B.z, r: B.kind === 'skate' ? 0.35 : R_PERSON, agent: B });
+    for (const B of agents) {
+      if (B === A || B.hidden || Math.abs(B.x - A.x) >= 9 || Math.abs(B.z - A.z) >= 9) continue;
+      // someone sitting is passed like the chair they sit on (the lanes are planned round them)
+      if (B.seat) out.push({ x: B.x, z: B.z, r: 0.3 });
+      else out.push({ x: B.x, z: B.z, r: B.kind === 'skate' ? 0.35 : R_PERSON, agent: B });
+    }
     grid.near(A.x, A.z, out);
     return out;
   }
@@ -336,6 +349,9 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
 
   function steer(A, dt) {
     const path = A.path;
+    A.blockBy = null;
+    if (A.ghost > 0) A.ghost -= dt;
+    if (A.passT > 0) A.passT -= dt;
     path.at(A.s, q);
     const dx = q.dx * A.dir, dz = q.dz * A.dir, rx = -dz, rz = dx;   // travel dir, right hand
     const look = Math.max(2.8, A.speed * (A.kind === 'skate' ? 2.4 : 2.0));
@@ -365,22 +381,33 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
       const ox = o.x - A.x, oz = o.z - A.z;
       const along = ox * dx + oz * dz, side = ox * rx + oz * rz;
       if (along < -0.2 || along > look) continue;
-      const need = o.r + R_PERSON + (o.player ? 0.45 : o.agent ? 0.22 : 0.12);
+      // (a stand-off with someone on a tight lane: shoulders turned, they brush past)
+      const need = o.r + R_PERSON + (o.player ? 0.45 : o.agent ? (A.passT > 0 ? -0.1 : 0.22) : 0.12);
       // (the other agent's own sidestep: count the one ahead / oncoming)
       if (Math.abs(side) >= need) continue;
       if (along >= best) continue;
       // sidestep: the side that needs the smaller move and stays in the corridor
-      const toLeft = A.lat + side - need, toRight = A.lat + side + need;
-      const lim = path.half - 0.2;
-      const okL = toLeft > -lim, okR = toRight < lim;
       const oncoming = !!o.agent && Math.sin(o.agent.heading) * dx + Math.cos(o.agent.heading) * dz < 0;
+      // (oncoming, each takes a little over half the gap - both to their right)
+      const own = oncoming ? need * 0.56 : need;
+      const toLeft = A.lat + side - own, toRight = A.lat + side + own;
+      // (for each other, people step a little off a tight lane, shoulders past the furniture)
+      const lim = o.agent ? Math.max(path.half - 0.2, 0.45) : path.half - 0.2;
+      const okL = toLeft > -lim, okR = toRight < lim;
       let t = null;
       if (okR && (!okL || Math.abs(toRight - A.lat) <= Math.abs(toLeft - A.lat) + (oncoming ? 0.6 : 0))) t = toRight;
       else if (okL) t = toLeft;
       // no room to step round a post / table edge the lane already skirts: squeeze past it
-      if (t === null && !o.agent && !o.player && !o.vehicle && Math.abs(side) >= o.r + 0.2) continue;
+      const noStep = t === null || path.crossings.length && A.state === 'crossing';
+      if (noStep && !o.agent && !o.player && !o.vehicle) {
+        if (A.ghost > 0 || Math.abs(side) >= o.r + 0.15) continue;
+        // (judged where the lane itself passes it: a curving lane swings clear of what's dead ahead now)
+        path.at(A.s + A.dir * along, q2);
+        const px = q2.x - q2.dz * A.dir * A.lat, pz = q2.z + q2.dx * A.dir * A.lat;
+        if (Math.hypot(o.x - px, o.z - pz) >= o.r + 0.15) continue;
+      }
       best = along;
-      if (t === null || path.crossings.length && A.state === 'crossing') {
+      if (noStep) {
         // no room: slow down and wait short of it
         vT = Math.min(vT, Math.max(0, (along - need * 0.6) * 0.9));
         blocked = true;
@@ -397,11 +424,15 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     for (const o of near) {
       if (!o.player && !o.agent) continue;
       const ox = o.x - A.x, oz = o.z - A.z, d = Math.hypot(ox, oz);
-      if (d < o.r + R_PERSON + 0.15 && (ox * dx + oz * dz) > 0) { vT = 0; blocked = true; }
+      if (d < o.r + R_PERSON + (o.agent && A.passT > 0 ? -0.15 : 0.15) && (ox * dx + oz * dz) > 0) { vT = 0; blocked = true; A.blockBy = o; }
     }
     if (A.state === 'waiting') blocked = false;
     A.blockedT = blocked && vT < 0.15 ? A.blockedT + dt : Math.max(0, A.blockedT - dt * 2);
-    if (A.blockedT > 5 && !path.crossings.length) {
+    // held up by furniture alone (a lane pinched tighter than planned): edge past it
+    const bb = A.blockBy;
+    if (A.blockedT > 1.5 && bb && !bb.agent && !bb.player && !bb.vehicle) { A.ghost = 1.5; A.blockedT = 0; }
+    if (A.blockedT > 1.5 && bb?.agent) { A.passT = 2; A.blockedT = 0; }
+    if (A.blockedT > 5 + A.skip * 0.8 && !path.crossings.length) {
       // blocked for long: turn back
       A.dir *= -1; A.lat = -A.lat; A.blockedT = 0; latT = -latT;
     }
@@ -520,6 +551,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
   // first-person camera; hands on the wheel as it turns)
   const driverChars = Object.keys(chars);
   let driverN = 0, lastCam = null, playerDriver = null;
+  const drivers = [];
   function seatBody(P, anchor) {
     const r = P.root;
     const a = P.action('drive_car');
@@ -554,6 +586,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     P.setLevel(1);
     const a = seatBody(P, rig.pelvis);
     let acc = 0, t = 0;
+    drivers.push(P);
     return {
       body: P.root,
       update(rg, car) {
@@ -562,6 +595,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         const d = cam ? cam.position.distanceTo(_t) : 0;
         let show = d < 90;
         if (show && cam) { sph.center.copy(_t); sph.radius = 1.4; show = frustum.intersectsSphere(sph); }
+        P.dbg = { d, show, at: [_t.x, _t.z] };
         if (show !== P.visible) P.setVisible(show);
         acc += 1 / 60;
         if (!show) return;
@@ -580,8 +614,9 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     traffic?.attachDrivers?.(makeDriver);
     // the player at the convertible's wheel
     if (cars?.drive?.attachDriver && !shot) {
-      const name = chars.bryce ? 'bryce' : driverChars[0];
-      const P = createPerson(chars[name], { tints: [lin(0xf4f1ea, 0.92), null, null], shadow: false });
+      // (long sleeves: the wheel view is all arms - plain, no tattoos - and just the hands show)
+      const name = chars.sophie ? 'sophie' : driverChars[0];
+      const P = createPerson(chars[name], { tints: [lin(0x9aa3a8, 0.9), lin(0x2d3b5a, 0.85), null], shadow: false });
       P.setLevel(0);
       P.root.name = 'player-driver';
       let seated = false;
@@ -606,7 +641,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     kinds: agents.reduce((o, a) => ((o[a.kind] = (o[a.kind] ?? 0) + 1), o), {}),
   });
   return {
-    agents, colliders, tris, debug,
+    agents, colliders, tris, debug, drivers,
     people: Object.fromEntries(agents.map((a) => [a.name, a])),
     setVehicles(v) { vehicles = v; },
     get playerDriver() { return playerDriver; },

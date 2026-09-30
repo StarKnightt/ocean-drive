@@ -388,7 +388,7 @@ const SHADE = { value: new THREE.Color(0.6, 0.64, 0.76) };
 function shadowMaterial(rig) {
   const m = new THREE.MeshBasicMaterial({
     color: 0xffffff, transparent: true, depthWrite: true, depthFunc: THREE.LessDepth, fog: false, toneMapped: false,
-    side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    side: THREE.DoubleSide, forceSinglePass: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.ZeroFactor, blendDst: THREE.SrcColorFactor,
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
   });

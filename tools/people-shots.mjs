@@ -59,14 +59,14 @@ async function frame(name, pick, { dist = 10, bearing = 30, eyeUp = 0, pitch = n
 }
 
 await frame('beach-walker', { kind: 'walk', beach: true }, { dist: 9, bearing: 60 });
-//await frame('walker-10m', { kind: 'walk', i: 0 }, { dist: 10, bearing: 25 });
-//await frame('walker-4m', { kind: 'walk', i: 0 }, { dist: 4, bearing: 35, run: 400 });
-//await frame('jogger', { kind: 'jog', i: 0 }, { dist: 6, bearing: 40 });
-//await frame('skater', { kind: 'skate', i: 0 }, { dist: 6, bearing: 50 });
-//await frame('skater-side', { kind: 'skate', i: 0 }, { dist: 5, bearing: 90, run: 600 });
-//await frame('bench', { kind: 'sit', seat: 'bench' }, { dist: 3.2, bearing: 20, run: 500 });
-//await frame('cafe', { kind: 'sit', seat: 'cafe' }, { dist: 3.5, bearing: 10, run: 500 });
-//await frame('stand', { kind: 'stand', i: 0 }, { dist: 4, bearing: 10, run: 500 });
+await frame('walker-10m', { kind: 'walk', i: 0 }, { dist: 10, bearing: 25 });
+await frame('walker-4m', { kind: 'walk', i: 0 }, { dist: 4, bearing: 35, run: 400 });
+await frame('jogger', { kind: 'jog', i: 0 }, { dist: 6, bearing: 40 });
+await frame('skater', { kind: 'skate', i: 0 }, { dist: 6, bearing: 50 });
+await frame('skater-side', { kind: 'skate', i: 0 }, { dist: 5, bearing: 90, run: 600 });
+await frame('bench', { kind: 'sit', seat: 'bench' }, { dist: 3.2, bearing: 20, run: 500 });
+await frame('cafe', { kind: 'sit', seat: 'cafe' }, { dist: 3.2, bearing: 75, run: 500 });
+await frame('stand', { kind: 'stand', i: 0 }, { dist: 4, bearing: 10, run: 500 });
 
 // a traffic driver: the nearest car to the camera, frozen, seen through the side window
 await page.evaluate(() => { window.__people.debug.freeze = false; window.__walker.set(-12.5, 1.85, 0, 270, 0); });
@@ -75,16 +75,16 @@ const car = await page.evaluate(() => {
   const T = window.__traffic;
   T.debug.freeze = true;
   const cam = window.__walker.pos;
-  const cs = T.cars.filter((c) => !c.hidden && Math.abs(c.z) < 200).sort((a, b) => Math.hypot(a.x - cam.x, a.z - cam.y) - Math.hypot(b.x - cam.x, b.z - cam.y));
+  const cs = T.cars.filter((c) => !c.hidden && Math.abs(c.z) < 200).sort((a, b) => Math.hypot(a.x - cam.x, a.z - cam.y) + (a.classic ? 0 : 300) - Math.hypot(b.x - cam.x, b.z - cam.y) - (b.classic ? 0 : 300));
   const c = cs[0];
   if (!c) return null;
   // the driver sits left of centre (a southbound car's left is +x): stand off that side,
   // a little ahead, looking in through the side window
   const left = c.dir > 0 ? 1 : -1;
-  const x = c.x + left * 3.0, z = c.z + c.dir * 1.6;
-  const tx = c.x + left * 0.4, tz = c.z + c.dir * 0.2;
+  const x = c.x + left * 2.7, z = c.z + c.dir * 2.2;
+  const tx = c.x + left * 0.35, tz = c.z - c.dir * 0.3;
   const heading = Math.atan2(tx - x, -(tz - z)) * 180 / Math.PI;
-  window.__walker.set(x, 0.1 + 1.6, z, heading, -10);
+  window.__walker.set(x, 0.1 + 1.5, z, heading, -7);
   return { model: c.model, classic: c.classic, dir: c.dir, x: c.x, z: c.z };
 });
 console.log('car', JSON.stringify(car));

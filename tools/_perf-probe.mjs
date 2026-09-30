@@ -35,6 +35,12 @@ const measure = async (label, ms, profile) => {
     console.log([...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => `  ${(100 * v / tot).toFixed(1)}%  ${k}`).join('\n'));
   }
 };
+if (process.env.SINGLE) console.log('forced single pass', await page.evaluate(() => {
+  const s = new Set();
+  window.__scene.traverse((o) => { for (const m of [o.material].flat()) if (m?.transparent && m.side === 2 && !m.forceSinglePass) s.add(m); });
+  for (const m of s) m.forceSinglePass = true;
+  return [...s].map((m) => m.name || m.type).join(',');
+}));
 await page.evaluate(() => window.__walker.teleport(-24, 30, 0, 0));
 await page.keyboard.down('KeyW');
 await measure('walk', 5000, false);

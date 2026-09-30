@@ -44,7 +44,7 @@ async function block(name, ahead, secs, { moveAwayAt = null, shotAt = null, file
     if (shotAt != null && t > shotAt && !shot) { shot = true; await page.screenshot({ path: path.join(outDir, file) }); }
     trace.push(await page.evaluate((name) => {
       const A = window.__people.people[name], w = window.__walker.pos;
-      return { t: performance.now() / 1000, d: Math.hypot(A.x - w.x, A.z - w.y), v: A.speed, lat: A.lat, s: A.s, dir: A.dir, state: A.state };
+      const o = A.blockBy; return { t: performance.now() / 1000, d: Math.hypot(A.x - w.x, A.z - w.y), v: A.speed, lat: A.lat, s: A.s, dir: A.dir, state: A.state, x: +A.x.toFixed(2), z: +A.z.toFixed(2), by: o ? (o.agent ? o.agent.name : o.player ? 'player' : o.vehicle ? 'vehicle' : 'static ' + o.x.toFixed(2) + ',' + o.z.toFixed(2) + ' r' + o.r.toFixed(2)) : null };
     }, name));
     await page.waitForTimeout(100);
   }
@@ -71,6 +71,7 @@ async function block(name, ahead, secs, { moveAwayAt = null, shotAt = null, file
   const after = tr.slice(-12);
   const minD = Math.min(...before.map((p) => p.d));
   const resumed = after.some((p) => p.v > 0.7);
+  if (!resumed) console.log('  (trace tail)', JSON.stringify(after.filter((p, i) => i % 3 === 0).map((p) => [p.x, p.z, +p.v.toFixed(2), p.by])));
   check('sidewalk walker never walks through the player and resumes when the way clears', minD >= 0.5 && resumed, { name, minD: +minD.toFixed(2), vAfter: +Math.max(...after.map((p) => p.v)).toFixed(2), minVBefore: +Math.min(...before.map((p) => p.v)).toFixed(2), turned: tr.some((p) => p.dir !== tr[0].dir) });
 }
 // 3. skater overtakes / passes the player on the promenade
@@ -122,9 +123,12 @@ async function block(name, ahead, secs, { moveAwayAt = null, shotAt = null, file
   }
   check('crosser crosses Ocean Drive, no car drives through it', crossed >= 1 && !hit, { name, crossed, states: [...states], samplesOnRoad: onRoad, samplesCarsStopped: stoppedFor });
 }
-// 6. foot speed: walkers' playback rate follows the ground speed (clip speed x rate ~ v)
+// 6. foot speed: walkers' playback rate follows the ground speed (clip speed x rate ~ v);
+// drawn walkers only (off-screen ones aren't animated, their rate is stale until seen)
 {
-  const r = await page.evaluate(() => window.__people.agents.filter((a) => a.kind === 'walk' && a.speed > 0.9).slice(0, 6).map((a) => ({ n: a.name, v: +a.speed.toFixed(2), foot: +(a.clipSpeed * a.loco.timeScale).toFixed(2), clip: a.loco.getClip().name })));
+  await page.evaluate(() => { const A = window.__people.agents.find((a) => a.kind === 'walk' && a.path?.half > 1.5); const x = A.x - 6, z = A.z; window.__walker.teleport(x, z, Math.atan2(A.x - x, -(A.z - z)) * 180 / Math.PI, -4); });
+  await page.waitForTimeout(2000);
+  const r = await page.evaluate(() => window.__people.agents.filter((a) => a.kind === 'walk' && a.visible && a.speed > 0.9).slice(0, 6).map((a) => ({ n: a.name, v: +a.speed.toFixed(2), foot: +(a.clipSpeed * a.loco.timeScale).toFixed(2), clip: a.loco.getClip().name })));
   check('walk playback matches ground speed within 10 %', r.length > 0 && r.every((x) => Math.abs(x.foot - x.v) / x.v < 0.1), r);
 }
 console.log(JSON.stringify(await page.evaluate(() => window.__crowdStats())));

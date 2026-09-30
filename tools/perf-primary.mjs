@@ -3,13 +3,16 @@
 // then 20 s walking, 20 s on the ATV, 20 s in the convertible. Logs the detected tier and
 // renderer, the canvas size, and once a second: render scale, fps, GPU ms (timer query).
 // Usage: node tools/perf-primary.mjs [query]
+// PERF_POS=x,y moves the window (e.g. onto a second monitor); PERF_VIEWPORT=WxH fixes the
+// CSS viewport instead of sizing the window (so a 1080p canvas fits on any screen).
 import { chromium } from 'playwright';
 const q = process.argv[2] ?? '';
+const vp = process.env.PERF_VIEWPORT?.split('x').map(Number);
 const browser = await chromium.launch({
   channel: 'chrome', headless: false,
-  args: ['--mute-audio', '--window-position=0,0', '--window-size=1603,902', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'],
+  args: ['--mute-audio', `--window-position=${process.env.PERF_POS ?? '0,0'}`, '--window-size=1603,902', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'],
 });
-const page = await browser.newPage({ viewport: null });
+const page = await browser.newPage({ viewport: vp ? { width: vp[0], height: vp[1] } : null });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });

@@ -153,6 +153,9 @@ function personMaterial(src, avg, tints) {
     m.side = THREE.DoubleSide;
     m.alphaToCoverage = QUALITY.msaa > 0;
   }
+  // (some GLB bodies come in blended and double-sided: one pass, not three's back-then-front
+  // pair that re-resolves the program twice per figure per frame)
+  m.forceSinglePass = true;
   const U = {
     uTint: { value: [0, 1, 2].map((i) => new THREE.Vector4(...(tints?.[i] ?? [1, 1, 1, 0]))) },
     uAvg: { value: new THREE.Vector3(...avg) },

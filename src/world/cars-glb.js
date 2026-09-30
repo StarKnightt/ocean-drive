@@ -387,9 +387,9 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     dashtop: std({ color: 0x6b9f93, roughness: 0.75, envMapIntensity: 0.6, ...(vinylNor ? { normalMap: vinylNor, normalScale: new THREE.Vector2(0.3, 0.3) } : {}) }, 'dashtop', true),
     // the modern fleet's glass: dark tinted panels that mirror the sky and the palms (the
     // specular boost stands in for the reflection off the dark interior behind the pane);
-    // the windscreen a lighter tint
-    tint: glassMaterial(env, { color: 0x0c1215, opacity: 0.8, edge: 0.9, key: 'tint', spec: 2.6, envI: 1.25 }),
-    windshield: glassMaterial(env, { color: 0x131b1f, opacity: 0.6, edge: 0.9, key: 'windshield', spec: 2.2, envI: 1.2 }),
+    // the windscreen a lighter tint; light enough that the driver in the shaded cabin reads
+    tint: glassMaterial(env, { color: 0x0c1215, opacity: 0.62, edge: 0.9, key: 'tint', spec: 2.6, envI: 1.25 }),
+    windshield: glassMaterial(env, { color: 0x131b1f, opacity: 0.42, edge: 0.9, key: 'windshield', spec: 2.2, envI: 1.2 }),
     tyre: std({ vertexColors: true, color: 0xffffff, roughness: 0.8, envMapIntensity: 0.5 }, 'tyre', true),
     trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
     grille: coat({ color: 0x0e0f10, roughness: 0.3, clearcoatRoughness: 0.08, envMapIntensity: 0.9 }, 'grille'),
@@ -426,7 +426,39 @@ function lampMaterial(env, color, emissive) {
   return m;
 }
 
+// Transparent double-sided glass: three draws it back faces then front faces by flipping
+// material.side with needsUpdate, i.e. two program lookups per mesh per frame (dozens of
+// cars). Instead the mesh keeps a back-side copy and a front-side twin child (same depth, a
+// later id, so it sorts right after): the same two passes, no per-frame program churn.
+const sidePairs = new WeakMap();
+function glassSides(m) {
+  let p = sidePairs.get(m);
+  if (!p) {
+    p = [THREE.BackSide, THREE.FrontSide].map((side) => {
+      const c = m.clone();
+      c.side = side;
+      c.onBeforeCompile = m.onBeforeCompile;
+      c.customProgramCacheKey = m.customProgramCacheKey;
+      c.userData = m.userData;
+      return c;
+    });
+    sidePairs.set(m, p);
+  }
+  return p;
+}
+function splitGlass(o) {
+  const [back, front] = glassSides(o.material);
+  o.material = back;
+  const twin = new THREE.Mesh(o.geometry, front);
+  twin.name = o.name + '_front';
+  twin.castShadow = false;
+  twin.receiveShadow = o.receiveShadow;
+  twin.renderOrder = o.renderOrder;
+  o.add(twin);
+}
+
 function applyMaterials(root, M, paint, paint2) {
+  const split = [];
   root.traverse((o) => {
     if (!o.isMesh) return;
     const name = o.material.name;
@@ -440,7 +472,9 @@ function applyMaterials(root, M, paint, paint2) {
     o.castShadow = !clear;
     o.receiveShadow = true;
     if (clear) o.renderOrder = 2;
+    if (o.material.transparent && o.material.side === THREE.DoubleSide) split.push(o);
   });
+  for (const o of split) splitGlass(o);
 }
 
 function blobMesh(w, l) {
@@ -455,8 +489,15 @@ function blobMesh(w, l) {
 // hangs in a sway group (pitch / roll / bounce on its springs, pivoting at mid height);
 // the wheels are lifted out of it into per-LOD sets so they stay on the road.
 const SWAY_Y = 0.55;
+// three's updateMatrixWorld walks hidden subtrees too, and a car is 90-190 nodes (both LODs,
+// the driver's skeleton): hidden cars and their unused LOD skip it (once shown, the parent's
+// pass recomputes them; getWorldPosition still updates on demand)
+function skipWhenHidden(o) {
+  o.updateMatrixWorld = function (force) { if (this.visible) THREE.Object3D.prototype.updateMatrixWorld.call(this, force); };
+  return o;
+}
 function heroInstance(gltf, paint, paint2, M) {
-  const g = new THREE.Group();
+  const g = skipWhenHidden(new THREE.Group());
   const sway = new THREE.Group(), body = new THREE.Group();
   sway.position.y = SWAY_Y;
   body.position.y = -SWAY_Y;
@@ -467,13 +508,13 @@ function heroInstance(gltf, paint, paint2, M) {
     const c = src.clone(true);
     c.position.set(0, 0, 0);
     applyMaterials(c, M, paint, paint2);
-    body.add(c);
+    body.add(skipWhenHidden(c));
     return c;
   });
   const wheels = [], steering = [], wheelSets = [];
   levels.forEach((lv, k) => {
     const sfx = k ? '_L1' : '';
-    const set = new THREE.Group();
+    const set = skipWhenHidden(new THREE.Group());
     set.visible = k === 0;
     g.add(set);
     wheelSets.push(set);
@@ -741,6 +782,8 @@ function buildFleet(scene, gltf, M) {
     const clear = material === M.tint || material === M.glass || material === M.windshield;
     bm.castShadow = !clear;
     bm.receiveShadow = true;
+    // (per-instance sorting only matters for the blended glass; culling stays on)
+    bm.sortObjects = clear;
     if (clear) bm.renderOrder = 2;
     scene.add(bm);
     batches[mat] = { bm, ids };
@@ -921,9 +964,9 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
     makeModern(kind) {
       const paint = paintMaterial(env, 0xffffff, 'fleet');   // (the fleet's program: nothing new to compile)
       const tail = M.makeTail(), brake3 = M.makeBrake3();
-      const root = new THREE.Group();
+      const root = skipWhenHidden(new THREE.Group());
       const levels = [kind, kind + '_L1'].map((n, k) => {
-        const c = gltf.scene.getObjectByName(n).clone(true);
+        const c = skipWhenHidden(gltf.scene.getObjectByName(n).clone(true));
         c.position.set(0, 0, 0);
         applyMaterials(c, M, paint, paint);
         c.traverse((o) => {
