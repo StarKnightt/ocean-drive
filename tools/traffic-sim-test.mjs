@@ -131,6 +131,60 @@ const pick = () => ({ model: 'sedan', len: 4.8 });
   check('an obstacle in the other lane does not stop it', c3.z > 150, { z: +c3.z.toFixed(1) });
 }
 
+// 4b. reacting to the player: predictive braking, startle beep, swerve, passing a stopped car
+{
+  // the player's car coming out of a side street toward the lane: braked for before it is in it
+  const sim = createTrafficSim({ count: 1, seed: 31, pickModel: pick });
+  const c = sim.cars[0];
+  Object.assign(c, { dir: 1, x: LANE_X[1], z: 100, v: 8, v0: 8 });
+  const me = { x: LANE_X[1] - 6, z: 116, r: 1, vx: 4, vz: 0, player: true };
+  let firstBrake = null, minClear = Infinity;
+  for (let t = 0; t < 6; t += DT) {
+    if (me.x < LANE_X[1]) me.x += me.vx * DT; else { me.vx = 0; }
+    sim.update(DT, { obstacles: [me] });
+    if (firstBrake === null && c.a < -0.5) firstBrake = { t: +t.toFixed(2), gapX: +(LANE_X[1] - me.x).toFixed(2) };
+    minClear = Math.min(minClear, me.z - me.r - front(c));
+  }
+  check('predictive braking: it brakes for the player\'s car while it is still out of the lane, and stops short', firstBrake && firstBrake.gapX > 1.15 + 1 && minClear > 0.5, { firstBrake, clear: +minClear.toFixed(2) });
+  check('and beeps at it (the startle honk, with the driver\'s gesture)', c.honk >= 1 && (c.startles ?? 0) >= 1, { honk: c.honk, startles: c.startles });
+  // swerve: something just over the lane edge (a bin, a door-parked car's mirror): edges round it
+  const sim2 = createTrafficSim({ count: 1, seed: 32, pickModel: pick });
+  const c2 = sim2.cars[0];
+  Object.assign(c2, { dir: 1, x: LANE_X[1], z: 100, v: 7, v0: 7 });
+  const post = { x: LANE_X[1] - 1.2, z: 140, r: 0.4 };
+  let maxOff = 0;
+  for (let t = 0; t < 12; t += DT) { sim2.update(DT, { obstacles: [post] }); maxOff = Math.max(maxOff, c2.xOff); }
+  check('swerve: it edges round an obstacle that only partly blocks the lane, then back', c2.z > 150 && maxOff > 0.3 && maxOff <= 0.95 && Math.abs(c2.xOff) < 0.05, { z: +c2.z.toFixed(1), maxOff: +maxOff.toFixed(2), off: +c2.xOff.toFixed(2) });
+  // passing: a car left standing in the lane; after the wait it goes round through the other lane
+  const sim3 = createTrafficSim({ count: 1, seed: 33, pickModel: pick });
+  const c3 = sim3.cars[0];
+  Object.assign(c3, { dir: -1, x: LANE_X[-1], z: 100, v: 8, v0: 8 });
+  const parked = [-1.9, -0.95, 0, 0.95, 1.9].map((dz) => ({ x: LANE_X[-1], z: 40 + dz, r: 0.95, vx: 0, vz: 0 }));
+  let maxOut = 0, hit = false, passedAt = null;
+  for (let t = 0; t < 40; t += DT) {
+    sim3.update(DT, { obstacles: parked });
+    maxOut = Math.max(maxOut, Math.abs(c3.xOff));
+    for (const o of parked) if (Math.abs(o.x - c3.x) < 0.95 + 0.9 && Math.abs(o.z - c3.z) < c3.len / 2 + 0.95 - 0.3) hit = true;
+    if (passedAt === null && rear(c3) < 40 - 1.9 - 3) passedAt = +t.toFixed(1);
+  }
+  check('passing: after waiting it swings into the other lane, round the stopped car (never through it) and back', c3.passes === 1 && maxOut > 3 && !hit && passedAt !== null && Math.abs(c3.xOff) < 0.05 && c3.z < 0, { passes: c3.passes, maxOut: +maxOut.toFixed(2), hit, passedAt, z: +c3.z.toFixed(1), off: +c3.xOff.toFixed(2) });
+  // not while the other lane has traffic coming
+  const sim4 = createTrafficSim({ count: 2, seed: 34, pickModel: pick });
+  const [a, b] = sim4.cars;
+  Object.assign(a, { dir: -1, x: LANE_X[-1], z: 100, v: 8, v0: 8 });
+  Object.assign(b, { dir: 1, x: LANE_X[1], z: 60, v: 0, v0: 0.001 });
+  for (let t = 0; t < 20; t += DT) sim4.update(DT, { obstacles: parked });
+  check('no pass while the other lane is busy within 60 m', !(a.passes > 0) && a.v < 0.05, { passes: a.passes ?? 0 });
+  // detach (the player takes it): hidden now, back from a loop end later
+  const sim5 = createTrafficSim({ count: 1, seed: 35, pickModel: pick });
+  const d = sim5.cars[0];
+  Object.assign(d, { dir: 1, x: LANE_X[1], z: 0, v: 0 });
+  sim5.detach(d);
+  const r0 = d.respawns;
+  for (let t = 0; t < 30 && d.respawns === r0; t += DT) sim5.update(DT, { viewer: { x: -18, z: 0 } });
+  check('detach: the taken car leaves the lane and its slot re-enters from a loop end', d.respawns === r0 + 1 && Math.abs(Math.abs(d.z) - END_Z) < 20, { respawns: d.respawns, z: +d.z.toFixed(1) });
+}
+
 // 5. continuous flow: 5 cars, 20 minutes, viewer mid-drive
 {
   const sim = createTrafficSim({ count: 5, seed: 21, pickModel: (r) => ({ model: 'x', len: 4.2 + r() * 1.2 }) });

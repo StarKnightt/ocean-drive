@@ -134,7 +134,8 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
       if (!vis) { s.vPrev = c.v; continue; }
       // pose: lane, road camber, heading; a sprung nose dive / squat from the acceleration,
       // and a kick as the car comes to rest (the nose dips, then settles)
-      const yaw = c.dir > 0 ? 0 : Math.PI;
+      // (edging round something or swinging out to pass: turned along its path)
+      const yaw = Math.atan2(THREE.MathUtils.clamp(c.xRate ?? 0, -0.3 * Math.max(c.v, 1.5), 0.3 * Math.max(c.v, 1.5)), c.dir * Math.max(c.v, 1.5));
       const slope = (roadHeight(c.x + 0.9) - roadHeight(c.x - 0.9)) / 1.8;
       const pT = THREE.MathUtils.clamp(-c.a * 0.009, -0.015, 0.03);
       if (s.vPrev > 0.25 && c.v < 0.02 && dt > 0) s.pitchV += 0.07;

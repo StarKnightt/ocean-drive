@@ -830,11 +830,22 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     P.setLevel(1);
     const G = measureGrip(P), hold = {};
     const a = seatBody(P, rig.pelvis);
-    let acc = 0, t = 0;
+    // (the honk: a hand off the wheel onto the horn, faded in for the traffic's beeps)
+    const hk = P.action('drive_honk');
+    if (hk) { hk.play(); hk.setEffectiveWeight(0); }
+    let acc = 0, t = 0, hw = 0;
     drivers.push(P);
     return {
       body: P.root,
+      P,
       update(rg, car) {
+        if (hk) {
+          const want = car?.honkAnim > 0 ? 1 : 0;
+          if (want && hw < 0.02) hk.time = 0;
+          hw += (want - hw) * Math.min(1, (acc + 1 / 60) * 7);
+          hk.setEffectiveWeight(hw);
+          a.setEffectiveWeight(1 - hw);
+        }
         const cam = lastCam;
         rg.pelvis.getWorldPosition(_t);
         const d = cam ? cam.position.distanceTo(_t) : 0;
@@ -851,7 +862,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         P.mixer.update(acc);
         acc = 0;
         P.root.updateMatrixWorld(true);
-        if (d < 45) handsOnRim(P, rg, G, hold, step, d < 16);
+        if (d < 45 && hw < 0.1) handsOnRim(P, rg, G, hold, step, d < 16);
       },
     };
   };

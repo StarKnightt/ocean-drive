@@ -220,8 +220,12 @@ function trafficPeds() {
 }
 function trafficObstacles() {
   const out = [];
-  if (!vehicles.riding) out.push({ x: controls.pos.x, z: controls.pos.y, r: 0.35, v: 0 });
-  for (const e of vehicles.list) for (const c of e.v.circlesWorld) out.push({ x: c.x, z: c.z, r: c.r, v: e.v.ridden ? Math.max(0, e.v.lon) : 0 });
+  // (with velocities, so the cars brake for where things will be; `player` for the startle beep)
+  if (!vehicles.riding) out.push({ x: controls.pos.x, z: controls.pos.y, r: 0.35, v: 0, vx: controls.vel?.x ?? 0, vz: controls.vel?.y ?? 0, player: true });
+  for (const e of vehicles.list) {
+    const v = e.v, moving = v.ridden && Math.hypot(v.vx, v.vz) > 0.3;
+    for (const c of v.circlesWorld) out.push({ x: c.x, z: c.z, r: c.r, v: v.ridden ? Math.max(0, v.lon) : 0, vx: moving ? v.vx : 0, vz: moving ? v.vz : 0, player: !!v.ridden });
+  }
   for (const p of Object.values(people.people ?? {})) if (p.name === 'cyclist' && p.state === 'ride') out.push({ x: p.x, z: p.z, r: 0.5, v: p.speed });
   return out;
 }

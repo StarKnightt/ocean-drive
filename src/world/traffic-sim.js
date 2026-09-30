@@ -21,6 +21,10 @@ export const END_Z = 460;             // loop ends: re-entry beyond the district
 export const LANE_HALF = 1.15;        // half width of a car's swept path (for obstacles)
 export const IDM = { a: 1.0, b: 1.8, T: 1.5, s0: 2.4, s0Stop: 0.7, s0Obst: 2.2, delta: 4 };
 const BRAKE_HARD = 5;                 // m/s2: beyond this a car can't stop for a line: it goes
+const PREDICT = 1.2;                  // s: obstacles are also tested where they will be
+const SWERVE = 0.9;                   // m: the most a car edges over round a partial block
+export const PASS_AFTER = 6;          // s blocked by a static obstacle before going round it
+const STARTLE = { closing: 6, cross: 1.5, every: 8 };   // startle beep: m/s, s, s
 export const SIGNAL_Z = CROSS_STREETS.find((c) => c.signal)?.z ?? -190;
 // Ocean Drive signal cycle (s): green, yellow, then red while the cross street runs
 export const SIGNAL = { green: 22, yellow: 3.5, red: 14.5 };
@@ -102,6 +106,7 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
     return {
       id: ++ids, dir, z, x: LANE_X[dir], v, v0: desired(follow ? prev : null), a: 0, len: m.len, model: m.model, classic: !!m.classic, color: m.color,
       braking: false, brakeT: 0, reason: null, blockedT: 0, stunT: 0, honk: 0, honked: false, holdT: 0, hidden: false, respawns: 0,
+      xOff: 0, xRate: 0, pass: null, startleT: 0, honkAnim: 0,
       // (people.js / audio compatibility: the old audio car's fields)
       active: true, progress: 0.5, speed: v,
     };
@@ -140,11 +145,31 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
       const d = ahead(o.z - o.dir * o.len / 2);
       if (d > -0.5 && d < gap && (o.z - c.z) * c.dir > 0) { gap = d; vl = o.v; s0 = IDM.s0; reason = 'car'; }
     }
-    // obstacles in the lane (player, vehicles, cyclist): stop short of them
+    // obstacles in the lane (player, vehicles, cyclist): stop short of them - where they are
+    // now, and where they will be in PREDICT s (a car about to cut into the lane)
+    let obst = null, cutIn = null;
     for (const o of obstacles) {
-      if (Math.abs(o.x - c.x) > LANE_HALF + (o.r ?? 0.3)) continue;
-      const d = ahead(o.z - c.dir * (o.r ?? 0.3));
-      if (d > -c.len * 0.6 && d < gap) { gap = Math.max(d, 0); vl = Math.max(0, (o.v ?? 0)); s0 = IDM.s0Obst; reason = 'obstacle'; }
+      const r = o.r ?? 0.3;
+      if (c.pass && passing(c, o)) continue;
+      let x = o.x, z = o.z, pred = false;
+      if (Math.abs(x - c.x) > LANE_HALF + r) {
+        if (!o.vx && !o.vz) continue;
+        x += (o.vx ?? 0) * PREDICT; z += (o.vz ?? 0) * PREDICT; pred = true;
+        if (Math.abs(x - c.x) > LANE_HALF + r) continue;
+      }
+      const d = ahead(z - c.dir * r);
+      if (d > -c.len * 0.6 && d < gap) {
+        gap = Math.max(d, 0); s0 = IDM.s0Obst; reason = 'obstacle'; obst = o;
+        // (its speed along the lane counts only while it is in it)
+        vl = pred ? 0 : Math.max(0, o.vz !== undefined ? (o.vz ?? 0) * c.dir : (o.v ?? 0));
+        cutIn = pred ? o : null;
+      }
+    }
+    // an oncoming car out in this lane (passing something): wait for it
+    if (!c.pass) for (const o of cars) {
+      if (o.dir === c.dir || o.hidden || Math.abs(o.x - c.x) > 2 * LANE_HALF - 0.2) continue;
+      const d = ahead(o.z + o.dir * o.len / 2);
+      if (d > -0.5 && d < gap) { gap = Math.max(d, 0); vl = 0; s0 = IDM.s0Obst; reason = 'oncoming'; obst = null; }
     }
     // crosswalks: pedestrians have right of way
     const brakeDist = (c.v * c.v) / (2 * BRAKE_HARD);
@@ -163,7 +188,35 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
       const need = sig === 'yellow' ? (c.v * c.v) / (2 * 3) : brakeDist;
       if (d > -0.3 && d < 90 && d < gap && d > need - 0.5) { gap = Math.max(d, 0); vl = 0; s0 = IDM.s0Stop; reason = 'signal'; }
     }
-    return { gap, vl, s0, reason };
+    return { gap, vl, s0, reason, obst: reason === 'obstacle' ? obst : null, cutIn: reason === 'obstacle' ? cutIn : null };
+  }
+
+  // passing: obstacles in the car's own lane near the one it is going round are ignored
+  // once it has swung far enough out to clear them
+  function passing(c, o) {
+    const p = c.pass, r = o.r ?? 0.3;
+    if (Math.abs(o.x - LANE_X[c.dir]) > LANE_HALF + r + 0.9 || Math.abs(o.z - p.z) > 10) return false;
+    return Math.abs(o.x - c.x) > LANE_HALF + r - 0.05;
+  }
+  // the lateral offset wanted: round an obstacle that only partly blocks the lane (a swerve
+  // of up to SWERVE), or out into the other lane while passing
+  function swerveTarget(c, obstacles) {
+    if (c.pass) return LANE_X[-c.dir] - LANE_X[c.dir];
+    let best = 0;
+    const front = c.z + c.dir * c.len / 2, back = c.z - c.dir * c.len / 2;
+    for (const o of obstacles) {
+      // (held until the tail is past it)
+      if ((o.z - back) * c.dir < -(o.r ?? 0.3) - 0.5 || (o.z - front) * c.dir > 30 || Math.hypot(o.vx ?? 0, o.vz ?? 0) > 1) continue;
+      const dx = o.x - LANE_X[c.dir], need = LANE_HALF + (o.r ?? 0.3) + 0.25 - Math.abs(dx);
+      if (need > 0 && need <= SWERVE && need > Math.abs(best)) best = -Math.sign(dx || 1) * need;
+    }
+    return best;
+  }
+  // may c start passing the static obstacle o? The other lane clear 60 m both ways
+  function canPass(c, o) {
+    for (const q of cars) if (q !== c && !q.hidden && q.dir !== c.dir && Math.abs(q.z - o.z) < 60) return false;
+    for (const q of cars) if (q !== c && !q.hidden && q.pass && Math.abs(q.z - o.z) < 20) return false;
+    return true;
   }
 
   function idm(c, L) {
@@ -211,6 +264,34 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
             continue;
           }
           const L = leader(c, peds, obstacles, sig);
+          // startle beep at the player: closing fast on them (hard braking needed), or they cut
+          // across the lane just ahead; the driver's honk gesture with it
+          c.startleT = Math.max(0, c.startleT - h);
+          c.honkAnim = Math.max(0, c.honkAnim - h);
+          if (c.startleT <= 0 && L.obst?.player) {
+            const closing = c.v - L.vl;
+            const fast = closing > STARTLE.closing && L.gap < (closing * closing) / 6 + 4;
+            const cut = L.cutIn && c.v > 1.5 && L.gap / c.v < STARTLE.cross;
+            if (fast || cut) { c.honk++; c.startleT = STARTLE.every; c.honkAnim = 1.1; c.startles = (c.startles ?? 0) + 1; }
+          }
+          // round a static obstacle it has waited behind: out into the other lane once that is
+          // clear 60 m both ways, and back in past it
+          if (!c.pass && L.obst && Math.hypot(L.obst.vx ?? 0, L.obst.vz ?? 0) < 0.2 && !((L.obst.v ?? 0) > 0.2) && c.blockedT > PASS_AFTER && canPass(c, L.obst)) {
+            c.pass = { z: L.obst.z, far: L.obst.z, t: 0 };
+            c.passes = (c.passes ?? 0) + 1;
+          }
+          if (c.pass) {
+            const p = c.pass;
+            p.t += h;
+            for (const o of obstacles) if (Math.abs(o.x - LANE_X[c.dir]) < LANE_HALF + (o.r ?? 0.3) + 0.9 && Math.abs(o.z - p.z) < 10 && (o.z - p.far) * c.dir > 0) p.far = o.z;
+            if ((c.z - c.dir * c.len / 2 - p.far) * c.dir > 3.5 || p.t > 30) c.pass = null;
+          }
+          const want = swerveTarget(c, obstacles);
+          const rate = (c.pass || Math.abs(want) < Math.abs(c.xOff) - 0.01 && Math.abs(c.xOff) > 1.5 ? 0.9 + 0.2 * c.v : 0.35 + 0.25 * c.v) * h;
+          const dx = Math.max(-rate, Math.min(rate, want - c.xOff));
+          c.xOff += dx;
+          c.xRate = dx / h;
+          c.x = LANE_X[c.dir] + c.xOff;
           let acc = idm(c, L);
           acc = Math.max(-7, Math.min(IDM.a, acc));
           c.v = Math.max(0, c.v + acc * h);
@@ -229,7 +310,7 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
           c.braking = acc < -0.35 || (c.v < 0.4 && !!L.reason && L.gap < 12);
           // blocked by an obstacle (not a light, crosswalk or car): honk once after 4 s
           if (L.reason === 'obstacle' && c.v < 0.2) c.blockedT += h; else { c.blockedT = 0; c.honked = false; }
-          if (c.blockedT > 4 && !c.honked) { c.honked = true; c.honk++; }
+          if (c.blockedT > 4 && !c.honked) { c.honked = true; c.honk++; c.honkAnim = 1.1; }
           if (c.dir * c.z > END_Z) { c.hidden = true; c.holdT = 0; c.v = 0; }
           c.speed = c.v;
           c.progress = c.hidden ? 1 : 0.5;
@@ -237,6 +318,13 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
         }
       }
       return api;
+    },
+    // the player takes car c (stopped): it leaves the lane; its slot re-enters from a loop end
+    // later with a new model, as after running off the end
+    detach(c) {
+      if (!c || c.hidden) return false;
+      Object.assign(c, { hidden: true, holdT: 0, v: 0, a: 0, pass: null, xOff: 0, active: false, speed: 0 });
+      return true;
     },
   };
   return api;
