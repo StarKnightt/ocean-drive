@@ -740,7 +740,7 @@ function poseHero(inst, v) {
   }
   const rig = inst.driverRig;
   if (rig?.body) {
-    rig.body.visible = !!v.ridden;
+    rig.body.visible = !!v.ridden && !rig.hidden;
     if (v.ridden && rig.update) {
       rig.wheelAngle = steerWheelAngle(v);
       rig.t = v.t;
@@ -1338,7 +1338,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
             I.halos.visible = want === 'brake';
           }
           if (rig.body) {
-            rig.body.visible = !!v.ridden;
+            rig.body.visible = !!v.ridden && !rig.hidden;
             if (v.ridden && rig.update) {
               rig.t = v.t;
               g.updateMatrixWorld(true);

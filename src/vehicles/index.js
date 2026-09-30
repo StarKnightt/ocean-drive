@@ -692,13 +692,21 @@ export function createVehicles(scene, {
       headQuat(e, _q);
       fov0 = e.kind === 'car' ? 58 + Math.min(1, Math.abs(v.lon) / 19) * 4 : 56 + Math.min(1, Math.abs(v.lon) / 12) * 5;
     }
+    const rig = e.kind === 'car' ? e.drive.rig : null;
     if (trans && trans.t < 1) {
       const k = trans.t, s = k * k * (3 - 2 * k);
-      camera.position.lerpVectors(trans.pos, _v, s);
-      camera.position.y -= trans.dip * Math.sin(Math.PI * Math.min(1, k * 1.4)) * (1 - s * 0.5);
+      // (a car in the driver's view: the camera is in the head from the first frame, only the
+      // look turns; the seated body stays hidden until the turn is done)
+      if (rig && !chaseOn) camera.position.copy(_v);
+      else {
+        camera.position.lerpVectors(trans.pos, _v, s);
+        camera.position.y -= trans.dip * Math.sin(Math.PI * Math.min(1, k * 1.4)) * (1 - s * 0.5);
+      }
       camera.quaternion.slerpQuaternions(trans.quat, _q, s);
+      if (rig) rig.hidden = true;
     } else {
       trans = null;
+      if (rig) rig.hidden = false;
       camera.position.copy(_v);
       camera.quaternion.copy(_q);
     }
