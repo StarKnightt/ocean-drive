@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { EYE_HEIGHT, TOWER, CROSS, crossStreetAt } from '../world/layout.js';
 import { QUALITY } from '../quality.js';
-import { createVehicle, stepVehicle, blockedAt, buildGrid, settle, dismountSpots, canRestart } from './sim.js';
+import { createVehicle, stepVehicle, blockedAt, buildGrid, settle, dismountSpots, canRestart, surfaceAt } from './sim.js';
 import { OPEN_WORLD, OPEN_SPECS } from './specs.js';
 import { edgeSteer, extentBounds, insideWorld } from '../world/extent.js';
 import { buildBike, buildAtv } from './models.js';
@@ -500,7 +500,7 @@ export function createVehicles(scene, {
     out.x = v.x + lx * c + lz * s; out.z = v.z - lx * s + lz * c; out.y = v.wheelH[i];
     return out;
   }
-  const _w = { x: 0, y: 0, z: 0 };
+  const _w = { x: 0, y: 0, z: 0 }, _ws = {};
 
   function effects(e, input, dt) {
     const v = e.v, sy = Math.sin(v.yaw), cy = Math.cos(v.yaw), al = Math.abs(v.lon);
@@ -543,8 +543,15 @@ export function createVehicles(scene, {
       if (skids && car) {
         const hardStop = input.throttle < -0.5 && v.lon > 6;
         let k = rear || hardStop ? v.skid : 0;
-        if (rear && soft > 0.45 && al > 0.8) k = Math.max(k, 0.3 * soft);
-        const kind = v.surf.kind === 'pavement' ? 'pavement' : v.surf.kind;
+        // (each tyre's own ground: rubber on the asphalt only, ruts pressed into the sand and
+        // flattened grass by every tyre that rolls over it)
+        let kind = v.surf.kind;
+        if (k > 0.05 || kind !== 'pavement') {
+          surfaceAt(wx, wz, world, _ws, true);
+          kind = _ws.kind === 'pavement' ? (_ws.detail === 'road' || !_ws.detail ? 'pavement' : 'curbside') : _ws.kind;
+          const s = kind === 'sand' ? _ws.soft : kind === 'wetsand' ? 0.5 : kind === 'grass' ? 0.6 : 0;
+          if (s > 0 && al > 0.8) k = Math.max(k, 0.3 + 0.4 * s);
+        }
         skids.mark((v._skidKeys ??= v.spec.wheels.map(() => ({})))[i], wx, gy, wz, cy, -sy, k, kind);
         // tyre smoke off a hard slide on the road
         if (!LOW && rear && v.skid > 0.55 && kind === 'pavement' && al > 4 && Math.random() < dt * 14) spray.emit(wx, gy + 0.15, wz, (Math.random() - 0.5) * 0.6, 0.35, (Math.random() - 0.5) * 0.6, P_SMOKE);

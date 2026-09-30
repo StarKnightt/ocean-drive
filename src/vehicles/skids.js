@@ -7,16 +7,20 @@ import { QUALITY } from '../quality.js';
 
 const SEGMENTS = { high: 2000, medium: 800, low: 300 }[QUALITY.tier] ?? 800;
 const FADE = 60;
-const MIN_LEN = 0.22;         // m between strip points
-const HALF_W = 0.1;           // tyre half width
-// colour (linear) and opacity per surface
+const STEP = 0.05;            // m of height change between points that breaks a strip (a curb)
+// colour (linear), opacity, tyre half width and m between strip points per surface: soft
+// grey-brown rubber on the asphalt, ruts pressed into the sand, flattened grass; nothing on
+// the sidewalk, the promenade or the ramp (the strip breaks there)
 const LOOK = {
-  pavement: [0.018, 0.017, 0.016, 0.62],
-  grass: [0.08, 0.075, 0.03, 0.7],
-  sand: [0.34, 0.27, 0.19, 0.55],
-  wetsand: [0.2, 0.16, 0.11, 0.6],
+  pavement: [0.03, 0.026, 0.022, 0.35, 0.1, 0.22],
+  grass: [0.05, 0.062, 0.022, 0.42, 0.12, 0.4],
+  sand: [0.2, 0.155, 0.105, 0.5, 0.13, 0.4],
+  wetsand: [0.12, 0.095, 0.065, 0.5, 0.12, 0.4],
+  curbside: null,
   water: null,
 };
+// patchy rubber: a slow two-octave variation along the ground (0.45..1)
+const patch = (x, z) => 0.725 + 0.275 * Math.sin(x * 1.9 + z * 0.7) * Math.sin(x * 0.53 - z * 2.3 + 1.7);
 
 export function createSkids(scene) {
   const N = SEGMENTS;
@@ -75,12 +79,15 @@ export function createSkids(scene) {
     head = (head + 1) % N;
     count = Math.min(N, count + 1);
     const put = (j, x, y, z) => pos.set([x, y, z], (i * 4 + j) * 3);
-    put(0, a.x - a.rx * HALF_W, a.y, a.z - a.rz * HALF_W);
-    put(1, a.x + a.rx * HALF_W, a.y, a.z + a.rz * HALF_W);
-    put(2, b.x - b.rx * HALF_W, b.y, b.z - b.rz * HALF_W);
-    put(3, b.x + b.rx * HALF_W, b.y, b.z + b.rz * HALF_W);
+    const hw = look[4];
+    put(0, a.x - a.rx * hw, a.y, a.z - a.rz * hw);
+    put(1, a.x + a.rx * hw, a.y, a.z + a.rz * hw);
+    put(2, b.x - b.rx * hw, b.y, b.z - b.rz * hw);
+    put(3, b.x + b.rx * hw, b.y, b.z + b.rz * hw);
+    const al = look[3] * Math.min(1, 0.35 + k), rubber = surf === 'pavement';
     for (let j = 0; j < 4; j++) {
-      col.set([look[0], look[1], look[2], look[3] * Math.min(1, 0.35 + k)], (i * 4 + j) * 4);
+      const p = j < 2 ? a : b;
+      col.set([look[0], look[1], look[2], al * (rubber ? patch(p.x, p.z) : 1)], (i * 4 + j) * 4);
       born[i * 4 + j] = uTime.value;
     }
     lo = Math.min(lo, i); hi = Math.max(hi, i);
@@ -98,12 +105,14 @@ export function createSkids(scene) {
     // vector, skid strength 0..1 (0 ends the strip), surface kind
     mark(key, x, y, z, rx, rz, k, surf) {
       let t = tracks.get(key);
-      if (!(k > 0.05) || !LOOK[surf]) { if (t) tracks.delete(key); return; }
-      const p = { x, y: y + 0.012, z, rx, rz };
+      const look = LOOK[surf];
+      if (!(k > 0.05) || !look) { if (t) tracks.delete(key); return; }
+      const p = { x, y: y + 0.012, z, rx, rz, surf };
       if (!t) { tracks.set(key, p); return; }
       const d = Math.hypot(x - t.x, z - t.z);
-      if (d < MIN_LEN) return;
-      if (d > 2.5) { tracks.set(key, p); return; }   // a jump (recovery, a new car): restart
+      if (d < look[5]) return;
+      // a jump (recovery, a new car), a curb step or another surface: restart
+      if (d > 2.5 || Math.abs(p.y - t.y) > STEP || t.surf !== surf) { tracks.set(key, p); return; }
       add(t, p, surf, k);
       tracks.set(key, p);
     },
