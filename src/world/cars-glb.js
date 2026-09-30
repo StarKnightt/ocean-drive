@@ -12,6 +12,7 @@ import { OPEN_WORLD } from '../vehicles/specs.js';
 import { extentBounds } from './extent.js';
 import { registerLodHook, LOD } from './lod.js';
 import { QUALITY } from '../quality.js';
+import { staticCull } from '../renderer/batched-cull.js';
 import {
   buildCars, buildParkedProcedural, carMovers, seat, groundReflect, clampRadiance,
   CAR_MAX_RADIANCE, shared, blockedBay,
@@ -119,8 +120,9 @@ function createProbe(renderer, scene) {
 // ---------------------------------------------------------------------------
 // The hero's rear-view mirror while someone drives: the street behind rendered into a small
 // target from the driver's eye mirrored in the glass (a virtual camera behind the mirror
-// looking back through it; the near plane clips the mirror and its housing). Every other frame
-// on high, every third on medium, none on low (the housing's chrome shows instead).
+// looking back through it; the near plane clips the mirror and its housing). Every fourth frame
+// on high, every fifth on medium, none on low (the housing's chrome shows instead), and not
+// while it is off-screen. People, birds, particles and the parked glass are left out of it.
 const MIRROR = { w: 0.176, h: 0.043, r: 0.012 };
 // objects left out of the mirror pass (too small or too costly to matter in it)
 export const mirrorHide = [];
@@ -128,8 +130,8 @@ const _mf = new THREE.Frustum(), _mm = new THREE.Matrix4(), _mb = new THREE.Box3
 function rearMirror(renderer, scene, inst) {
   const anchor = inst.levels[0].getObjectByName('rear_mirror');
   if (!anchor || QUALITY.tier === 'low') return null;
-  const every = QUALITY.tier === 'high' ? 2 : 3;
-  const rt = new THREE.WebGLRenderTarget(384, 96, { type: THREE.HalfFloatType });
+  const every = QUALITY.tier === 'high' ? 4 : 5;
+  const rt = new THREE.WebGLRenderTarget(256, 64, { type: THREE.HalfFloatType });
   const { w, h, r } = MIRROR;
   const shape = new THREE.Shape();
   shape.moveTo(-w / 2 + r, -h / 2);
@@ -149,16 +151,23 @@ function rearMirror(renderer, scene, inst) {
   face.visible = false;
   face.castShadow = false;
   anchor.add(face);
-  const cam = new THREE.PerspectiveCamera(10, w / h, 0.5, 600);
+  // (180 m: past that the haze leaves a 64 px mirror one flat tone)
+  const cam = new THREE.PerspectiveCamera(10, w / h, 0.5, 180);
+  cam.userData.noSort = true;
   const E = new THREE.Vector3(), P = new THREE.Vector3(), N = new THREE.Vector3(), up = new THREE.Vector3();
   let frame = 0;
   return {
     face,
-    update(camera, on) {
+    update(camera, on, busy) {
       face.visible = on;
-      if (!on || frame++ % every) return;
+      if (!on || busy || frame++ % every) return;
       camera.getWorldPosition(E);
       anchor.getWorldPosition(P);
+      // (looking out of the side or back: the mirror is off-screen, keep its last image)
+      _mf.setFromProjectionMatrix(_mm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      const st = (globalThis.__mirrorStats ??= { runs: 0, off: 0 });
+      if (!_mf.intersectsSphere(_msph.set(P, 0.12))) { st.off++; return; }
+      st.runs++;
       N.set(0, 1, 0).transformDirection(anchor.matrixWorld);
       // the eye mirrored through the glass plane, looking back through the mirror
       const k = 2 * E.clone().sub(P).dot(N);
@@ -185,6 +194,9 @@ function rearMirror(renderer, scene, inst) {
       const hide = mirrorHide.filter((o) => o.visible);
       for (const o of scene.children) {
         if (!o.visible || o.isLight || o === inst.car) continue;
+        // (only what reads in a 256 x 64 view back down the drive: the sky, the buildings,
+        // the street, palms and sea (userData.mirror) and the cars at their simple level)
+        if (!o.userData.mirror && !o.userData.levels) { hide.push(o); continue; }
         let r = o.userData.mirrorR;
         if (r === undefined) {
           // (once: the bounding radius about the object's origin; 0 = not compact, always drawn)
@@ -192,7 +204,7 @@ function rearMirror(renderer, scene, inst) {
           const c = _mb.getCenter(_mc), rr = _mb.getSize(_ms).length() / 2 + c.distanceTo(o.position) + 0.5;
           r = o.userData.mirrorR = _mb.isEmpty() || rr > 12 || o.children.length < 2 && !o.isSkinnedMesh ? 0 : rr;
         }
-        if (r > 0 && !_mf.intersectsSphere(_msph.set(o.position, r))) hide.push(o);
+        if (r > 0 && (!_mf.intersectsSphere(_msph.set(o.position, r)) || (o.userData.levels && o.position.distanceToSquared(P) > 70 * 70))) hide.push(o);
       }
       for (const o of hide) o.visible = false;
       // (the car's own cabin and tail seen behind the driver, and the traffic behind, at
@@ -204,7 +216,10 @@ function rearMirror(renderer, scene, inst) {
         const lv = o.visible && o.userData.levels;
         if (lv && lv[0].visible && lv[1]) { lv[0].visible = false; lv[1].visible = true; swapped.push(lv); }
       }
+      const c0 = renderer.info.render.calls, t0 = performance.now();
       renderer.render(scene, cam);
+      st.calls = renderer.info.render.calls - c0;
+      st.ms = +(performance.now() - t0).toFixed(2);
       for (const lv of swapped) { lv[0].visible = true; lv[1].visible = false; }
       if (lod0) setLevel(inst, 0);
       for (const o of hide) o.visible = true;
@@ -512,6 +527,13 @@ function glassSides(m) {
     sidePairs.set(m, p);
   }
   return p;
+}
+function batchedCopy(m) {
+  const c = m.clone();
+  c.onBeforeCompile = m.onBeforeCompile;
+  c.customProgramCacheKey = m.customProgramCacheKey;
+  c.userData = m.userData;
+  return c;
 }
 function splitGlass(o) {
   const [back, front] = glassSides(o.material);
@@ -879,19 +901,43 @@ function buildFleet(scene, gltf, M) {
     }
     const count = spots.filter((s) => geos[s.kind]?.[0] || geos[s.kind]?.[1]).length;
     if (!count) continue;
-    const material = mat === 'paint' ? fleetPaint : (M[mat] ?? M.trim);
-    const bm = new THREE.BatchedMesh(count, verts, index, material);
-    bm.name = 'parked-' + mat;
-    const ids = {};
-    for (const [kind, list] of Object.entries(geos)) ids[kind] = list.map((g) => (g ? bm.addGeometry(g) : null));
-    const clear = material === M.tint || material === M.glass || material === M.windshield;
-    bm.castShadow = !clear;
-    bm.receiveShadow = true;
-    // (per-instance sorting only matters for the blended glass; culling stays on)
-    bm.sortObjects = clear;
-    if (clear) bm.renderOrder = 2;
-    scene.add(bm);
-    batches[mat] = { bm, ids };
+    const base = mat === 'paint' ? fleetPaint : (M[mat] ?? M.trim);
+    const clear = base === M.tint || base === M.glass || base === M.windshield;
+    // (the batches get their own copy of a material the hero and the traffic also use: three
+    // re-resolves the program each time one material alternates between batched and plain
+    // draws; the copy shares the compiled program)
+    const material0 = base === fleetPaint ? base : batchedCopy(base);
+    // (the blended double-sided glass as a back-side and a front-side batch, like splitGlass:
+    // three's two-pass double-sided draw flags a program update on every draw)
+    const sides = clear && material0.side === THREE.DoubleSide ? glassSides(material0) : [material0];
+    for (const [si, material] of sides.entries()) {
+      const bm = new THREE.BatchedMesh(count, verts, index, material);
+      bm.name = 'parked-' + mat + (si ? '-front' : '');
+      const ids = {};
+      for (const [kind, list] of Object.entries(geos)) ids[kind] = list.map((g) => (g ? bm.addGeometry(g) : null));
+      bm.castShadow = !clear;
+      bm.receiveShadow = true;
+      // (three's per-instance culling walks every instance of every batch in each pass: the
+      // opaque batches are culled from precomputed spheres once the instances are placed,
+      // below; the blended glass is not culled, and sorted only when the viewer has moved,
+      // and not in the mirror)
+      bm.perObjectFrustumCulled = false;
+      bm.sortObjects = clear;
+      if (clear) {
+        bm.renderOrder = 2;
+        mirrorHide.push(bm);
+        const sortPass = bm.onBeforeRender;
+        const at = new THREE.Vector3(Infinity, 0, 0), fw = new THREE.Vector3(), f0 = new THREE.Vector3();
+        bm.onBeforeRender = function (renderer, scn, camera, geometry, mt) {
+          camera.getWorldDirection(fw);
+          if (!this._visibilityChanged && at.distanceToSquared(camera.position) < 0.25 && fw.dot(f0) > 0.985) return;
+          at.copy(camera.position); f0.copy(fw);
+          sortPass.call(this, renderer, scn, camera, geometry, mt);
+        };
+      }
+      scene.add(bm);
+      batches[mat + (si ? ':front' : '')] = { bm, ids };
+    }
   }
   // instances
   const q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1), e = new THREE.Euler();
@@ -933,6 +979,7 @@ function buildFleet(scene, gltf, M) {
   });
   blobs.instanceMatrix.needsUpdate = true;
   scene.add(blobs);
+  for (const { bm } of Object.values(batches)) if (!bm.sortObjects) staticCull(bm);
   const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   const blobMats = spots.map((_, i) => { const m = new THREE.Matrix4(); blobs.getMatrixAt(i, m); return m; });
   // distance LOD + culling (runs when the viewer has moved along the street)
@@ -1058,6 +1105,50 @@ function lampHalos(level, parent, tailMat, stopMat) {
   parent.add(g);
   return g;
 }
+// A traffic car's far level (LOD1, past ~40 m) as five draws instead of one per material
+// (~28): its own paint and lamps, every other opaque part in one vertex-coloured mesh
+// (metals darkened, they have nothing sharp to mirror at that size) and the glass one dark
+// glossy opaque mesh. The wheels are baked in at rest. Built once per kind from the GLB
+// source (the instances' own geometry arrays are released after upload).
+let L1M = null;
+function lod1Materials(env) {
+  if (L1M) return L1M;
+  const body = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.25, envMap: env, envMapIntensity: 0.8 });
+  clampRadiance(body, 'glb-lod1');
+  const glass = new THREE.MeshStandardMaterial({ color: 0x0f1518, roughness: 0.08, metalness: 0.8, envMap: env, envMapIntensity: 1.1 });
+  clampRadiance(glass, 'glb-lod1-glass');
+  return (L1M = { body, glass });
+}
+const collapsedCache = new Map();
+function collapsedLod1(gltf, kind, M) {
+  if (collapsedCache.has(kind)) return collapsedCache.get(kind);
+  const src = gltf.scene.getObjectByName(kind + '_L1');
+  const buckets = { paint: [], tail: [], brake3: [], body: [], glass: [] };
+  const c = new THREE.Color();
+  src?.traverse((o) => {
+    if (!o.isMesh || o.parent?.isMesh) return;
+    const name = o.material.name, mat = M[name];
+    const glass = mat ? mat.transparent : o.material.transparent;
+    const b = name === 'paint' || name === 'paint2' ? 'paint' : mat === M.tail ? 'tail' : mat === M.brake3 ? 'brake3' : glass ? 'glass' : 'body';
+    const g = bake(o, src, b === 'body' ? ['position', 'normal', 'color'] : ['position', 'normal']);
+    if (b === 'body') {
+      const n = g.attributes.position.count, vc = g.attributes.color, out = new Float32Array(n * 3);
+      c.copy(mat?.color ?? o.material.color ?? c.setRGB(0.5, 0.5, 0.5));
+      if ((mat?.metalness ?? 0) > 0.5) c.multiplyScalar(0.55);
+      for (let i = 0; i < n; i++) {
+        const k = vc ? [vc.getX(i), vc.getY(i), vc.getZ(i)] : [1, 1, 1];
+        out[i * 3] = c.r * k[0]; out[i * 3 + 1] = c.g * k[1]; out[i * 3 + 2] = c.b * k[2];
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(out, 3));
+    }
+    buckets[b].push(g);
+  });
+  const out = {};
+  for (const [b, list] of Object.entries(buckets)) if (list.length) out[b] = list.length > 1 ? mergeList(list) : list[0];
+  collapsedCache.set(kind, out);
+  return out;
+}
+
 function trafficKit(scene, gltf, M, env, pool, probe) {
   const kinds = gltf ? KINDS.filter((k) => gltf.scene.getObjectByName(k)) : [];
   const box = new THREE.Box3();
@@ -1101,20 +1192,34 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
       const tail = M.makeTail(), brake3 = M.makeBrake3();
       const root = skipWhenHidden(new THREE.Group());
       const levels = [kind, kind + '_L1'].map((n, k) => {
-        const c = skipWhenHidden(gltf.scene.getObjectByName(n).clone(true));
+        let c;
+        if (k === 1) {
+          c = skipWhenHidden(new THREE.Group());
+          c.name = n;
+          const L1 = lod1Materials(env), mats = { paint, tail, brake3, body: L1.body, glass: L1.glass };
+          for (const [b, g] of Object.entries(collapsedLod1(gltf, kind, M))) {
+            const m = new THREE.Mesh(g, mats[b]);
+            m.castShadow = false;
+            m.receiveShadow = true;
+            c.add(m);
+          }
+        } else {
+          c = skipWhenHidden(gltf.scene.getObjectByName(n).clone(true));
+          applyMaterials(c, M, paint, paint);
+          c.traverse((o) => {
+            if (!o.isMesh) return;
+            o.castShadow = false;
+            if (o.material === M.tail) o.material = tail;
+            else if (o.material === M.brake3) o.material = brake3;
+          });
+        }
         c.position.set(0, 0, 0);
-        applyMaterials(c, M, paint, paint);
-        c.traverse((o) => {
-          if (!o.isMesh) return;
-          o.castShadow = false;
-          if (o.material === M.tail) o.material = tail;
-          else if (o.material === M.brake3) o.material = brake3;
-        });
         c.visible = k === 0;
         root.add(c);
         return c;
       });
-      const wheels = levels.map((lv, k) => ['FL', 'FR', 'RL', 'RR'].map((w) => lv.getObjectByName(`${kind}_wheel_${w}${k ? '_L1' : ''}`)).filter(Boolean));
+      // (the far level's wheels are baked into its body)
+      const wheels = [['FL', 'FR', 'RL', 'RR'].map((w) => levels[0].getObjectByName(`${kind}_wheel_${w}`)).filter(Boolean)];
       const blob = blobMesh(2.25, lens[kind] + 0.6);
       const sun = sunShadow();
       root.add(blob, sun);
@@ -1320,14 +1425,14 @@ export async function buildCarsGlb(scene, renderer) {
         return () => { rig.pelvis.remove(body); rig.body = rig.update = null; };
       },
     },
-    update(dt, cars, camera) {
+    update(dt, cars, camera, busy = false) {
       if (!camera) return;
       kit.tick();
       probe.follow(camera.position);
       const inside = heroDriven && !heroChase;
       M.screen.userData.uInside.value = inside ? 1 : 0;
       M.screen.userData.uBaseY.value = hero.car.position.y;
-      mirror?.update(camera, inside);
+      mirror?.update(camera, inside, busy);
       for (const m of all) {
         if (!m.car.visible) continue;
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);

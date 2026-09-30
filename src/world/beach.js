@@ -23,6 +23,9 @@ import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
 import { SURF_GLSL, FOAM_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
 import { QUALITY } from '../quality.js';
+import { registerLod } from './lod.js';
+
+const SHOT = new URLSearchParams(globalThis.location?.search ?? '').get('shot') === '1';
 
 const DETAIL_TILE = 6;   // m covered by one tile of the micro-relief texture
 // beach access through the seawall: steps up from the lawn, over the cap, onto the sand
@@ -890,6 +893,8 @@ function addInBlocks(scene, im, block = 60) {
     part.receiveShadow = im.receiveShadow;
     part.computeBoundingSphere();
     scene.add(part);
+    // (and off past the parked-car distance, out of the ?shot harness)
+    if (!SHOT) registerLod(part, k * block, (k + 1) * block, 'cars');
   }
   im.dispose();
 }

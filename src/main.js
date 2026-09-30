@@ -203,6 +203,9 @@ const vehicles = createVehicles(scene, {
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
+// what the hero's rear-view mirror draws besides the cars (world/cars-glb.js)
+const MIRRORED = new Set(['placeholders', 'hotels', 'palms', 'street', 'ocean', 'parked-paint', 'parked-dark', 'parked-trim', 'parked-tyre']);
+for (const o of scene.children) if (MIRRORED.has(o.name) || o.material?.name === 'Sky') o.userData.mirror = true;
 people.setVehicles?.(vehicles);          // people step round the player's bike / ATV / car
 people.attachDrivers?.(traffic, cars);   // seated drivers in the traffic, the player's body at the wheel
 
@@ -419,6 +422,8 @@ window.__groundHeight = (x, z) => beach.groundAt(x, z);
 window.__beach = beach;
 window.__surf = surf;
 window.__scene = scene;
+window.__renderer = renderer;
+window.__camera = camera;
 window.__setCam = (x, y, z, heading, pitch) => {
   controls.set(x, y, z, heading, pitch);
 };
@@ -471,7 +476,8 @@ window.__frameCpu = (reset = false) => {
 // ?prof: per-section main-thread ms (exponential averages), window.__prof()
 const PROF = params.has('prof') ? {} : null;
 let profT = 0;
-const prof = (k) => { if (!PROF) return; const n = performance.now(); PROF[k] = (PROF[k] ?? 0) * 0.97 + (n - profT) * 0.03; profT = n; };
+const profFrame = {};
+const prof = (k) => { if (!PROF) return; const n = performance.now(); PROF[k] = (PROF[k] ?? 0) * 0.97 + (n - profT) * 0.03; profFrame[k] = +(n - profT).toFixed(2); profT = n; };
 window.__prof = () => PROF && Object.fromEntries(Object.entries(PROF).map(([k, v]) => [k, +v.toFixed(2)]));
 function frame(t) {
   const cpu0 = performance.now();
@@ -506,7 +512,8 @@ function frame(t) {
   prof('birds');
   people.update(dt, camera); // PEOPLE
   prof('people');
-  cars.update(dt, null, camera);
+  // (the hero's mirror waits a frame when the sun shadow is about to re-render)
+  cars.update(dt, null, camera, shadowWanted && t / 1000 - shadowAt >= SHADOW_GAP);
   prof('cars');
   if (!SHOT) {
     traffic.update(dt, { camera, peds: trafficPeds(), obstacles: trafficObstacles() }); // TRAFFIC
@@ -522,9 +529,11 @@ function frame(t) {
     shadowWanted = false;
     shadowAt = now;
   }
-  if (renderer.shadowMap.needsUpdate) shadowRenders++;
+  const shadowNow = renderer.shadowMap.needsUpdate;
+  if (shadowNow) shadowRenders++;
   gpuTimer?.begin(frames);
   prof('pre-render');
+  const profT0 = performance.now();
   if (params.has('nopost')) renderer.render(scene, camera);
   else post.render(elapsed);
   gpuTimer?.end();
@@ -540,6 +549,17 @@ function frame(t) {
   if (frames <= 3 || frames === 10) bootMark('frame ' + frames);
   if (frames === 10) window.__sceneReady = true;
   cpuMs[cpuN++ % cpuMs.length] = performance.now() - cpu0;
+  if (PROF) {
+    const log = (window.__frameLog ??= []);
+    log.push([+(performance.now() - cpu0).toFixed(2), shadowNow ? 1 : 0, renderer.info.render.calls, +(PROF.render ?? 0).toFixed(2), +(performance.now() - profT0).toFixed(2)]);
+    if (log.length > 1200) log.shift();
+    const ms = performance.now() - cpu0;
+    if (ms > 9) {
+      const slow = (window.__slowFrames ??= []);
+      slow.push({ ms: +ms.toFixed(1), frame: frames, shadow: shadowNow, calls: renderer.info.render.calls, programs: renderer.info.programs?.length, ...profFrame });
+      if (slow.length > 200) slow.shift();
+    }
+  }
 }
 
 renderer.shadowMap.needsUpdate = true;

@@ -11,6 +11,7 @@ import { SIDEWALK_W, SIDEWALK_E, PARK, CAR, CURB_HEIGHT, CROSS, CROSS_STREETS, c
 import { registerLodHook, LOD } from './lod.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 import { QUALITY } from '../quality.js';
+import { staticCull } from '../renderer/batched-cull.js';
 
 // ---------------------------------------------------------------------------
 // Placement (pure data, also used by the audio engine)
@@ -792,7 +793,7 @@ export function buildPalms(scene) {
     }
     bm.castShadow = true;
     bm.receiveShadow = true;
-    return bm;
+    return staticCull(bm, { sort: true });
   };
 
   const tMesh = batched(trunkTris, trunkInst, trunkMaterial());

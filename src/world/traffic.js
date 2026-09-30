@@ -174,7 +174,8 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
           I.sun.scale.set(1.9 + Math.abs(lx) * L, 1, I.len + Math.abs(lz) * L);
         }
       }
-      if (I.driver?.update) {
+      // (the driver sits in the near level only)
+      if (I.driver?.update && I.levels[0].visible) {
         I.rig.pelvis.updateWorldMatrix(true, false);
         I.driver.update(I.rig, c);
       }

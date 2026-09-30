@@ -59,7 +59,7 @@ const TIERS = {
     maxDpr: 1.5, maxPixels: 3.7e6, renderScale: 1, msaa: 4, fxaa: false, bloom: true,
     shadowMap: [4096, 1024], shadowTaps: 5, shadowFilter: 'lite', cloudOctaves: 5,
     oceanGrid: { rings: 400, segs: 320 }, sandRows: 440, sandDetail: 1024, printFade: [35, 60],
-    wrack: 9000, farFoliage: 1, signAtlas: 1, hotelFar: Infinity, shadowStep: 0.5, audioVoices: 'full',
+    wrack: 9000, farFoliage: 1, signAtlas: 1, hotelFar: Infinity, shadowStep: 1, audioVoices: 'full',
   },
   medium: {
     maxDpr: 1.25, maxPixels: 1.3e6, renderScale: 1, msaa: 2, fxaa: false, bloom: true,
