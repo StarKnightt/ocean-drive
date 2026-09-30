@@ -241,7 +241,7 @@ export function createVehicles(scene, {
     walker.world.circles?.push(...v.circlesWorld);
     view.apply(v);
     const dp = doors(pose, h.kind, v.spec.width ?? 1.9).find((d) => d.side === door) ?? doors(pose, h.kind, v.spec.width ?? 1.9)[0];
-    if (h.driver) onDriverOut?.(h.driver, { x: pose.x, z: pose.z, yaw: pose.yaw, len: h.len, width: v.spec.width ?? 1.9 }, dp, () => ({ x: v.x, z: v.z }));
+    if (h.driver) onDriverOut?.(h.driver, { x: pose.x, z: pose.z, yaw: pose.yaw, len: h.len, width: v.spec.width ?? 1.9, color: h.color }, dp, () => ({ x: v.x, z: v.z }));
     retire();
     return e;
   }

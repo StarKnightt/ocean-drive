@@ -125,7 +125,7 @@ function staticGrid(furniture = []) {
 }
 
 // soft elliptical contact patch (alpha only), darkest under the middle
-function contactTexture() {
+export function contactTexture() {
   const N = 64, px = new Uint8Array(N * N * 4);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const u = (i + 0.5) / N * 2 - 1, v = (j + 0.5) / N * 2 - 1;

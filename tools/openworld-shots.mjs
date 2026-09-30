@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const url = process.env.URL ?? 'http://localhost:5173/';
-const outDir = path.resolve('shots', 'openworld-p1');
+const outDir = path.resolve('shots', process.env.OUT ?? 'openworld-p1');
 fs.mkdirSync(outDir, { recursive: true });
 const W = 1280, H = 720;
 const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'] });

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const url = process.env.URL ?? 'http://localhost:5173/';
-const outDir = path.resolve('shots', 'openworld-p2');
+const outDir = path.resolve('shots', process.env.OUT ?? 'openworld-p2');
 fs.mkdirSync(outDir, { recursive: true });
 const ALL = ['roof', 'surf', 'minimap', 'radio', 'traffic', 'props', 'dents', 'edge'];
 const want = new Set((process.argv[2] ?? ALL.join(',')).split(','));
