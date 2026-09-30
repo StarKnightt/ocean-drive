@@ -62,10 +62,17 @@ await frame('beach-walker', { kind: 'walk', beach: true }, { dist: 9, bearing: 6
 await frame('walker-10m', { kind: 'walk', i: 0 }, { dist: 10, bearing: 25 });
 await frame('walker-4m', { kind: 'walk', i: 0 }, { dist: 4, bearing: 35, run: 400 });
 await frame('jogger', { kind: 'jog', i: 0 }, { dist: 6, bearing: 40 });
+// the same frame without the jogger: anything left over the head is the scene behind
+await page.evaluate(() => { const A = window.__people.agents.filter((a) => !a.hidden && a.kind === 'jog')[0]; A.P.setVisible(false); });
+await page.waitForTimeout(300);
+await page.screenshot({ path: path.join(outDir, 'jogger-hidden.png') });
+await page.evaluate(() => { const A = window.__people.agents.filter((a) => !a.hidden && a.kind === 'jog')[0]; A.P.setVisible(true); });
 await frame('skater', { kind: 'skate', i: 0 }, { dist: 6, bearing: 50 });
 await frame('skater-side', { kind: 'skate', i: 0 }, { dist: 5, bearing: 90, run: 600 });
 await frame('bench', { kind: 'sit', seat: 'bench' }, { dist: 3.2, bearing: 20, run: 500 });
 await frame('cafe', { kind: 'sit', seat: 'cafe' }, { dist: 3.2, bearing: 75, run: 500 });
+// (from the terrace side, over the table: hips on the chair, hands at the table)
+await frame('cafe-b', { kind: 'sit', seat: 'cafe' }, { dist: 2.4, bearing: -35, eyeUp: 0.55, run: 500 });
 await frame('stand', { kind: 'stand', i: 0 }, { dist: 4, bearing: 10, run: 500 });
 
 // a traffic driver: the nearest car to the camera, frozen, seen through the side window
