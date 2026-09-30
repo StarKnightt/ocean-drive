@@ -800,9 +800,9 @@ at 8 ms or less.
   at 6–8 ms, too little headroom for twice the street furniture, parked rows and palms, so it
   moves to phase 3 with the LOD-by-x work; parked classics enterable; broken lamps on a dent;
   the dodge's look-back for walkers; beach props (chairs, umbrellas) knockable.
-- **Perf (RTX 4060, 1080p high, `perf-primary`):** GPU median 6.3 ms; CPU work p50 / p95 walking
-  6.0 / 7.5 (4.0 / 5.5 on another run), hero cockpit 4.6 / 6.2 (was 9.7 / 13.7), SUV drive
-  2.8 / 4.3 (was 9–12 p95 in the parked rows).
+- **Perf (RTX 4060, 1080p high, `perf-primary`, final run):** GPU median 6.3 ms; CPU work
+  p50 / p95 walking 3.0 / 3.8, hero cockpit 5.6 / 7.6 (was 9.7 / 13.7), SUV drive 4.1 / 5.5
+  (was 9–12 p95 in the parked rows). Run to run the cockpit p95 moves between ~6 and ~8.5 ms.
 
 ### Phase 3: reach and beats
 
