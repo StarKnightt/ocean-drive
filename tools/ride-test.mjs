@@ -286,7 +286,11 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   });
   const wrapDeg = (a) => (((a % 360) + 540) % 360) - 180;
   check('steering wheel turns steer/lock x 450 deg about the column', Math.abs(wrapDeg(wheel.deg - wheel.want)) < 3 && wheel.offAxis < 1e-3 && Math.abs(wheel.want) > 60, wheel);
-  await shot('16-car-steering', 0);
+  // (a held turn, the hands settled on the rim: the simulate() above spins the wheel far
+  // faster than any hands could follow)
+  await page.evaluate(() => { window.__vehicles.steerHold = 0.5; });
+  await shot('16-car-steering', 1500);
+  await page.evaluate(() => { window.__vehicles.steerHold = null; });
   // down the drive to the south end at speed, then brake (the traffic is still away)
   await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
   r = await rideTo(-19.75, 300, { maxT: 60, stopAt: 3 });
