@@ -63,6 +63,7 @@ the touch controls on an emulated phone.
 | Horn | H | |
 | Car radio: Off, Bossa at Dawn, Sunrise Synth, Clave Café | Q | Radio button |
 | Minimap | N hides / shows it, Shift+N north up / heading up | |
+| Fast travel: 1 beach, 2 your car, 3 hotel sidewalk, 4 promenade, 5 11 ST, 6 café, 7 convertible, 8 ATV, 9 tower lookout, 0 start (2, 3, 5 and 7 bring the car you are driving) | 1–0 | Pin button, top right |
 | Back to the nearest road (stuck, bogged in the sand, stalled in the surf) | R (or Backspace) | |
 | Mute | M | Mute button |
 | Release the pointer | Esc | |

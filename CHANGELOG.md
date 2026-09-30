@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-01: fast travel
+
+- The number keys 1–0 (touch: a pin button top right with the same list) jump to ten places
+  through a quick fade to warm white: the beach waterline, your car, the hotel sidewalk, the
+  promenade, the 11 ST crossing, a café, the convertible, the ATV, the lifeguard tower deck and
+  the start. Each spot is resolved when used, clear of every collider and facing the sea or
+  down the street. Driving, the road destinations take the car along and set it down at rest in
+  a lane; the others get out first. A small art-deco caption names the place.
+  (`src/player/fasttravel.js`, checked by `node tools/fasttravel-test.mjs`.)
+
 ## 2026-09-30: cars, people and the open world
 
 The walk became a drive. The street's cars are now models built in Blender, the 1950s
