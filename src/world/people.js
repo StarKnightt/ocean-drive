@@ -30,7 +30,7 @@ const SUN_DIR = compassToDir(SUN.azimuthDeg, SUN.elevationDeg, new THREE.Vector3
 const CULL = 150;                // m: figures further than this are hidden
 const TERRACE_Y = CURB_HEIGHT + 0.45;
 const FOG = 1 / 200;
-const SHADOW_GAIN = 1.6;      // direct-light share -> shadow darkness, matched to the palm shadows
+const SHADOW_GAIN = 2.5;      // direct-light share -> shadow darkness, matched to the palm shadows
 const promenadeX = (z) => PARK.promenadeX + 2.6 * Math.sin(z / 19) + 1.2 * Math.sin(z / 7.3);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -642,7 +642,11 @@ const GROUND_GLSL = /* glsl */ `
     if (x < ${f5(HOTEL.patioX)}) return uTerraceY;
     if (x < ${f5(SIDEWALK_W.x1)}) return ${f5(CURB_HEIGHT)};
     if (x < ${f5(SIDEWALK_E.x0)}) return odRoad(x);
-    if (x < ${f5(SAND.x0)}) return ${f5(CURB_HEIGHT)};
+    if (x < ${f5(SAND.x0)}) {
+      // (the promenade's paving, 2 cm proud of the lawn)
+      float pz = p.y, px = ${f5(PARK.promenadeX)} + 2.6 * sin(pz / 19.0) + 1.2 * sin(pz / 7.3);
+      return ${f5(CURB_HEIGHT)} + (x > ${f5(PARK.x0)} && abs(x - px) < 2.2 ? 0.02 : 0.0);
+    }
     return odSand(p);
   }
 `;
@@ -712,13 +716,18 @@ export function shadowMaterial(per) {
         // darken by what the sun adds here (nothing where the ground is already in shadow),
         // softer further from the caster (penumbra), fading into the haze
         vec3 odD = reflectedLight.directDiffuse, odI = reflectedLight.indirectDiffuse;
-        // (the scene's ground materials read darker in shade than this lambert ratio: gain)
-        vec3 odRatio = 1.0 - clamp(odD / max(odD + odI, vec3(1e-5)) * ${f5(SHADOW_GAIN)}, 0.0, 0.85);
-        float odK = uStrength * mix(1.0, 0.62, smoothstep(0.2, 1.8, vOdH)) * exp(-odT * ${f5(FOG)});
+        // (the scene's ground materials read darker in shade than this lambert ratio: gain.
+        // One darkening for all channels, a touch warm: a per-channel ratio turned warm sand
+        // into a pale blue-grey ghost)
+        const vec3 odL = vec3(0.2126, 0.7152, 0.0722);
+        float odDl = dot(odD, odL), odIl = dot(odI, odL);
+        float odS = clamp(odDl / max(odDl + odIl, 1e-5) * ${f5(SHADOW_GAIN)}, 0.0, 0.75);
+        vec3 odRatio = (1.0 - odS) * mix(vec3(1.0), vec3(1.0, 0.95, 0.87), odS);
+        float odK = uStrength * mix(1.0, 0.7, smoothstep(0.2, 1.8, vOdH)) * exp(-odT * ${f5(FOG)});
         gl_FragColor = vec4(mix(vec3(1.0), odRatio, odK), 1.0);
-        if (uStrength > 5.0) gl_FragColor = vec4(vec3(1.0 - odRatio.g) * (uStrength - 5.0), 1.0);`);
+        if (uStrength > 5.0) gl_FragColor = vec4(vec3(odS) * (uStrength - 5.0), 1.0);`);
   };
-  m.customProgramCacheKey = () => 'people-shadow-v1';
+  m.customProgramCacheKey = () => 'people-shadow-v2';
   return m;
 }
 

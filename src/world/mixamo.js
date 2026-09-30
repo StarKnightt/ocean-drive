@@ -152,6 +152,14 @@ function personMaterial(src, avg, tints) {
     m.transparent = false;
     m.side = THREE.DoubleSide;
     m.alphaToCoverage = QUALITY.msaa > 0;
+  } else {
+    // skin and clothes are opaque (a blended body sorts against its own long shadow and the
+    // lawn behind it, and shows through in bands)
+    m.transparent = false;
+    m.opacity = 1;
+    m.alphaTest = 0;
+    m.depthWrite = true;
+    m.alphaMap = null;
   }
   // (some GLB bodies come in blended and double-sided: one pass, not three's back-then-front
   // pair that re-resolves the program twice per figure per frame)
@@ -361,6 +369,67 @@ export function setWorldQuat(bone, q) {
   const pq = bone.parent.getWorldQuaternion(new THREE.Quaternion());
   bone.quaternion.copy(pq.invert().multiply(q));
   bone.updateMatrixWorld(true);
+}
+
+// ---------------------------------------------------------------------------
+// Hand grip (a steering-wheel rim): measured once in the bind pose, per hand
+//   F: wrist -> middle knuckle, N: palm normal (both hand-local), reach: |wrist -> knuckle| (m)
+//   joints: finger bones with their rest quaternion and the flex axis in their own frame
+// Call on a fresh person (bones still in the bind pose).
+const GRIP_FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
+export function measureGrip(P) {
+  const r = P.root, B = P.bones;
+  const pos0 = r.position.clone(), q0 = r.quaternion.clone(), s0 = r.scale.clone();
+  r.position.set(0, 0, 0); r.quaternion.identity(); r.scale.set(1, 1, 1);
+  r.updateMatrixWorld(true);
+  const wp = (b) => b.getWorldPosition(new THREE.Vector3());
+  const out = {};
+  for (const side of ['Left', 'Right']) {
+    const H = B[side + 'Hand'], mid = B[side + 'HandMiddle1'], idx = B[side + 'HandIndex1'], pk = B[side + 'HandPinky1'];
+    if (!H || !mid || !idx || !pk) return null;
+    const hp = wp(H), F = wp(mid).sub(hp);
+    const reach = F.length();
+    F.normalize();
+    const across = wp(idx).sub(wp(pk));
+    const N = side === 'Left' ? new THREE.Vector3().crossVectors(F, across) : new THREE.Vector3().crossVectors(across, F);
+    N.normalize();
+    const hqInv = H.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const flex = new THREE.Vector3().crossVectors(F, N).normalize();
+    const joints = [];
+    for (const f of [...GRIP_FINGERS, 'Thumb']) for (let k = 1; k <= 3; k++) {
+      const b = B[`${side}Hand${f}${k}`];
+      if (!b) continue;
+      // (the thumb bends across the palm about its own axis: its flex is the palm normal x its length)
+      let ax = flex;
+      if (f === 'Thumb') {
+        const c = b.children.find((o) => o.isBone);
+        if (!c) continue;
+        const d = wp(c).sub(wp(b)).normalize();
+        ax = new THREE.Vector3().crossVectors(d, N).normalize();
+      }
+      joints.push({ b, q0: b.quaternion.clone(), axis: ax.clone().applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()).invert()), f, k });
+    }
+    out[side] = { F: F.applyQuaternion(hqInv), N: N.applyQuaternion(hqInv), reach, joints };
+  }
+  r.position.copy(pos0); r.quaternion.copy(q0); r.scale.copy(s0);
+  r.updateMatrixWorld(true);
+  return out;
+}
+// finger curl round a ~4-5 cm rim (radians per joint), thumb along the rim's face
+const CURL = { 1: 1.05, 2: 1.2, 3: 0.75 }, THUMB = { 1: 0.3, 2: 0.55, 3: 0.45 };
+const _mA = new THREE.Matrix4(), _mB = new THREE.Matrix4(), _x3 = new THREE.Vector3(), _y3 = new THREE.Vector3(), _qg = new THREE.Quaternion();
+// orient `hand` so its knuckle direction is F and its palm faces N (world, orthonormal), and
+// curl the fingers by `k` (0 open .. 1 gripping)
+export function gripHand(hand, g, F, N, k = 1) {
+  _mA.makeBasis(g.F, g.N, _x3.crossVectors(g.F, g.N));
+  _mB.makeBasis(F, N, _y3.crossVectors(F, N));
+  _mB.multiply(_mA.transpose());
+  setWorldQuat(hand, _qg.setFromRotationMatrix(_mB));
+  for (const j of g.joints) {
+    const a = (j.f === 'Thumb' ? THUMB[j.k] : CURL[j.k]) * k;
+    j.b.quaternion.copy(j.q0).multiply(_qg.setFromAxisAngle(j.axis, a));
+  }
+  hand.updateMatrixWorld(true);
 }
 
 // ---------------------------------------------------------------------------

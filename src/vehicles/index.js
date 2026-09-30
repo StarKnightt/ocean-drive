@@ -334,6 +334,7 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
       handbrake = (active && key('Space')) || hbT > 0;
       hop = false;
     }
+    if (api.steerHold != null) r = api.steerHold;
     if (offReq) {
       const lon = e.v.lon;
       f = Math.abs(lon) > 0.3 ? -Math.sign(lon) : 0; r = 0; hard = false; hop = false;
@@ -507,6 +508,8 @@ export function createVehicles(scene, { walker, camera, beach, staticBoxes, stat
     get riding() { return !!rider; },
     get current() { return rider?.v ?? null; },
     get near() { return near?.kind ?? null; },
+    // test hook: a held steering input (-1..1), null for the keys
+    steerHold: null,
     update,
     toggle,
     mount: (kind) => mount(list.find((e) => e.kind === kind)),

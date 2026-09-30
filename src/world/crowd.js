@@ -24,7 +24,7 @@ import { STREET_COLLIDERS, BENCHES } from './street.js';
 import { PALM_TREES } from './palms.js';
 import { QUALITY } from '../quality.js';
 import { hotelLane } from './lanes.js';
-import { createPerson, attachSkates, bakeSkateClip, SKATE_LIFT, ik2 } from './mixamo.js';
+import { createPerson, attachSkates, bakeSkateClip, SKATE_LIFT, ik2, measureGrip, gripHand, setWorldQuat } from './mixamo.js';
 
 const TAU = Math.PI * 2;
 const TIER = QUALITY.tier;
@@ -124,6 +124,20 @@ function staticGrid(furniture = []) {
   };
 }
 
+// soft elliptical contact patch (alpha only), darkest under the middle
+function contactTexture() {
+  const N = 64, px = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const u = (i + 0.5) / N * 2 - 1, v = (j + 0.5) / N * 2 - 1;
+    const r = Math.min(1, Math.hypot(u, v));
+    px.set([255, 255, 255, Math.round(255 * (1 - r) ** 1.8)], (j * N + i) * 4);
+  }
+  const t = new THREE.DataTexture(px, N, N);
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+
 // ---------------------------------------------------------------------------
 // wardrobe: clothing dyes per zone [r, g, b, amount] (linear), picked per person
 const lin = (hex, a = 1) => { const c = new THREE.Color(hex); return [c.r, c.g, c.b, a]; };
@@ -187,7 +201,7 @@ function castList(benches, chairs, furniture) {
     P.push({ tier: 1, kind: 'walk', char: 'sophie', clip: 'walk_casual_f', path: makePath(pts, { closed: true, half: 0.7, cross: true }), s: 20, dir: 1, v: 1.3, crosser: true });
   }
   // beach
-  P.push({ tier: 1, kind: 'walk', char: 'lewis', clip: 'walk_stroll_old', path: beach(-60, 60), s: 50, dir: 1, v: 0.85 });
+  P.push({ tier: 1, kind: 'walk', char: 'lewis', clip: 'walk_casual_m', path: beach(-60, 60), s: 50, dir: 1, v: 1.0 });
   P.push({ tier: 2, kind: 'walk', char: 'megan', clip: 'walk_casual_f', path: beach(-170, -110, 88.4), s: 10, dir: 1, v: 1.05 });
   // standing about: a phone call by the promenade, someone looking round on the sidewalk
   P.push({ tier: 2, kind: 'stand', char: 'elizabeth', clip: 'idle_phone_talk_f', at: { x: promenadeX(-28) - 2.6, z: -28, yaw: 1.2 } });
@@ -197,7 +211,8 @@ function castList(benches, chairs, furniture) {
 
 // ---------------------------------------------------------------------------
 export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCars = () => [], shot = false, mode = null } = {}) {
-  const heightAt = (x, z) => (beach ? beach.groundAt(x, z) : CURB_HEIGHT);
+  // (the promenade's paving is laid 2 cm proud of the lawn)
+  const heightAt = (x, z) => (beach ? beach.groundAt(x, z) : CURB_HEIGHT) + (x > PARK.x0 && x < PARK.x1 && Math.abs(x - promenadeX(z)) < 2.2 ? 0.02 : 0);
   const closeup = shot && mode === 'closeup';
   const tierN = { high: 3, medium: 2, low: 1 }[TIER] ?? 2;
   const chairs = hotels?.userData?.chairs ?? [];
@@ -224,7 +239,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     const P = createPerson(asset, { tints: outfit(rnd) });
     scene.add(P.root);
     if (P.shadow) scene.add(P.shadow);
-    const A = { ...c, P, name: c.kind + '-' + agents.length, x: 0, z: 0, heading: 0, speed: 0, lat: 0, latT: 0, blockedT: 0, acc: 0, visible: true, skip: agents.length % 4, state: 'go', waitT: 0 };
+    const A = { ...c, P, name: c.kind + '-' + agents.length, index: agents.length, x: 0, z: 0, heading: 0, speed: 0, lat: 0, latT: 0, blockedT: 0, acc: 0, visible: true, skip: agents.length % 4, state: 'go', waitT: 0 };
     // clip set: locomotion / idle, per character's sex where the clip has one
     const fem = asset.fem;
     const fix = (clip) => {
@@ -482,15 +497,38 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     A.acc = 0;
   }
 
+  // contact shadows: a soft dark patch under each person's feet (one instanced draw)
+  const contact = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({
+    color: 0x0c0806, map: contactTexture(), transparent: true, opacity: 0.5, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  }), agents.length);
+  contact.frustumCulled = false;
+  contact.renderOrder = 1;
+  contact.castShadow = false;
+  contact.receiveShadow = false;
+  scene.add(contact);
+  const _cm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _cs = new THREE.Vector3(), _cp = new THREE.Vector3(), _Y = new THREE.Vector3(0, 1, 0);
+  function placeContact(i, A, groundY) {
+    if (A.hidden || !A.visible) _cs.set(0, 0, 0);
+    else if (A.seat) _cs.set(0.8, 1, 0.95);
+    else _cs.set(A.kind === 'skate' ? 0.5 : 0.62, 1, A.kind === 'skate' ? 0.8 : 0.7);
+    // (sat: under the seat and the feet in front of it)
+    const fwd = A.seat ? 0.28 : 0;
+    _cp.set(A.x + Math.sin(A.heading) * fwd, groundY + 0.012, A.z + Math.cos(A.heading) * fwd);
+    contact.setMatrixAt(i, _cm.compose(_cp, _cq.setFromAxisAngle(_Y, A.heading), _cs));
+  }
+
   function place(A) {
     const r = A.P.root;
     const g = A.seat ? A.baseY : heightAt(A.x, A.z);
     r.position.set(A.x, (A.seat ? g : g + A.lift), A.z);
     r.rotation.set(0, A.heading, 0);
+    const gy = A.seat?.cafe ? TERRACE_Y : A.seat ? heightAt(A.x, A.z) : g;
     if (A.P.per) {
       A.P.per.uBaseY.value = A.seat?.cafe ? TERRACE_Y : A.seat ? CURB_HEIGHT : g;
       A.P.per.uWallX.value = HOTEL.frontX;
     }
+    placeContact(A.index, A, gy);
+    contact.instanceMatrix.needsUpdate = true;
     A.col.x = A.x; A.col.z = A.z;
     const rr = A.seat ? 0.36 : A.kind === 'skate' ? 0.34 : R_PERSON;
     // never grow over the player (the walker would be stuck inside the circle)
@@ -552,7 +590,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
   const driverChars = Object.keys(chars);
   let driverN = 0, lastCam = null, playerDriver = null;
   const drivers = [];
-  function seatBody(P, anchor) {
+  function seatBody(P, anchor, fwd = 0) {
     const r = P.root;
     const a = P.action('drive_car');
     a.play();
@@ -563,27 +601,174 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     anchor.updateMatrixWorld(true);
     const h = anchor.worldToLocal(P.bones.Hips.getWorldPosition(new THREE.Vector3()));
     r.position.sub(h);
+    r.position.z += fwd;
     return a;
   }
   const _t = new THREE.Vector3(), _p = new THREE.Vector3(), _aq = new THREE.Quaternion(), _s = new THREE.Vector3();
-  function handsToWheel(P, rig, w = 1) {
+  const _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _tg = new THREE.Vector3(), _F = new THREE.Vector3(), _N = new THREE.Vector3();
+  const _wq = new THREE.Quaternion(), _wm = new THREE.Matrix4(), _one = new THREE.Vector3(1, 1, 1), _wr = new THREE.Vector3();
+  // Hands on the rim. The rim is the grips' parent (the steering-wheel pivot: local +y down the
+  // column, rim angle c clockwise from twelve as the driver sees it, point (-r sin c, y, -r cos c)).
+  // Each hand holds a rim point; the wheel's turn `rig.wheelAngle` carries it round, and once it
+  // has been carried too far from the hand's home (nine / three) the hand lets go and takes a
+  // new hold ahead of the turn (hand over hand, one at a time), drifting home when the wheel
+  // rests. Without a wheel angle (the traffic) the hands stay on the grips.
+  const HOLD_LIM = 1.25, REGRIP_T = 0.24;
+  function rimFrame(rig) {
+    const wh = rig.gripL?.parent;
+    if (!wh) return null;
+    // the rim's rest frame (the pivot unturned): wheel angle is applied by rim angle instead
+    if (wh.userData.q0) _wm.compose(wh.position, wh.userData.q0, _one).premultiply(wh.parent.matrixWorld);
+    else _wm.copy(wh.matrixWorld);
+    _wq.setFromRotationMatrix(_wm);
+    return wh;
+  }
+  function rimPoint(r, y, c, out) { return out.set(-r * Math.sin(c), y, -r * Math.cos(c)).applyMatrix4(_wm); }
+  function handsOnRim(P, rig, G, st, dt, full = true) {
+    const wh = rimFrame(rig);
+    if (!wh) return;
+    const B = P.bones, w = rig.wheelAngle ?? 0;
     const aq = rig.pelvis.getWorldQuaternion(_aq);
+    const dw = st.w === undefined ? 0 : w - st.w;
+    st.w = w;
+    st.still = Math.abs(dw) < 1e-3 ? (st.still ?? 0) + dt : 0;
     for (const [side, grip, sx] of [['Left', rig.gripL, 1], ['Right', rig.gripR, -1]]) {
       if (!grip) continue;
-      const B = P.bones;
-      grip.getWorldPosition(_t);
-      B[side + 'Arm'].getWorldPosition(_s);
-      // the wrist sits a hand's breadth short of the grip, towards the shoulder
-      const toS = _s.clone().sub(_t).normalize();
-      const wrist = _t.clone().addScaledVector(toS, 0.075);
-      const pole = _p.set(sx * 0.7, -1, -0.25).applyQuaternion(aq);
-      ik2(B[side + 'Arm'], B[side + 'ForeArm'], B[side + 'Hand'], wrist, pole, w);
+      const r = Math.hypot(grip.position.x, grip.position.z), y = grip.position.y;
+      const cGrip = Math.atan2(-grip.position.x, -grip.position.z);
+      const home = rig.wheelAngle === undefined ? cGrip : Math.sign(cGrip) * 1.48;
+      const h = (st[side] ??= { h: home - w, mv: null });
+      const other = st[side === 'Left' ? 'Right' : 'Left'];
+      // spun faster than hands can follow (a quick flick, the wheel unwinding): the rim slides
+      // through the loosened hands, which stay put
+      const fast = dt > 0 && Math.abs(dw) / dt > 5;
+      if (fast) {
+        const c = h.mv ? THREE.MathUtils.lerp(h.mv.c0, h.mv.h1 + w - dw, THREE.MathUtils.smoothstep(h.mv.t, 0, 1)) : h.h + w - dw;
+        h.mv = null;
+        h.h = c - w;
+        h.slide = 0.25;
+      } else if (h.mv) {
+        h.mv.t += dt / REGRIP_T;
+        if (h.mv.t >= 1) { h.h = h.mv.h1; h.mv = null; }
+      } else {
+        const c0 = h.h + w;
+        h.h = Math.atan2(Math.sin(c0), Math.cos(c0)) - w;
+        const d = h.h + w - home;
+        const busy = !!other?.mv;
+        // (a hand is carried further up over the top than down towards six)
+        const lim = Math.sign(d) === Math.sign(home) ? HOLD_LIM * 0.65 : HOLD_LIM * 1.1;
+        if (st.still > 0.35) {
+          // the wheel at rest: back to nine / three, one hand at a time
+          if (Math.abs(d) > 0.2 && !busy) h.mv = { t: 0, c0: h.h + w, h1: home - w };
+        } else if (Math.abs(d) > lim && (!busy || Math.abs(d) > lim + 0.6)) {
+          // a new hold ahead of the turn (the wheel carries it back through home)
+          const ahead = dw && Math.sign(dw) === Math.sign(d) ? -Math.sign(d) * 0.6 : 0;
+          h.mv = { t: 0, c0: h.h + w, h1: home + ahead - w };
+        }
+      }
+      let c = h.h + w, lift = 0, k = 1;
+      if (h.slide > 0) { h.slide -= dt; k = 0.7; }
+      if (h.mv) {
+        const e = THREE.MathUtils.smoothstep(h.mv.t, 0, 1);
+        c = THREE.MathUtils.lerp(h.mv.c0, h.mv.h1 + w, e);
+        lift = Math.sin(Math.PI * Math.min(1, h.mv.t));
+        k = 1 - 0.8 * lift;
+      }
+      // rim point, outward radial, column axis (away from the driver), world
+      rimPoint(r, y, c, _tg);
+      _u.set(-Math.sin(c), 0, -Math.cos(c)).applyQuaternion(_wq);
+      _ax.set(0, 1, 0).applyQuaternion(_wq);
+      _tg.addScaledVector(_ax, -0.06 * lift).addScaledVector(_u, 0.03 * lift);
+      // knuckles along the rim: the hand points forward and a little outward over it, the palm
+      // faces in against it (thumb up at nine and three)
+      const g = G?.[side];
+      _F.copy(_ax).multiplyScalar(0.8).addScaledVector(_u, 0.35).normalize();
+      _N.copy(_u).multiplyScalar(-0.8).addScaledVector(_ax, 0.35).normalize();
+      const reach = g ? g.reach : 0.09;
+      h.W = (h.W ?? new THREE.Vector3()).copy(_tg).addScaledVector(_N, -0.036).addScaledVector(_F, -reach * 0.8);
+      h.F = (h.F ?? new THREE.Vector3()).copy(_F);
+      h.N = (h.N ?? new THREE.Vector3()).copy(_N);
+      h.k = k;
+    }
+    // reach: lean the chest over the wheel and bring the shoulders forward as far as the
+    // arms fall short of the holds
+    let need = 0;
+    for (const side of ['Left', 'Right']) {
+      const h = st[side];
+      if (!h?.W) continue;
+      const S = B[side + 'Arm'].getWorldPosition(_s);
+      const L = B[side + 'ForeArm'].position.length() * B[side + 'Arm'].getWorldScale(_p).x + B[side + 'Hand'].position.length() * B[side + 'ForeArm'].getWorldScale(_p).x;
+      need = Math.max(need, S.distanceTo(h.W) - 0.96 * L);
+    }
+    const lean = THREE.MathUtils.clamp(need / 0.5, 0, 0.14);
+    if (lean > 0) {
+      _ax.set(1, 0, 0).applyQuaternion(aq);
+      for (const [n, f] of [['Spine1', 0.45], ['Spine2', 0.55]]) {
+        const b = B[n];
+        if (!b) continue;
+        setWorldQuat(b, _wq.setFromAxisAngle(_ax, lean * f).multiply(b.getWorldQuaternion(_aq)));
+      }
+      rig.pelvis.getWorldQuaternion(_aq);
+    }
+    for (const [side, sx] of [['Left', 1], ['Right', -1]]) {
+      const h = st[side];
+      if (!h?.W) continue;
+      // the collarbone swings the shoulder towards the hold (a little)
+      const C = B[side + 'Shoulder'];
+      if (C && need > 0) {
+        const S = B[side + 'Arm'].getWorldPosition(_s), c0 = C.getWorldPosition(_t);
+        const from = _u.subVectors(S, c0), to = _F.subVectors(h.W, c0).setLength(from.length());
+        const q = _wq.setFromUnitVectors(from.normalize(), to.normalize());
+        _wq.slerp(_aq.identity(), 1 - THREE.MathUtils.clamp(need / 0.3, 0, 0.35));
+        setWorldQuat(C, q.multiply(C.getWorldQuaternion(_aq)));
+        rig.pelvis.getWorldQuaternion(_aq);
+      }
+      const pole = _p.set(sx * 0.7, -1, -0.25).applyQuaternion(_aq);
+      ik2(B[side + 'Arm'], B[side + 'ForeArm'], B[side + 'Hand'], h.W, pole);
+      if (G?.[side] && full) gripHand(B[side + 'Hand'], G[side], h.F, h.N, h.k);
+      (st.dbg ??= {})[side] = { F: h.F.toArray(), N: h.N.toArray(), W: h.W.toArray(), need, lean };
+    }
+  }
+  // Feet in the convertible's footwell (car-local m; flat floor y 0.455 to z 0.27, then the toe
+  // board; the throttle is floor-hinged at z 0.28, its pad rising ~48 deg to z 0.44 at x 0.28;
+  // the hanging brake pad at x 0.45): the right foot heel-on-hinge along the throttle, over
+  // on the brake when braking; the left resting on the floor, toes up the toe board
+  const FEET = {
+    Right: { ankle: [0.285, 0.6, 0.275], toe: [0.285, 0.655, 0.405], knee: [-0.2, 1, 0.3] },
+    Left: { ankle: [0.53, 0.54, 0.185], toe: [0.535, 0.5, 0.33], knee: [0.22, 1, 0.3] },
+  };
+  const BRAKE_DX = 0.165;
+  function feetOnPedals(P, frame, st, v, dt) {
+    const B = P.bones;
+    if (!B.RightUpLeg || !B.RightToeBase) return;
+    const brk = v && (v.braking > 0.05 || v.throttle < -0.05) ? 1 : 0;
+    const press = v ? Math.max(0, v.throttle ?? 0) : 0;
+    st.brk = THREE.MathUtils.damp(st.brk ?? 0, brk, 9, dt);
+    st.press = THREE.MathUtils.damp(st.press ?? 0, press, 12, dt);
+    const M = frame.matrixWorld;
+    for (const side of ['Left', 'Right']) {
+      const f = FEET[side], R = side === 'Right';
+      // (moving across to the brake the foot lifts off the throttle: a small arc)
+      const dx = R ? st.brk * BRAKE_DX : 0, lift = R ? Math.sin(Math.PI * st.brk) * 0.05 : 0;
+      const dz = R ? 0.035 * st.press * (1 - st.brk) : 0;
+      _tg.fromArray(f.ankle); _tg.x += dx; _tg.y += lift; _tg.z += dz;
+      _tg.applyMatrix4(M);
+      _N.fromArray(f.knee).transformDirection(M);
+      ik2(B[side + 'UpLeg'], B[side + 'Leg'], B[side + 'Foot'], _tg, _N);
+      // sole on the pad / floor: aim the ankle -> ball of the foot at the toe target
+      const Ft = B[side + 'Foot'];
+      const A = Ft.getWorldPosition(_t);
+      _u.subVectors(B[side + 'ToeBase'].getWorldPosition(_s), A).normalize();
+      _F.fromArray(f.toe); _F.x += dx; _F.y += lift; _F.z += dz * 1.2;
+      _F.applyMatrix4(M).sub(A).normalize();
+      setWorldQuat(Ft, _wq.setFromUnitVectors(_u, _F).multiply(Ft.getWorldQuaternion(_aq)));
     }
   }
   const makeDriver = ({ rig }) => {
     const name = driverChars[driverN++ % driverChars.length];
     const P = createPerson(chars[name], { tints: outfit(rnd), shadow: false });
     P.setLevel(1);
+    const G = measureGrip(P), hold = {};
     const a = seatBody(P, rig.pelvis);
     let acc = 0, t = 0;
     drivers.push(P);
@@ -602,10 +787,11 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         t++;
         if (d > 35 && t % 3) return;
         P.setLevel(d < 10 ? 0 : 1);
+        const step = acc;
         P.mixer.update(acc);
         acc = 0;
         P.root.updateMatrixWorld(true);
-        if (d < 45) handsToWheel(P, rg);
+        if (d < 45) handsOnRim(P, rg, G, hold, step, d < 16);
       },
     };
   };
@@ -614,23 +800,33 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     traffic?.attachDrivers?.(makeDriver);
     // the player at the convertible's wheel
     if (cars?.drive?.attachDriver && !shot) {
-      // (long sleeves: the wheel view is all arms - plain, no tattoos - and just the hands show)
-      const name = chars.sophie ? 'sophie' : driverChars[0];
-      const P = createPerson(chars[name], { tints: [lin(0x9aa3a8, 0.9), lin(0x2d3b5a, 0.85), null], shadow: false });
+      // (jeans and sneakers in the footwell, a plain tee: bare forearms on the wheel, no tattoos)
+      const name = chars.megan ? 'megan' : driverChars[0];
+      const P = createPerson(chars[name], { tints: [lin(0xb9d3e3, 0.85), null, null], shadow: false });
       P.setLevel(0);
       P.root.name = 'player-driver';
-      let seated = false;
+      const G = measureGrip(P), hold = {}, feet = {};
+      // (sat a little forward of the seat anchor, the eye with her, and a touch longer in the
+      // arm than the model: the hands reach nine and three on the big rim)
+      const FWD = 0.1;
+      for (const s of ['Left', 'Right']) { P.bones[s + 'ForeArm'].position.multiplyScalar(1.1); P.bones[s + 'Hand'].position.multiplyScalar(1.1); }
+      let seated = false, t0 = null;
       cars.drive.attachDriver(P.root, {
-        update(rig) {
-          if (!seated) { seated = true; seatBody(P, rig.pelvis); }
-          P.mixer.update(1 / 60);
+        forward: FWD,
+        update(rig, v) {
+          if (!seated) { seated = true; seatBody(P, rig.pelvis, FWD); }
+          const dt = t0 === null ? 1 / 60 : THREE.MathUtils.clamp(rig.t - t0, 0, 0.1);
+          t0 = rig.t;
+          P.mixer.update(dt);
           // (the first-person camera sits in the head: no head, no hair)
           P.bones.Head.scale.setScalar(0.001);
           P.root.updateMatrixWorld(true);
-          handsToWheel(P, rig);
+          handsOnRim(P, rig, G, hold, dt);
+          feetOnPedals(P, rig.pelvis.parent, feet, v, dt);
         },
       });
       playerDriver = P;
+      P.hold = hold; P.grip = G;
     }
   }
 

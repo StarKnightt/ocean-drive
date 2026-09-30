@@ -394,7 +394,7 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     trim: std({ color: 0x141516, roughness: 0.42, envMapIntensity: 0.7 }),
     grille: coat({ color: 0x0e0f10, roughness: 0.3, clearcoatRoughness: 0.08, envMapIntensity: 0.9 }, 'grille'),
     dark: std({ color: 0x0b0b0c, roughness: 0.85, envMapIntensity: 0.3 }),
-    vinyl: vinyl(0xf3ecdc),
+    vinyl: tuckAndRoll(vinyl(0xf3ecdc)),
     vinyl2: vinyl(0x7fc4b4),
     canvas: std({ color: 0xd8d0bb, roughness: 0.92, envMapIntensity: 0.9, ...(carpetNor ? { normalMap: carpetNor, normalScale: new THREE.Vector2(0.45, 0.45) } : {}) }),
     // (light enough to read in the shaded footwells; a little emissive for the bounce light)
@@ -411,6 +411,32 @@ function makeMaterials(env, sky, vinylNor, carpetNor) {
     interior: std({ color: 0x3a3b3e, roughness: 0.7, envMapIntensity: 0.9 }),
     seat: std({ color: 0x2a2b2e, roughness: 0.62, envMapIntensity: 0.9 }),
   };
+}
+
+// the bench upholstery: rolls running fore-aft (across the car every 7.5 cm) with stitched
+// grooves between them, inboard of the door panels. The hero's trim mesh is quantized: car x =
+// object x * 2.8704 (LOD1's scale differs; the rolls are not seen at that range)
+function tuckAndRoll(m) {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (s) => {
+    prev?.(s);
+    s.vertexShader = s.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vRollX;\nvarying vec3 vRollAx;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRollX = position.x * 2.8704;\nvRollAx = normalize((modelViewMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz);');
+    s.fragmentShader = s.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vRollX;\nvarying vec3 vRollAx;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float rk = 1.0 - smoothstep(0.7, 0.76, abs(vRollX));
+          float rf = fract(vRollX / 0.075 + 0.5) * 2.0 - 1.0;
+          vec3 rAx = normalize(vRollAx);
+          rAx -= normal * dot(rAx, normal);
+          normal = normalize(normal + rAx * rf * 0.75 * rk);
+          diffuseColor.rgb *= mix(1.0, mix(1.0, 0.62, smoothstep(0.8, 1.0, abs(rf))), rk);
+        }`);
+  };
+  m.customProgramCacheKey = () => 'glb-vinyl-roll';
+  return m;
 }
 
 // lamp lens: the lit emissive stays unclamped (a brake light blooms), only the lit surface
@@ -496,6 +522,19 @@ function skipWhenHidden(o) {
   o.updateMatrixWorld = function (force) { if (this.visible) THREE.Object3D.prototype.updateMatrixWorld.call(this, force); };
   return o;
 }
+let tunnelGeo = null;
+function tunnelGeometry() {
+  if (tunnelGeo) return tunnelGeo;
+  // half-ellipse section 0.3 m wide, 0.12 m high on the floor (y 0.455), z -0.12 .. 0.78
+  const s = new THREE.Shape();
+  s.moveTo(-0.15, 0);
+  s.absellipse(0, 0, 0.15, 0.12, Math.PI, 0, true);
+  s.lineTo(-0.15, 0);
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.9, bevelEnabled: false, curveSegments: 14 });
+  g.translate(0, 0.45, -0.12);
+  // (the carpet's normal map needs uvs ~ metres: extrude's are already in shape units)
+  return (tunnelGeo = g);
+}
 function heroInstance(gltf, paint, paint2, M) {
   const g = skipWhenHidden(new THREE.Group());
   const sway = new THREE.Group(), body = new THREE.Group();
@@ -531,6 +570,11 @@ function heroInstance(gltf, paint, paint2, M) {
   const blob = blobMesh(2.35, 6.1);
   g.add(blob);
   const L0 = levels[0];
+  // the transmission tunnel down the middle of the front floor, carpeted, into the toe board
+  const hump = new THREE.Mesh(tunnelGeometry(), M.carpet);
+  hump.name = 'tunnel';
+  hump.receiveShadow = true;
+  L0.add(hump);
   const needle = L0.getObjectByName('speedo_needle');
   if (needle) needle.userData.q0 = needle.quaternion.clone();
   // driver body hook (attachDriver): a skinned character hangs from the pelvis anchor, its
@@ -538,6 +582,7 @@ function heroInstance(gltf, paint, paint2, M) {
   const driverRig = {
     pelvis: L0.getObjectByName('driver_pelvis'), eye: L0.getObjectByName('driver_eye'),
     gripL: L0.getObjectByName('grip_L'), gripR: L0.getObjectByName('grip_R'),
+    wheel: steering[0], wheelAngle: 0, t: 0,
     body: null, update: null,
   };
   g.userData = {
@@ -608,6 +653,8 @@ function poseHero(inst, v) {
   if (rig?.body) {
     rig.body.visible = !!v.ridden;
     if (v.ridden && rig.update) {
+      rig.wheelAngle = steerWheelAngle(v);
+      rig.t = v.t;
       inst.car.updateMatrixWorld(true);
       rig.update(rig, v);
     }
@@ -1062,9 +1109,11 @@ export async function buildCarsGlb(scene, renderer) {
       // car's world matrices current: IK the hands to rig.gripL / rig.gripR (empties on the
       // rim at ten and two that turn with the wheel), aim the head at rig.eye, etc.
       // Returns a detach function.
-      attachDriver(body, { update = null } = {}) {
+      attachDriver(body, { update = null, forward = 0 } = {}) {
         const rig = hero.driverRig;
         if (!rig.pelvis) return () => {};
+        // (a driver sat further forward: the eye moves with them)
+        if (forward && rig.eye) rig.eye.position.z += forward;
         rig.pelvis.add(body);
         rig.body = body;
         rig.update = update;
