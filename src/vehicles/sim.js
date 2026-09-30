@@ -704,6 +704,13 @@ function post(v, input, dt, world, hard) {
     v.slip = v.vx * cy - v.vz * sy;
     v.skid = v.kind === 'car' ? Math.max(clamp((Math.abs(v.slip) - 1.5) / 3, 0, 1), input.handbrake && al > 2 ? 0.6 * Math.min(1, al / 8) : 0) : 0;
     if (S.sinkCap) sinkStep(v, input, dt);
+    // a car pressed a little into the sand and the surf (drawn only: 8-12 cm, less what the
+    // wheels have physically sunk)
+    if (v.kind === 'car') {
+      const k = v.surf.kind, want = k === 'water' ? 0.11 : k === 'sand' ? 0.08 + 0.03 * v.surf.soft : k === 'wetsand' ? 0.08 : 0;
+      const t = Math.max(0, want - (v.sink ? _sinkMean(v) : 0));
+      v.visSink = (v.visSink ?? 0) + (t - (v.visSink ?? 0)) * (1 - Math.exp(-dt * 3));
+    }
     // the engine drowns once the water (plus the bow wave at speed) reaches the intake
     if (S.intake) {
       const dep = Math.max(...v.wheelDepth) + Math.min(0.15, 0.04 * al);

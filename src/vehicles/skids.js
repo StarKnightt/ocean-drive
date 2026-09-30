@@ -14,8 +14,8 @@ const STEP = 0.05;            // m of height change between points that breaks a
 const LOOK = {
   pavement: [0.03, 0.026, 0.022, 0.35, 0.1, 0.22],
   grass: [0.05, 0.062, 0.022, 0.42, 0.12, 0.4],
-  sand: [0.2, 0.155, 0.105, 0.5, 0.13, 0.4],
-  wetsand: [0.12, 0.095, 0.065, 0.5, 0.12, 0.4],
+  sand: [0.07, 0.052, 0.034, 0.38, 0.13, 0.4],
+  wetsand: [0.05, 0.038, 0.026, 0.4, 0.12, 0.4],
   curbside: null,
   water: null,
 };

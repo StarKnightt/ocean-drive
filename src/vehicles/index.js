@@ -537,6 +537,13 @@ export function createVehicles(scene, {
           const back = 1.5 + Math.random() * 2.5, out = side * Math.random() * 0.7;
           spray.emit(wx, gy + 0.04, wz, sy * back + cy * out, 0.8 + Math.random() * 1.4, cy * back - sy * out, grass ? P_GRASS : P_SAND);
         }
+      } else if (car && soft > 0.4 && al > 2.5) {
+        // (rolling fast over the dry sand: a fine spatter thrown up off the back of each tyre)
+        const rate = 16 * soft * Math.min(1, al / 10) * (LOW ? 0.4 : 1), sg = v.lon >= 0 ? 1 : -1;
+        for (let n = poisson(rate * dt); n > 0; n--) {
+          const back = sg * al * (0.25 + Math.random() * 0.25), out = side * Math.random() * 0.5;
+          spray.emit(wx, gy + 0.05, wz, sy * back + cy * out, 0.6 + Math.random() * 1.2, cy * back - sy * out, P_SAND);
+        }
       }
       // tyre marks: the rear tyres while sliding, all four on the handbrake-free hard stop,
       // ruts in the soft sand

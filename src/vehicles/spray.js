@@ -13,12 +13,12 @@ const LOW = QUALITY.tier === 'low';
 const COL = [[0.95, 0.85, 0.72], [0.6, 0.5, 0.38], LOW ? [1.6, 0.95, 0.45] : [6, 2.6, 0.7], [0.2, 0.22, 0.09], [0.62, 0.6, 0.57], [0.98, 0.9, 0.82]];
 // per type: [life min, life spread, alpha, size min, size spread, gravity, growth, drag, stretch]
 const TYPE = [
-  [0.3, 0.28, 0.55, 0.02, 0.026, 0.95, 0.6, 1.4, 0.8],   // water droplets
+  [0.3, 0.28, 0.6, 0.011, 0.012, 0.95, 0.3, 1.4, 2.6],   // water droplets (thin streaks)
   [0.5, 0.4, 0.55, 0.02, 0.03, 1, 1.0, 1.2, 0.6],        // sand
   [0.18, 0.3, 1, 0.006, 0.005, 1, -0.5, 0.6, 1.6],       // sparks
   [0.5, 0.4, 0.8, 0.018, 0.028, 1, 0.8, 1.2, 0.5],       // grass
   [0.9, 0.8, 0.22, 0.18, 0.12, -0.05, 3, 2.2, 0],        // smoke
-  [0.35, 0.35, 0.16, 0.18, 0.16, 0.08, 3.2, 3.2, 0.15],  // mist
+  [0.3, 0.3, 0.09, 0.14, 0.12, 0.08, 3.2, 3.2, 0.6],     // mist
 ];
 
 export function createSpray(scene) {
@@ -35,15 +35,21 @@ export function createSpray(scene) {
   g.setAttribute('iA', inst(al, 1));
   g.setAttribute('iS', inst(sz, 2));
   g.instanceCount = N;
+  const uSun = { value: new THREE.Vector3(0.9, 0.12, 0.1).normalize() };
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
+    uniforms: { uSun },
     vertexShader: /* glsl */ `
       attribute vec3 iPos; attribute vec3 iVel; attribute vec3 iCol; attribute float iA; attribute vec2 iS;
+      uniform vec3 uSun;
       varying vec3 vCol; varying float vA; varying vec2 vUv;
       void main() {
         vCol = iCol; vA = iA; vUv = position.xy;
         if (iA < 0.001) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
+        // backlit by the low sun: drops and grains between the eye and the sun glow gold
+        float back = pow(max(dot(normalize(mv.xyz), normalize((viewMatrix * vec4(uSun, 0.0)).xyz)), 0.0), 3.0);
+        vCol = iCol * (0.8 + 0.2 * back) + vec3(1.9, 1.15, 0.45) * back * (iS.y > 1.0 ? 1.0 : 0.45);
         // stretched along the on-screen motion (about 1/40 s of it), never shorter than wide
         vec3 vv = (modelViewMatrix * vec4(iVel, 0.0)).xyz;
         vec2 d = vv.xy + vv.z * mv.xy / max(-mv.z, 0.1);
@@ -67,7 +73,12 @@ export function createSpray(scene) {
   mesh.renderOrder = 6;
   mesh.name = 'spray';
   scene.add(mesh);
-  let head = 0, live = 0;
+  let head = 0, live = 0, sunFound = false;
+  // (the sun's direction from the scene's shadow-casting light, read once)
+  const findSun = () => {
+    sunFound = true;
+    scene.traverse((o) => { if (o.isDirectionalLight && o.castShadow) uSun.value.subVectors(o.position, o.target.position).normalize(); });
+  };
   return {
     mesh,
     get alive() { let n = 0; for (let i = 0; i < N; i++) if (al[i] > 0.001) n++; return n; },
@@ -86,6 +97,7 @@ export function createSpray(scene) {
     },
     update(dt) {
       if (!live) return;
+      if (!sunFound) findSun();
       let any = false;
       for (let i = 0; i < N; i++) {
         const p = P[i];

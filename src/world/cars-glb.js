@@ -697,8 +697,10 @@ function setLevel(inst, k) {
 const _qs = new THREE.Quaternion(), _ax = new THREE.Vector3(0, 1, 0);
 const FLIP_Y = new THREE.Quaternion().setFromAxisAngle(_ax, Math.PI);
 function poseHero(inst, v) {
-  const S = v.spec, g = inst.car;
-  g.position.set(v.x, v.baseT, v.z);
+  const S = v.spec, g = inst.car, sink = v.visSink ?? 0;
+  // (pressed into the sand and the surf: the contact blob stays on the surface)
+  g.position.set(v.x, v.baseT - sink, v.z);
+  if (inst.blob) inst.blob.position.y = 0.012 + sink;
   g.rotation.set(-v.pitchT, v.yaw + Math.PI, -v.rollT, 'YXZ');
   // the sprung body: pitch / roll / heave from the sim plus a fine shake the driver's eye
   // (anchored in the body) shares: V8 lope at idle, road texture and seams growing with speed
@@ -1306,6 +1308,9 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
           setLite(!!v.ridden && !rig.chase);
           g.position.set(v.x, v.bodyY, v.z);
           g.rotation.set(-v.pitch, v.yaw + Math.PI, -v.roll, 'YXZ');
+          // (pressed into the sand and the surf: the contact blob and sun patch stay on top)
+          const sink = v.visSink ?? 0;
+          for (const lv of I.levels) lv.position.y = -sink;
           const d = v.steer, ad = Math.abs(d), S = v.spec;
           let inner = d, outer = d;
           if (ad > 1e-4) {
