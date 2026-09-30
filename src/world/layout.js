@@ -149,3 +149,37 @@ export function groundHeight(x, z) {
   if (x < SAND.x0) return CURB_HEIGHT;
   return sandHeight(x) + sandDetail(x, z);   // (under the sea: the seabed you wade on)
 }
+
+// Vehicle beach ramps through the seawall (lifeguard-truck style), clear of the access
+// steps, the towers and the crosswalk legs: a concrete grade from the park to the sand
+// crest. hw: half width of the running surface (the cheek walls stand just outside it).
+export const RAMPS = [{ z: -95, hw: 2.6 }, { z: 95, hw: 2.6 }];
+export const RAMP_X = { x0: 8.5, x1: 12.8 };
+export function rampAt(z, pad = 0) {
+  for (const r of RAMPS) if (Math.abs(z - r.z) < r.hw + pad) return r;
+  return null;
+}
+// Ramp surface height at (x, z), or null off the ramps.
+export function rampHeight(x, z) {
+  if (x < RAMP_X.x0 || x > RAMP_X.x1 || !rampAt(z)) return null;
+  const t = (x - RAMP_X.x0) / (RAMP_X.x1 - RAMP_X.x0);
+  return CURB_HEIGHT + (sandHeight(RAMP_X.x1) - CURB_HEIGHT) * t;
+}
+// Ground with the ramps: what groundHeight() becomes once beach.js cuts the seawall for them
+// (open-world phase 1). Until then only the open-world vehicle sim uses it.
+export function groundHeightOpen(x, z) {
+  return rampHeight(x, z) ?? groundHeight(x, z);
+}
+
+// Fine ride bumps (m) on the park lawn and the promenade pavers: a cheap sum of sines like
+// sandDetail(). Zero on the road, sidewalks, ramps and sand.
+export function surfaceNoise(x, z) {
+  if (x < PARK.x0 + 0.3 || x >= SAND.x0 - 0.3 || rampAt(z, 0.3) && x > RAMP_X.x0 - 0.3) return 0;
+  const pz = PARK.promenadeX + 2.6 * Math.sin(z / 19) + 1.2 * Math.sin(z / 7.3);
+  if (Math.abs(x - pz) < 2.2 || x > PARK.x1 - 1.2) {
+    // pavers: a fine joint rumble
+    return 0.002 * (Math.sin(x * 9.1) * Math.sin(z * 8.3) + 1);
+  }
+  return 0.0075 * (Math.sin(x * 1.9 + Math.sin(z * 0.7)) * Math.sin(z * 2.3 - x * 0.4) + 1)
+    + 0.0025 * Math.sin(x * 5.3 + z * 4.1);
+}

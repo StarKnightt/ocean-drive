@@ -77,10 +77,11 @@ export const SURF = {
   sidewalk:  { grip: 1.0,  roll: 0.05, vmax: [1, 1],      bump: 0 },
   ramp:      { grip: 0.95, roll: 0.05, vmax: [1, 1],      bump: 0 },
   promenade: { grip: 0.95, roll: 0.1, vmax: [1, 1],       bump: 0.004 },
-  grass:     { grip: 0.55, roll: 0.9, vmax: [0.45, 0.65], bump: 0.015, offroad: true },
+  grass:     { grip: 0.55, roll: 1.2, vmax: [0.28, 0.5],  bump: 0.015, offroad: true },
   wetsand:   { grip: 0.65, roll: 0.6, vmax: [0.6, 0.8],   bump: 0.008, offroad: true },
-  sand:      { grip: 0.4,  roll: 2.2, vmax: [0.35, 0.7],  bump: 0,     offroad: true },
-  water:     { grip: 0.3,  roll: 1,   vmax: [0.6, 0.8],   bump: 0 },
+  sand:      { grip: 0.4,  roll: 1.2, vmax: [0.35, 0.7],  bump: 0,     offroad: true },
+  // (water drag 1 + 6·depth, scaled by offroad: with the plan's 30·depth no car could wade)
+  water:     { grip: 0.3,  roll: 1, depthRoll: 6, vmax: [0.6, 0.8], bump: 0, offroad: true },
 };
 // offroad drag scale: 1 for the sedan (0.6), less for the trucks
 export const offroadDrag = (offroad) => Math.max(0.2, (1.25 - offroad) / 0.65);
@@ -150,7 +151,8 @@ function modern(body, b) {
 const heroOpen = (() => {
   const { maxGround, x0At, ...car } = SPECS.car;
   const vtop = [120 / 3.6, 135 / 3.6];
-  const accel = accelFor(12, vtop[0]);
+  // (0-100 in 14.5 s rather than the plan's 12, so its 0-50 stays the cruiser's 6-11 s)
+  const accel = accelFor(14.5, vtop[0]);
   return {
     ...car, kind: 'car', body: 'hero', open: true, engine: 'v8classic',
     xMin: -Infinity, maxStep: 0.2, accessStep: 0.2, intake: 0.32, maxDepth: 0.52,
