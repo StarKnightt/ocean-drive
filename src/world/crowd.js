@@ -435,7 +435,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
       A.dodgeT -= dt;
       A.state = 'dodge';
       latT = A.dodgeLat;
-      vT = Math.min(vT, 0.45);
+      vT = Math.min(vT, 0.25);
     } else if (A.state === 'dodge') A.state = 'go';
     obstaclesFor(A, near);
     for (const o of near) {
@@ -482,6 +482,8 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         if (Math.abs(t - A.lat) > 0.5 && along < 1.2) vT = Math.min(vT, 0.5);
       }
     }
+    // (a dodge wins over sidestepping round furniture and people)
+    if (A.dodgeT > 0) latT = A.dodgeLat;
     // hard stop short of the player / others in front (never walk into them)
     for (const o of near) {
       if (!o.player && !o.agent) continue;
