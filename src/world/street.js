@@ -1042,16 +1042,21 @@ function signalPoleGeo(x0, armTo) {
 function signalHeadGeo() {
   // three-lamp head facing +z, as on Collins Av: a yellow housing on a black backplate, a
   // tunnel visor over each lamp, dark lenses (the lit one is a separate glowing disc)
-  const Y = 0xe3ac14, K = 0x0b0b0a;
+  // (Miami-Dade: yellow visors lined black, and a thin yellow retroreflective border round
+  // the backplate so the head reads against the sky and the palms)
+  const Y = 0xe3ac14, K = 0x0b0b0a, B = 0xf0c21c;
   const parts = [box(0.34, 1.02, 0.22, 0, -0.51, 0, Y), box(0.6, 1.26, 0.025, 0, -0.63, -0.125, K)];
-  const visor = new THREE.Shape();
-  visor.absarc(0, 0, 0.128, 0, Math.PI, false);
-  visor.absarc(0, 0, 0.114, Math.PI, 0, true);
+  for (const [w, h, x, y] of [[0.6, 0.035, 0, 0.6125], [0.6, 0.035, 0, -0.6125], [0.035, 1.26, 0.2825, 0], [0.035, 1.26, -0.2825, 0]]) {
+    parts.push(box(w, h, 0.006, x, y - h / 2, -0.109, B));
+  }
+  const arc = (r0, r1) => { const s = new THREE.Shape(); s.absarc(0, 0, r1, -0.15, Math.PI + 0.15, false); s.absarc(0, 0, r0, Math.PI + 0.15, -0.15, true); return s; };
+  const visorOut = arc(0.12, 0.13), visorIn = arc(0.112, 0.12);
   for (let i = 0; i < 3; i++) {
     const y = 0.35 - i * 0.35;
     parts.push(colored(new THREE.CylinderGeometry(0.105, 0.105, 0.015, 16).rotateX(Math.PI / 2).translate(0, y, 0.115), [0x2a0907, 0x2c1e05, 0x05200f][i]));
     parts.push(colored(new THREE.CylinderGeometry(0.13, 0.13, 0.012, 16).rotateX(Math.PI / 2).translate(0, y, 0.112), K));
-    parts.push(colored(new THREE.ExtrudeGeometry(visor, { depth: 0.2, bevelEnabled: false, curveSegments: 8 }).translate(0, y, 0.11), K));
+    parts.push(colored(new THREE.ExtrudeGeometry(visorOut, { depth: 0.22, bevelEnabled: false, curveSegments: 10 }).translate(0, y, 0.11), Y));
+    parts.push(colored(new THREE.ExtrudeGeometry(visorIn, { depth: 0.215, bevelEnabled: false, curveSegments: 10 }).translate(0, y, 0.11), K));
   }
   parts.push(box(0.06, 0.2, 0.06, 0, 0.5, 0, 0x3a3f3c));
   return mergeGeometries(parts);

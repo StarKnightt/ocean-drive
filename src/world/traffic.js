@@ -19,8 +19,10 @@ const CULL = 250;             // m: cars further away are hidden
 const CIRCLES = [-1.8, -0.9, 0, 0.9, 1.8];
 // lamp emissive [hex, intensity]: tail lamps faintly lit while driving, brake lamps bright
 // saturated red with a small halo, the high-mounted stop lamp dark until braking
-const TAIL = { run: [0x5a0503, 1], brake: [0xff0500, 2.6] };
-const STOP3 = { run: [0x140102, 1], brake: [0xff0500, 2.6] };
+// (ACES bleeds a hot pure red into orange: the brake stays under ~1.6 with a crimson bias,
+// still ~15x the tail)
+const TAIL = { run: [0x5a0304, 1], brake: [0xff0010, 1.55] };
+const STOP3 = { run: [0x140102, 1], brake: [0xff0010, 1.55] };
 
 export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
   const colliders = [];   // live circles, filled per slot below

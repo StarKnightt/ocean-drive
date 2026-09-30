@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUT = path.resolve('shots/_traffic-probe');
+const OUT = path.resolve(process.env.OUT || 'shots/_traffic-probe');
 fs.mkdirSync(OUT, { recursive: true });
 const only = process.argv[2] || '';
 const W = 1024, H = 576;
@@ -57,6 +57,11 @@ for (const model of ['sedan', 'suv', 'hatch', 'crossover', 'wagon', 'pickup', 'c
   }, model);
   await page.waitForTimeout(300);
   await aim(-24.6, 21, -19.75, 30, -6); await shot(`t-${model}-rear34-brake`);
+  if (model === 'sedan') {
+    await page.evaluate(() => { const c = window.__traffic.cars.find((q) => !q.classic); c.braking = false; });
+    await shot('t-sedan-rear34-tail');
+    await page.evaluate(() => { const c = window.__traffic.cars.find((q) => !q.classic); c.braking = true; });
+  }
   await aim(-24.6, 38, -19.75, 30, -6); await shot(`t-${model}-front34`);
 }
 // the classic in traffic

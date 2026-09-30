@@ -954,7 +954,7 @@ function haloTexture() {
 }
 let HALO = null;
 function lampHalos(level, parent, tailMat, stopMat) {
-  HALO ??= new THREE.SpriteMaterial({ map: haloTexture(), color: 0xff1406, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.85 });
+  HALO ??= new THREE.SpriteMaterial({ map: haloTexture(), color: 0xe0000c, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.85 });
   parent.updateMatrixWorld(true);
   const inv = parent.matrixWorld.clone().invert(), m = new THREE.Matrix4(), v = new THREE.Vector3();
   const pts = { L: [], R: [], S: [] };
