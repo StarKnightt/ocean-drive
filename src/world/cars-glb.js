@@ -119,13 +119,16 @@ function createProbe(renderer, scene) {
 // ---------------------------------------------------------------------------
 // The hero's rear-view mirror while someone drives: the street behind rendered into a small
 // target from the driver's eye mirrored in the glass (a virtual camera behind the mirror
-// looking back through it; the near plane clips the mirror and its housing). Every frame on
-// high, every other frame on medium, none on low (the housing's chrome shows instead).
+// looking back through it; the near plane clips the mirror and its housing). Every other frame
+// on high, every third on medium, none on low (the housing's chrome shows instead).
 const MIRROR = { w: 0.176, h: 0.043, r: 0.012 };
+// objects left out of the mirror pass (too small or too costly to matter in it)
+export const mirrorHide = [];
+const _mf = new THREE.Frustum(), _mm = new THREE.Matrix4(), _mb = new THREE.Box3(), _mc = new THREE.Vector3(), _ms = new THREE.Vector3(), _msph = new THREE.Sphere();
 function rearMirror(renderer, scene, inst) {
   const anchor = inst.levels[0].getObjectByName('rear_mirror');
   if (!anchor || QUALITY.tier === 'low') return null;
-  const every = QUALITY.tier === 'high' ? 1 : 2;
+  const every = QUALITY.tier === 'high' ? 2 : 3;
   const rt = new THREE.WebGLRenderTarget(384, 96, { type: THREE.HalfFloatType });
   const { w, h, r } = MIRROR;
   const shape = new THREE.Shape();
@@ -171,7 +174,41 @@ function rearMirror(renderer, scene, inst) {
       face.visible = false;
       renderer.setRenderTarget(rt);
       renderer.clear();
+      // (the scene's world matrices are last frame's, which a 384 x 96 mirror can't show:
+      // the main render updates them a moment later anyway)
+      const auto = scene.matrixWorldAutoUpdate;
+      scene.matrixWorldAutoUpdate = false;
+      // compact top-level objects (traffic cars, people) out of the mirror's narrow view are
+      // left out of its pass: their node trees cost more to walk than the mirror shows
+      cam.updateMatrixWorld();
+      _mf.setFromProjectionMatrix(_mm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+      const hide = mirrorHide.filter((o) => o.visible);
+      for (const o of scene.children) {
+        if (!o.visible || o.isLight || o === inst.car) continue;
+        let r = o.userData.mirrorR;
+        if (r === undefined) {
+          // (once: the bounding radius about the object's origin; 0 = not compact, always drawn)
+          _mb.setFromObject(o, false);
+          const c = _mb.getCenter(_mc), rr = _mb.getSize(_ms).length() / 2 + c.distanceTo(o.position) + 0.5;
+          r = o.userData.mirrorR = _mb.isEmpty() || rr > 12 || o.children.length < 2 && !o.isSkinnedMesh ? 0 : rr;
+        }
+        if (r > 0 && !_mf.intersectsSphere(_msph.set(o.position, r))) hide.push(o);
+      }
+      for (const o of hide) o.visible = false;
+      // (the car's own cabin and tail seen behind the driver, and the traffic behind, at
+      // their simple levels of detail)
+      const lod0 = inst.levels[0].visible;
+      if (lod0) setLevel(inst, 1);
+      const swapped = [];
+      for (const o of scene.children) {
+        const lv = o.visible && o.userData.levels;
+        if (lv && lv[0].visible && lv[1]) { lv[0].visible = false; lv[1].visible = true; swapped.push(lv); }
+      }
       renderer.render(scene, cam);
+      for (const lv of swapped) { lv[0].visible = true; lv[1].visible = false; }
+      if (lod0) setLevel(inst, 0);
+      for (const o of hide) o.visible = true;
+      scene.matrixWorldAutoUpdate = auto;
       renderer.setRenderTarget(target);
       renderer.shadowMap.needsUpdate = shadowUpdate;
       face.visible = true;
@@ -490,11 +527,12 @@ function splitGlass(o) {
 // The driven modern car's glass: the fleet's dark tint reads nearly black from the seat, so
 // its panes get lighter copies (shared by every driven car; two extra glass programs)
 let LITE = null;
+const liteGlass = (M, env) => (LITE ??= new Map([
+  [M.tint, glassMaterial(env, { color: 0x1a2226, opacity: 0.3, edge: 0.75, key: 'tint-lite', spec: 1.6, envI: 0.8 })],
+  [M.windshield, glassMaterial(env, { color: 0x1c2428, opacity: 0.14, edge: 0.75, key: 'windshield-lite', spec: 1.2, envI: 0.7 })],
+]));
 function lighterGlass(root, M, env) {
-  LITE ??= new Map([
-    [M.tint, glassMaterial(env, { color: 0x1a2226, opacity: 0.3, edge: 0.75, key: 'tint-lite', spec: 1.6, envI: 0.8 })],
-    [M.windshield, glassMaterial(env, { color: 0x1c2428, opacity: 0.14, edge: 0.75, key: 'windshield-lite', spec: 1.2, envI: 0.7 })],
-  ]);
+  liteGlass(M, env);
   const swap = new Map();
   for (const [from, to] of LITE) {
     const a = glassSides(from), b = glassSides(to);
@@ -1047,6 +1085,13 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
     const body = m.sway.children[0];
     m.halos = lampHalos(m.levels[0], body, m.tail, null);
   }
+  // the driven car's lighter glass, compiled with everything else at load (a 1 cm pane of
+  // each under the road, hidden after the first frames), so getting in doesn't stall
+  const warm = new THREE.Group();
+  warm.position.set(CAR.x, -3, CAR.z);
+  for (const m of liteGlass(M, env).values()) for (const side of glassSides(m)) warm.add(new THREE.Mesh(new THREE.PlaneGeometry(0.01, 0.01), side));
+  scene.add(warm);
+  let warmFrames = 0;
   return {
     kinds, lens, seatZ, classics: pool, paints: PAINTS,
     lod1At: LOD1_AT.parked,
@@ -1075,6 +1120,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
       root.add(blob, sun);
       const halos = lampHalos(levels[0], root, tail, brake3);
       root.visible = false;
+      root.userData.levels = levels;
       scene.add(root);
       probe.hide.push(root);
       const rig = {
@@ -1186,6 +1232,8 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
       };
       return view;
     },
+    // (called once a frame by buildCarsGlb's update)
+    tick() { if (warm.visible && ++warmFrames > 240) warm.visible = false; },
     // where a car's shadow falls on the road (unit ground direction, away from the sun) and
     // how far it reaches for a car-height caster
     sun(out) {
@@ -1236,10 +1284,11 @@ export async function buildCarsGlb(scene, renderer) {
   probe.hide.push(hero.car, ...pool.map((m) => m.car));
   if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
+  const kit = trafficKit(scene, parkedGltf, M, env, pool, probe);
   let heroDriven = false, heroChase = false;
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
-    traffic: trafficKit(scene, parkedGltf, M, env, pool, probe),
+    traffic: kit,
     // the drivable hero (vehicles/index.js): start pose in sim terms, pose from the sim, eye
     drive: {
       pose: { x: CAR.x, z: CAR.z, yaw: Math.PI },
@@ -1273,6 +1322,7 @@ export async function buildCarsGlb(scene, renderer) {
     },
     update(dt, cars, camera) {
       if (!camera) return;
+      kit.tick();
       probe.follow(camera.position);
       const inside = heroDriven && !heroChase;
       M.screen.userData.uInside.value = inside ? 1 : 0;

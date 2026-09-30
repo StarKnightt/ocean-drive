@@ -5,7 +5,7 @@ import { buildPlaceholders } from './world/placeholders.js';
 import { buildHotels } from './world/hotels.js';
 import { buildPalms, PALM_TREES } from './world/palms.js';
 import { buildStreet, STREET_COLLIDERS } from './world/street.js';
-import { buildCarsGlb, preloadCars } from './world/cars-glb.js'; // Blender-modelled cars (procedural fallback)
+import { buildCarsGlb, preloadCars, mirrorHide } from './world/cars-glb.js'; // Blender-modelled cars (procedural fallback)
 import { createOcean } from './world/ocean.js';
 import { createSurf } from './world/surf.js';
 import { buildBeach } from './world/beach.js';
@@ -166,6 +166,7 @@ const controls = new Walker(camera, renderer.domElement, walkWorld);
 controls.set(-26, CURB_HEIGHT + EYE_HEIGHT, 40, 342, 4);
 window.__walker = controls;
 window.__cars = cars;
+window.__mirrorHide = mirrorHide;
 
 // --- SOUND hook: audio starts on the click-to-start gesture; never in ?shot mode ---
 const audio = createAudio({ voices: QUALITY.audioVoices });
@@ -467,8 +468,14 @@ window.__frameCpu = (reset = false) => {
   if (reset) cpuN = 0;
   return { n, p50: p(0.5), p95: p(0.95), max: p(1) };
 };
+// ?prof: per-section main-thread ms (exponential averages), window.__prof()
+const PROF = params.has('prof') ? {} : null;
+let profT = 0;
+const prof = (k) => { if (!PROF) return; const n = performance.now(); PROF[k] = (PROF[k] ?? 0) * 0.97 + (n - profT) * 0.03; profT = n; };
+window.__prof = () => PROF && Object.fromEntries(Object.entries(PROF).map(([k, v]) => [k, +v.toFixed(2)]));
 function frame(t) {
   const cpu0 = performance.now();
+  profT = cpu0;
   timer.update(t);
   const rawDt = timer.getDelta();
   const dt = Math.min(rawDt, 0.1);
@@ -478,25 +485,35 @@ function frame(t) {
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
 
+  prof('misc');
   if (!SHOT) {
     if (!vehicles.riding) controls.update(dt);
+    prof('walker');
     vehicles.update(dt);
+    prof('vehicles');
   }
   if (!SHOT) audio.update(dt, camera); // SOUND: listener pose + auto footsteps
+  prof('audio');
   sky.update(camera);
   if (updateLod(camera)) requestShadow(); // DISTRICT
+  prof('sky+lod');
   surf.update(elapsed);
   ocean.update(elapsed, camera);
   beach.update(elapsed, camera);
   palms.update(elapsed);
+  prof('sea+palms');
   birds.update(dt, camera); // BIRDS
+  prof('birds');
   people.update(dt, camera); // PEOPLE
+  prof('people');
   cars.update(dt, null, camera);
+  prof('cars');
   if (!SHOT) {
     traffic.update(dt, { camera, peds: trafficPeds(), obstacles: trafficObstacles() }); // TRAFFIC
     audio.traffic(traffic.audioList());
     for (const h of traffic.honks()) audio.horn(h);
   }
+  prof('traffic');
 
   renderer.info.reset();
   const now = t / 1000;
@@ -507,9 +524,11 @@ function frame(t) {
   }
   if (renderer.shadowMap.needsUpdate) shadowRenders++;
   gpuTimer?.begin(frames);
+  prof('pre-render');
   if (params.has('nopost')) renderer.render(scene, camera);
   else post.render(elapsed);
   gpuTimer?.end();
+  prof('render');
   frames++;
 
   if (!hud.classList.contains('hidden') && frames % 15 === 0) {
