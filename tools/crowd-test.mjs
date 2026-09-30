@@ -14,7 +14,7 @@ const page = await browser.newPage({ viewport: { width: W, height: H }, deviceSc
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push(String(e)));
-await page.goto('http://localhost:5173/?autostart');
+await page.goto((process.env.URL ?? 'http://localhost:5173/') + '?autostart');
 await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 180000 });
 const results = [];
 const check = (name, ok, info) => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${JSON.stringify(info)}`); };
@@ -131,6 +131,70 @@ async function block(name, ahead, secs, { moveAwayAt = null, shotAt = null, file
   const r = await page.evaluate(() => window.__people.agents.filter((a) => a.kind === 'walk' && a.visible && a.speed > 0.9).slice(0, 6).map((a) => ({ n: a.name, v: +a.speed.toFixed(2), foot: +(a.clipSpeed * a.loco.timeScale).toFixed(2), clip: a.loco.getClip().name })));
   check('walk playback matches ground speed within 10 %', r.length > 0 && r.every((x) => Math.abs(x.foot - x.v) / x.v < 0.1), r);
 }
+// 7. open world: the player's car coming at 30 km/h along the promenade and the park-side
+// sidewalk: the people step off its line early (never closer than 0.8 m to the body), and
+// nothing ever touches them
+for (const [label, pick, file] of [['promenade', (a) => a.kind === 'walk' && a.path?.half > 1.5 && a.path.half < 2.5, '7-car-promenade.png'], ['park sidewalk', (a) => a.kind === 'walk' && a.path?.half === 0.8, '8-car-sidewalk.png']]) {
+  const name = await page.evaluate((src) => window.__people.agents.find(new Function('return ' + src)())?.name ?? null, pick.toString());
+  if (!name) { console.log(`(skip ${label}: no such walker at this tier)`); continue; }
+  const r = await page.evaluate(async ({ name, file }) => {
+    const A = window.__people.people[name], V = window.__vehicles, w = window.__walker;
+    for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; }
+    // a car 32 m ahead of the walker on its path, coming at it
+    const q = {};
+    A.path.at(A.s + A.dir * 32, q);
+    const yaw = Math.atan2(q.dx * A.dir, q.dz * A.dir);   // facing back along the path
+    if (!V.riding) {
+      const e = V.list.find((x) => x.origin === 'hero');
+      V.place(q.x, q.z, yaw, 'car');
+      w.teleport(e.v.x + 1.6 * Math.cos(yaw), e.v.z - 1.6 * Math.sin(yaw), 0, 0);
+      V.mount('car');
+      for (let i = 0; i < 90; i++) V.update(1 / 60);
+    }
+    V.place(q.x, q.z, yaw);
+    const v = V.current;
+    v.engineOn = true;
+    const circ = (x, z) => {
+      // distance from (x, z) to the car's body rectangle (half length / width)
+      const s = Math.sin(v.yaw), c = Math.cos(v.yaw), dx = x - v.x, dz = z - v.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      const hx = (v.spec.width ?? 2) / 2, hz = (v.spec.length ?? 5) / 2;
+      return Math.hypot(Math.max(0, Math.abs(lx) - hx), Math.max(0, Math.abs(lz) - hz));
+    };
+    let minD = Infinity, contact = 0, t0 = performance.now(), passed = false, maxV = 0, shotDone = false;
+    while (performance.now() - t0 < 9000) {
+      await new Promise((res) => requestAnimationFrame(res));
+      // hold ~30 km/h, steer along the path toward the walker's lane line
+      const ahead = {};
+      A.path.at(A.s - A.dir * 0, ahead);
+      const tx = ahead.x, tz = ahead.z;
+      const want = Math.atan2(-(tx - v.x), -(tz - v.z));
+      const err = Math.atan2(Math.sin(want - v.yaw), Math.cos(want - v.yaw));
+      V.steerHold = passed ? 0 : Math.max(-1, Math.min(1, -err * 2.5));
+      if (v.lon < 8.3) w.keys.add('KeyW'); else w.keys.delete('KeyW');
+      maxV = Math.max(maxV, v.lon);
+      // (clearance counts while the car is moving: a stopped car is walked past like a parked one)
+      const d = circ(A.x, A.z) - 0.28;
+      if (Math.abs(v.lon) > 1.5) minD = Math.min(minD, d);
+      if (d < 0) contact++;
+      // anyone at all inside the body
+      for (const B of window.__people.agents) if (!B.hidden && circ(B.x, B.z) < 0.2) contact++;
+      if (!shotDone && d < 4) { shotDone = true; window.__shotNow = file; }
+      // passed: the walker is behind the car
+      const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
+      if ((A.x - v.x) * -s + (A.z - v.z) * -c < -4) passed = true;
+      if (passed && performance.now() - t0 > 3000) break;
+    }
+    w.keys.delete('KeyW');
+    V.steerHold = null;
+    V.simulate(['KeyS'], 2);
+    const blockedBy = !passed ? window.__people.agents.filter((B) => !B.hidden && circ(B.x, B.z) < 1.2).map((B) => B.name + ':' + B.kind) : [];
+    return { minD: +minD.toFixed(2), contact, passed, maxKmh: +(maxV * 3.6).toFixed(1), stoppedAt: passed ? null : [+v.x.toFixed(1), +v.z.toFixed(1)], blockedBy };
+  }, { name, file });
+  await page.screenshot({ path: path.join(outDir, file) });
+  check(`${label}: people step off a car's line at 30 km/h (>= 0.8 m from the body, no contact)`, r.minD >= 0.8 && r.contact === 0 && r.maxKmh > 25, { name, ...r });
+}
+await page.evaluate(() => { const V = window.__vehicles; if (V.riding) { V.simulate(['KeyS'], 2); V.dismount(); } });
 console.log(JSON.stringify(await page.evaluate(() => window.__crowdStats())));
 if (errors.length) console.log('ERRORS\n' + errors.slice(0, 10).join('\n'));
 console.log(results.filter((r) => r.ok).length + '/' + results.length + ' passed');

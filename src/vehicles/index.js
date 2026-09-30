@@ -707,9 +707,11 @@ export function createVehicles(scene, {
     }
 
     audio?.vehicle?.({
-      kind: e.kind, engine: v.spec.engine ?? (e.kind === 'car' ? 'v8classic' : undefined), idle: v.spec.idle, redline: v.spec.redline,
+      // (the hero's voice keeps its own rev mapping: no idle / redline for it)
+      kind: e.kind, engine: v.spec.engine ?? (e.kind === 'car' ? 'v8classic' : undefined),
+      idle: e.origin === 'hero' ? undefined : v.spec.idle, redline: e.origin === 'hero' ? undefined : v.spec.redline,
       lon: v.lon, throttle: input.throttle, rpm: v.rpm, load: v.load, surface: v.surf.kind, detail: v.surf.detail, soft: v.surf.soft,
-      depth: Math.max(...v.wheelDepth), coasting: v.coasting, pedal: v.pedal, crank: v.crank, bump: v.bump, land: v.land,
+      depth: Math.max(...v.wheelDepth), coasting: v.coasting, pedal: v.pedal, crank: v.crank, bump: v.curb > 0 ? 0 : v.bump, land: v.curb > 0 ? 0 : v.land,
       gear: v.gear, braking: v.braking, engineOn: v.engineOn, stalled: !!v.stalled, turn: v.turn ?? 0, handbrake: input.handbrake,
       hit: v.hit && v.hit.speed > 0.3 ? { speed: v.hit.speed, tangent: v.hit.tangent, material: v.hit.material } : null,
       scrape, curb: v.curb ?? 0, skid: v.skid ?? 0, horn: !!input.horn, event: pendingEvent ?? undefined,

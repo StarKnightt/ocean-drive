@@ -137,7 +137,16 @@ await shot('5-wading');
 const deep = await walkTo(120, 15, { maxT: 20 });
 report.checks.wadeLimit = { x: deep.x, depth: +(-1 - deep.ground).toFixed(3) };
 
-// 5. traffic: cars on the drive, moving, with voices
+// 5. open world: down 10 ST (z -79) past the hotel line to the back row (x -85)
+await page.evaluate(() => window.__walker.teleport(-26, -79 + 3.5, 270, 0));
+const west = await walkTo(-85, -79 + 3.5, { fast: true, maxT: 60 });
+report.checks.crossStreetWest = { x: west.x, reached: west.x < -80 };
+await look(270, 2);
+await shot('6-down-10-st');
+const edge = await walkTo(-100, -79 + 3.5, { fast: true, maxT: 12 });
+report.checks.crossStreetEnd = { x: edge.x, held: edge.x > -90.5 };
+
+// 6. traffic: cars on the drive, moving, with voices
 const car = await page.evaluate(async () => {
   const T = window.__traffic;
   const a = T.state();
@@ -153,6 +162,10 @@ const surf = (l) => [...new Set((l || []).map((s) => s.surface))].join(',');
 log('surfaces: sidewalk', surf(report.checks.sidewalk), '| road', surf(report.checks.road), '| park', surf(report.checks.park),
   '| sand', surf(report.checks.sand), '| stairs', surf(report.checks.stairs), '| water', surf(report.checks.water));
 log('deck', report.checks.deck, 'wallBlocks', report.checks.wallBlocks, 'railBlocks', report.checks.railBlocks, 'wadeLimit', report.checks.wadeLimit);
+log('10 ST west', JSON.stringify(report.checks.crossStreetWest), 'world end', JSON.stringify(report.checks.crossStreetEnd));
+const ok = report.checks.wallBlocks && report.checks.railBlocks && report.checks.crossStreetWest.reached && report.checks.crossStreetEnd.held && report.legs.every((l) => l.reached || l.to[0] <= -85 || l.to[0] >= 100 || l.to[1] > report.legs[0].to[1] + 100 || l.to[0] === 10) && !errors.length;
+log(ok ? 'WALK OK' : 'WALK FAIL');
+process.exitCode = ok ? 0 : 1;
 log('swash', JSON.stringify(report.checks.swashAtFeet), 'onSand', JSON.stringify(onSand));
 log('car', JSON.stringify(car));
 log('errors', errors.length ? errors.slice(0, 5) : 'none');

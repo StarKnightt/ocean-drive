@@ -219,6 +219,21 @@ for (const body of ['sedan', 'hero', 'pickup', 'atv']) {
   check('a car drives down 8 ST to the back row and stops at x -90', c.x < -80 && c.x > -90, { x: +c.x.toFixed(2) });
 }
 
+// --- handbrake drift (flat): the tail steps out on the handbrake; without it the same
+// steering at speed turns the car far less, with little slip
+{
+  const turn = (hb) => {
+    const v = make('sedan', { x: -18, z: 0, yaw: N }, flat);
+    v.vz = -60 / 3.6; v.lon = 60 / 3.6;
+    let slip = 0;
+    drive(v, { throttle: 0, steer: 1, handbrake: hb }, 1.2, flat, (q) => { slip = Math.max(slip, Math.abs(q.slip)); return false; });
+    const heading = Math.atan2(-v.vx, -v.vz);
+    return { yawDeg: +(-v.yaw * 57.3).toFixed(1), slip: +slip.toFixed(2), angle: +(Math.abs(Math.atan2(Math.sin(v.yaw - heading), Math.cos(v.yaw - heading))) * 57.3).toFixed(1), kmh: kmh(v), skid: +v.skid.toFixed(2) };
+  };
+  const a = turn(true), b = turn(false);
+  check('sedan handbrake turn at 60 km/h: the tail steps out (drift angle, slip, skid) and it turns much further', a.yawDeg > b.yawDeg + 25 && a.angle > 12 && a.slip > 2.5 && b.slip < 2 && a.skid > 0.3, { handbrake: a, plain: b });
+}
+
 const failed = results.filter((q) => !q.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);

@@ -1132,8 +1132,9 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
           rig.wheelAngle = (v.steer / S.steerMax) * 0.75 * 2 * Math.PI;
           if (steer) steer.quaternion.copy(steer.userData.q0).multiply(_qs.setFromAxisAngle(_ax, rig.wheelAngle));
           if (needle) {
+            // (modelled pointing at 0, the start of the sweep)
             const mph = Math.min(SPEEDO_SWEEP.max, Math.abs(v.lon) * 2.237);
-            const deg = SPEEDO_SWEEP.from + (SPEEDO_SWEEP.to - SPEEDO_SWEEP.from) * mph / SPEEDO_SWEEP.max;
+            const deg = (SPEEDO_SWEEP.to - SPEEDO_SWEEP.from) * mph / SPEEDO_SWEEP.max;
             needle.quaternion.copy(needle.userData.q0).multiply(_qs.setFromAxisAngle(_ax, -THREE.MathUtils.degToRad(deg)));
           }
           // tail lamps lit with the engine running, brake lamps on the brake

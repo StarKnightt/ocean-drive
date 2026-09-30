@@ -5,10 +5,10 @@
 # basic seats + dash inside. Paint is white: the runtime tints each instance.
 import bpy, bmesh, math
 from mathutils import Vector, Matrix
-from carlib import (V, C, Part, smoothstep, lerp, clamp, sweep, lathe, box, orient,
+from carlib import (V, C, Part, smoothstep, lerp, clamp, sweep, lathe, box, disc, orient, material, image_material,
                     cutter_box, cutter_cyl, fence, boolean, bevel, resmooth, Caster, empty, tris)
 from body import Body, stations, plan_outline
-from hero import cushion, rot_about_s, headlamp
+from hero import cushion, rot_about_s, headlamp, frame_matrix
 
 KINDS = ['sedan', 'hatch', 'suv', 'pickup', 'coupe', 'wagon', 'crossover']
 
@@ -159,8 +159,9 @@ def greenhouse(kind, B, lod, glass_part, gl_mat):
             s = (xt - rr) * (1 - f)
             P.append((s, y + 0.018 * kk * (1 - (s / max(xt, 1e-3)) ** 2)))
             bd.append('top')
-        full = [(-s, h) for (s, h) in reversed(P[1:])] + P
-        fb = list(reversed(bd[1:])) + bd
+        # left sill -> over the roof -> right sill (P ends on the centreline)
+        full = P + [(-s, h) for (s, h) in reversed(P[:-1])]
+        fb = bd + list(reversed(bd[:-1]))
         dfm = S['deform']
         rings.append([V(*dfm(s, h, u)) for (s, h) in full])
         bands.append(fb)
@@ -219,6 +220,7 @@ def greenhouse(kind, B, lod, glass_part, gl_mat):
             nf.smooth = True
         bmesh.ops.delete(gh.bm, geom=gfaces, context='FACES_ONLY')
         gh.mats[gi] = 'trim'
+    gh.cells = out
     return gh, roof_y, rings
 
 
@@ -355,10 +357,208 @@ def interior(part, kind, lod):
         rings.append([V(s, h, u) for (u, h) in prof])
     f = part.grid(rings, mat='interior', cap0=True, cap1=True)
     orient(part, f, lambda c: V(C(c)[0] * 0.9, belt - 0.12, zA - 0.1))
-    sw_c = V(0.36 if kind != 'coupe' else 0.38, belt + 0.02, zA - 0.42)
-    ring = [sw_c + V(0.18 * math.cos(2 * math.pi * i / 20), 0.18 * math.sin(2 * math.pi * i / 20) * 0.85, 0.18 * math.sin(2 * math.pi * i / 20) * 0.5) for i in range(20)]
-    sweep(part, ring, [(0.014 * math.cos(a), 0.014 * math.sin(a)) for a in [2 * math.pi * i / 6 for i in range(6)]],
-          mat='interior' if kind != 'coupe' else 'ivory', closed_path=True, up=(0, -0.5, 0.85))
+
+
+# ---------------------------------------------------------------------------
+# first-person cockpit (LOD0): wheel on its own pivot, eye anchor, liner, binnacle
+RIM_R = 0.18
+
+
+def wheel_frame(kind):
+    """rim centre and the wheel frame in blender space: X = car left, Y = up in the rim plane,
+    Z = down the column (away from the driver, into the dash); the hero's steering_wheel frame"""
+    k = K[kind]
+    c = V(0.36 if kind != 'coupe' else 0.38, k['belt'] + 0.02, k['zA'] - 0.42)
+    X = V(1, 0, 0)
+    Y = V(0, 0.85, 0.5).normalized()
+    return c, X, Y, X.cross(Y)
+
+
+def steering(kind, root):
+    """three-spoke wheel (9, 3 and 6 o'clock) on a pivot at the rim centre; the grips move
+    under it (same world position) so they turn with the rim"""
+    c, X, Y, Z = wheel_frame(kind)
+    mat = 'interior' if kind != 'coupe' else 'ivory'
+    p = Part(kind + '_steer_mesh')
+    rim = [Vector((RIM_R * math.cos(2 * math.pi * i / 32), RIM_R * math.sin(2 * math.pi * i / 32), 0)) for i in range(32)]
+    sweep(p, rim, [(0.014 * math.cos(a), 0.015 * math.sin(a)) for a in [2 * math.pi * i / 7 for i in range(7)]],
+          mat=mat, closed_path=True, up=(0, 0, 1))
+    Zl = Vector((0, 0, 1))
+    for ang in (0, 180, 270):
+        a = math.radians(ang)
+        d = Vector((math.cos(a), math.sin(a), 0))
+        sweep(p, [d * 0.045 + Zl * 0.03, d * 0.11 + Zl * 0.012, d * (RIM_R - 0.006)],
+              [(0.02 * math.cos(t), 0.006 * math.sin(t)) for t in [2 * math.pi * i / 8 for i in range(8)]],
+              mat=mat, up=(0, 0, 1), scales=[(1.3, 1.3), (1.0, 1.0), (0.8, 1.1)])
+    hub = Zl * 0.05
+    lathe(p, [(0.032, 0.0), (0.052, 0.012), (0.058, 0.028), (0.052, 0.042), (0.032, 0.05), (0.0, 0.052)], 16, hub, -Zl, mat=mat)
+    lathe(p, [(0.03, 0.0), (0.028, 0.004), (0.0, 0.006)], 16, Zl * -0.002, -Zl, mat='trim')
+    ob = p.object(sharp=50)
+    M = frame_matrix(X, Y, Z, c)
+    piv = empty(f'{kind}_steer', (0, 0, 0), root, size=0.1)
+    piv.matrix_world = M
+    ob.parent = piv
+    return piv, M
+
+
+def liner(part, rings, cells, belt, off=0.03):
+    """inward-facing shell ~3 cm inside the opaque greenhouse faces (roof, pillars, rails),
+    with return strips out to the skin round every window so no sky shows past the edges.
+    Stations are thinned where the window / pillar layout doesn't change (at most 3 apart)"""
+    keep = [0]
+    for i in range(1, len(rings) - 1):
+        if cells[i] != cells[i - 1] or i - keep[-1] >= 3:
+            keep.append(i)
+    keep.append(len(rings) - 1)
+    rings = [rings[i] for i in keep]
+    cells = [cells[i] for i in keep[:-1]]
+    nst, n = len(rings), len(rings[0])
+    Q, N = [], []
+    for r in rings:
+        qr, nr = [], []
+        for j, p in enumerate(r):
+            a, b = r[max(j - 1, 0)], r[min(j + 1, n - 1)]
+            # (each ring runs left sill -> over the roof -> right sill: inward is the tangent
+            # turned a quarter turn from +x toward +z)
+            t = Vector((b.x - a.x, 0, b.z - a.z))
+            nn = Vector((-t.z, 0, t.x)).normalized() if t.length > 1e-6 else Vector()
+            qr.append(p + nn * off)
+            nr.append(nn)
+        Q.append(qr)
+        N.append(nr)
+    bm, mi = part.bm, part.mi('interior')
+    cache = {}
+
+    def vert(kind, i, j):
+        key = (kind, i, j)
+        if key not in cache:
+            cache[key] = bm.verts.new((Q if kind == 'q' else rings)[i][j])
+        return cache[key]
+    opaque = lambda i, j: cells[i][j] != 'glass'
+    glass = lambda i, j: 0 <= i < nst - 1 and 0 <= j < n - 1 and cells[i][j] == 'glass'
+
+    def add(vs, towards):
+        try:
+            f = bm.faces.new(vs)
+        except ValueError:
+            return
+        f.material_index = mi
+        f.smooth = True
+        f.normal_update()
+        if f.normal.dot(towards) < 0:
+            f.normal_flip()
+    for i in range(nst - 1):
+        for j in range(n - 1):
+            if not opaque(i, j):
+                continue
+            add([vert('q', i, j), vert('q', i + 1, j), vert('q', i + 1, j + 1), vert('q', i, j + 1)],
+                N[i][j] + N[i + 1][j] + N[i + 1][j + 1] + N[i][j + 1])
+            for (gi, gj, e) in ((i, j - 1, ((i, j), (i + 1, j))), (i, j + 1, ((i, j + 1), (i + 1, j + 1))),
+                                (i - 1, j, ((i, j), (i, j + 1))), (i + 1, j, ((i + 1, j), (i + 1, j + 1)))):
+                if not glass(gi, gj):
+                    continue
+                (a0, b0), (a1, b1) = e
+                gc = (rings[gi][gj] + rings[gi + 1][gj] + rings[gi + 1][gj + 1] + rings[gi][gj + 1]) / 4
+                sc = (rings[a0][b0] + rings[a1][b1] + Q[a0][b0] + Q[a1][b1]) / 4
+                # (both faces: seen from either side depending on where the pillar sits)
+                ring = [vert('q', a0, b0), vert('q', a1, b1), vert('p', a1, b1), vert('p', a0, b0)]
+                add(ring, gc - sc)
+                back = (sc - gc).normalized() * 0.001
+                add([bm.verts.new(v.co + back) for v in reversed(ring)], sc - gc)
+
+
+def gauge_material():
+    """the dial face: a token texture keeps its 0..1 UVs through the optimiser's prune (the
+    runtime prints its own dial on the 'gauge_speedo' material by name)"""
+    m = material('gauge_speedo')
+    if not any(nd.type == 'TEX_IMAGE' for nd in m.node_tree.nodes):
+        img = bpy.data.images.get('gauge_speedo_px') or bpy.data.images.new('gauge_speedo_px', 4, 4)
+        img.pixels = [0.9, 0.87, 0.78, 1.0] * 16
+        img.pack()
+        image_material('gauge_speedo', img)
+
+
+def cockpit(ext, kind, S, B, roof_y, eye, root):
+    """column, binnacle (dial + needle pivot), pedals, rear-view mirror and door cards"""
+    k = K[kind]
+    zA, zR, belt = k['zA'], k['zR'], k['belt']
+    fl = 0.42 if kind != 'pickup' else 0.55
+    c, X, Y, Z = wheel_frame(kind)
+    sw = C(c)[0]
+    # steering column shroud from the hub into the dash
+    lathe(ext, [(0.032, 0.0), (0.036, 0.03), (0.04, 0.22)], 12, c + Z * 0.055, Z, mat='trim')
+    # binnacle: the dial on the eye's line through the top of the wheel, a hooded box round it
+    r = 0.042
+    uf = zA - 0.235
+    pw = c + Y * 0.112
+    ue, upw = C(eye)[2], C(pw)[2]
+    ud = uf - 0.018
+    dc = eye + (pw - eye) * ((ud - ue) / (upw - ue))
+    dh = C(dc)[1]
+    nrm = (eye - dc).normalized()
+    upv = (Vector((0, 0, 1)) - nrm * nrm.z).normalized()
+    top = dh + r + 0.02
+    box(ext, V(sw, (belt - 0.03 + top) / 2, uf + 0.075), (2 * r + 0.1, top - (belt - 0.03), 0.15), mat='interior', bevel=0.012)
+    box(ext, V(sw, top + 0.008, uf - 0.01), (2 * r + 0.12, 0.016, 0.08), mat='interior', bevel=0.006)
+    gauge_material()
+    disc(ext, dc, nrm, upv, r, 'gauge_speedo', segs=32)
+    lathe(ext, [(r - 0.001, 0.0), (r + 0.006, 0.003), (r + 0.005, 0.008), (r - 0.001, 0.006)], 24, dc, nrm, mat='trim')
+    # needle on its own pivot at the dial centre (local Z out of the dial, Y = the dial's up),
+    # modelled pointing at 0 (-135 deg of the sweep, lower left)
+    xv = upv.cross(nrm).normalized()
+    p = Part(kind + '_needle_mesh')
+    a = math.radians(90 + 135)
+    d = Vector((math.cos(a), math.sin(a), 0))
+    z0 = Vector((0, 0, 0.002))
+    sweep(p, [z0 - d * 0.008, z0 + d * 0.01, z0 + d * r * 0.85], [(0.0022, 0.0005), (0, 0.001), (-0.0022, 0.0005), (0, 0)],
+          mat='needle', up=(0, 0, 1), scales=[1.5, 1.0, 0.3])
+    lathe(p, [(0.0, 0.0), (0.006, 0.0), (0.005, 0.003), (0.0, 0.004)], 10, z0, Vector((0, 0, 1)), mat='dark')
+    ob = p.object(sharp=50)
+    piv = empty(f'{kind}_needle', (0, 0, 0), root, size=0.03)
+    piv.matrix_world = frame_matrix(xv, upv, nrm, dc + nrm * 0.003)
+    ob.parent = piv
+    # footwell: a firewall under the dash, wheelhouse humps where the front tyres reach the cabin
+    box(ext, V(0, (fl + belt - 0.28) / 2, zA - 0.02), (1.5, belt - 0.28 - fl, 0.02), mat='interior')
+    u0 = k['uF'] - k['R'] - 0.04
+    if u0 < zA - 0.02:
+        s_in = k['track'] - k['tw'] - 0.06
+        s_out = (S['W0'] - 0.17) * B.plan(u0)
+        top = k['R'] + k['R'] + 0.03
+        for sg in (-1, 1):
+            box(ext, V(sg * (s_in + s_out) / 2, (fl + top) / 2, (u0 + zA - 0.02) / 2), (s_out - s_in, top - fl, zA - 0.02 - u0),
+                mat='interior', bevel=0.02)
+    # pedals: brake pad on an arm, the throttle to its right
+    rb = Matrix.Rotation(0.4, 3, 'X')
+    box(ext, V(sw + 0.02, fl + 0.15, zA - 0.16), (0.075, 0.085, 0.018), mat='trim', rot=rb, bevel=0.004)
+    box(ext, V(sw + 0.02, fl + 0.27, zA - 0.12), (0.016, 0.2, 0.016), mat='trim', rot=rb)
+    box(ext, V(sw - 0.13, fl + 0.12, zA - 0.13), (0.055, 0.16, 0.012), mat='trim', rot=Matrix.Rotation(0.6, 3, 'X'), bevel=0.003)
+    # rear-view mirror hanging from the header behind the windscreen
+    uu = k['zRf'] - 0.06
+    hy = roof_y(uu) - 0.03
+    box(ext, V(0, hy - 0.03, uu), (0.02, 0.06, 0.02), mat='trim')
+    box(ext, V(0, hy - 0.085, uu - 0.01), (0.25, 0.07, 0.032), mat='trim', bevel=0.01)
+    box(ext, V(0, hy - 0.085, uu - 0.0265), (0.228, 0.052, 0.002), mat='chrome')
+    # door cards a little inside the tub wall, one per door, an armrest on each
+    W, tum, rs, lip = S['W0'], S['tumble'], S['rs'], S['lip']
+    s0 = W - tum - rs
+    for d0, d1 in zip(k['doors'][:-1], k['doors'][1:]):
+        u0, u1 = min(d0, zA - 0.05) - 0.02, max(d1, zR + 0.05) + 0.02
+        if u0 - u1 < 0.2:
+            continue
+        for sg in (-1, 1):
+            rows = []
+            for i in range(6):
+                u = lerp(u0, u1, i / 5)
+                hs, kp = S['hs'](u), B.plan(u)
+                prof = [(s0 - lip, hs - 0.1), (W - 0.15, lerp(hs - 0.1, fl, 0.35)), (W - 0.155, lerp(hs - 0.1, fl, 0.7)),
+                        (lerp(W - 0.155, W - 0.165, 0.6), lerp(lerp(hs - 0.1, fl, 0.7), fl + 0.02, 0.6))]
+                rows.append([V(sg * (s * kp - 0.012), h, u) for (s, h) in prof])
+            f = ext.grid(rows, mat='interior')
+            orient(ext, f, lambda q, sg=sg: Vector((sg * 5, q.y, q.z)))
+            um = (u0 + u1) / 2
+            hs, kp = S['hs'](um), B.plan(um)
+            box(ext, V(sg * ((W - 0.15) * kp - 0.045), lerp(hs - 0.1, fl, 0.3), um - 0.05), (0.06, 0.04, (u0 - u1) * 0.55),
+                mat='interior', bevel=0.012)
 
 
 # ---------------------------------------------------------------------------
@@ -680,25 +880,30 @@ def build(kind, lod, coll):
         lathe(ext, [(0.0, -0.002), (0.028, -0.002), (0.036, 0.0), (0.037, 0.06), (0.032, 0.062), (0.03, 0.01)], 14, path[0], V(0, 0, -1), mat='chrome' if vint else 'trim')
         u = -half + 1.0
         box(ext, V(-0.35, zbf(u) - 0.035, u), (0.42, 0.11, 0.34), mat='dark', bevel=0.03)
-    # headliner under the roof
+    # headliner: an inward-facing shell under the roof, pillars and rails
     if lod == 0:
-        rr = []
-        for u in [k['zRr'] + (k['zRf'] - k['zRr']) * i / 8 for i in range(9)]:
-            y = roof_y(u) - 0.035
-            rr.append([V(s, y - 0.02 * (s / 0.6) ** 2, u) for s in [0.6 - 1.2 * j / 6 for j in range(7)]])
-        f = ext.grid(rr, mat='interior')
-        orient(ext, f, lambda c: c + Vector((0, 0, 1)))
+        liner(ext, gh_rings, gh.cells, k['belt'])
     root = empty(kind + tag, (0, 0, 0), size=0.3)
     if lod == 0:
         # hooks for a seated skinned driver: hips on the driver's cushion, hand IK targets on
-        # the wheel rim at ten and two (the ring interior() sweeps)
+        # the wheel rim at ten and two (children of the wheel pivot, so they turn with it)
         fl = 0.42 if kind != 'pickup' else 0.55
         fu = k['zA'] - (0.95 if kind != 'coupe' else 0.85)
         sw_c = V(0.36 if kind != 'coupe' else 0.38, k['belt'] + 0.02, k['zA'] - 0.42)
-        empty(f'{kind}_driver_pelvis', V(C(sw_c)[0], fl + 0.3, fu - 0.36), root, size=0.1)
+        pel = V(C(sw_c)[0], fl + 0.3, fu - 0.36)
+        empty(f'{kind}_driver_pelvis', pel, root, size=0.1)
+        # first-person eye: 0.62 m over the hips, 5 cm back, kept 8 cm under the headliner
+        ue = fu - 0.36 - 0.05
+        eye = V(C(sw_c)[0], min(fl + 0.3 + 0.62, roof_y(ue) - 0.03 - 0.08), ue)
+        empty(f'{kind}_eye', eye, root, size=0.05)
+        print('EYE', kind, tuple(round(x, 3) for x in C(eye)), 'clamped' if C(eye)[1] < fl + 0.92 - 1e-6 else '')
+        piv, M = steering(kind, root)
+        Mi = M.inverted()
         for nm, a in (('grip_L', 30), ('grip_R', 150)):
             a = math.radians(a)
-            empty(f'{kind}_{nm}', sw_c + V(0.18 * math.cos(a), 0.153 * math.sin(a), 0.09 * math.sin(a)), root, size=0.02)
+            g = empty(f'{kind}_{nm}', (0, 0, 0), piv, size=0.02)
+            g.location = Mi @ (sw_c + V(0.18 * math.cos(a), 0.153 * math.sin(a), 0.09 * math.sin(a)))
+        cockpit(ext, kind, S, B, roof_y, eye, root)
     # each wheel its own mesh on a pivot at the hub (the traffic cars spin them)
     for sg, u, nm in ((1, k['uF'], 'FL'), (-1, k['uF'], 'FR'), (1, k['uR'], 'RL'), (-1, k['uR'], 'RR')):
         loc = V(sg * k['track'], hub_h, u)

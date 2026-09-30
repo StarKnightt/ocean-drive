@@ -145,7 +145,7 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     footstep(surface = 'pavement', opts) {
       if (ctx && ctx.state === 'running') parts.steps.step(surface, opts);
     },
-    // the ridden vehicle's sounds, once per frame: state = { kind: 'bike' | 'atv' | null, ... }
+    // the ridden vehicle's sounds, once per frame: state = { kind: 'bike' | 'atv' | 'car' | null, ... }
     // (see audio/vehicles.js); { kind: null } switches them off
     vehicle(state) {
       if (ctx && ctx.state === 'running') parts.vehicles.update(state);

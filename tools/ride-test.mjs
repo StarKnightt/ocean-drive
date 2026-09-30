@@ -1,7 +1,8 @@
 // Ride test: walk up to the bike and the ATV, mount with E, ride / drive with the keyboard
 // (real key presses) and scripted key sequences (vehicles.simulate), check speeds per
-// surface, collisions, dismounting and that the ATV stays on the beach; screenshots in
-// shots/ride-test/. Usage: node tools/ride-test.mjs   (dev server on :5173)
+// surface, collisions, dismounting, the ATV's wading stall and the vehicle ramp into the
+// park, the convertible over the curbs; screenshots in shots/ride-test/.
+// Usage: node tools/ride-test.mjs   (dev server on :5173, or URL=http://127.0.0.1:port/)
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -192,15 +193,25 @@ report.checks.atvSwash = r;
 await page.evaluate(() => window.__vehicles.simulate(['KeyW', 'ShiftLeft', 'KeyA'], 0.6));
 await shot('10-atv-swash-spray', 0);
 check('ATV splashes through the swash', !!r.bySurf.water || r.bySurf.wetsand > 0, r);
-// deep water stops it
+// deep water: the engine drowns at the intake (0.40 m), never past the 0.60 m limit
 r = await rideTo(110, -200, { maxT: 12 });
-const atvWater = await page.evaluate(() => { const v = window.__vehicles.current; return { x: +v.x.toFixed(2), depth: +(-1 - window.__beach.groundAt(v.x, v.z)).toFixed(3) }; });
-check('ATV stops before deep water', atvWater.depth < 0.34 && atvWater.x < 100, { ...r, ...atvWater });
-// beach only: drive at the seawall / park
+const atvWater = await page.evaluate(() => { const v = window.__vehicles.current; return { x: +v.x.toFixed(2), depth: +Math.max(...v.wheelDepth).toFixed(3), stalled: !!v.stalled, on: v.engineOn }; });
+check('ATV wades in and stalls at its intake, short of 0.6 m', atvWater.depth < 0.62 && atvWater.stalled && !atvWater.on, { ...r, ...atvWater });
+// pushed back to the damp sand: W cranks it and it runs again
+await page.evaluate(() => window.__vehicles.place(80, -200, Math.PI / 2));
+const restart = await page.evaluate(() => { const V = window.__vehicles; V.simulate(['KeyW'], 1.5); return { on: V.current.engineOn, lon: +V.current.lon.toFixed(2) }; });
+check('the drowned ATV restarts once out of the water', restart.on, restart);
+// the seawall still stands, except at the vehicle ramps: up the z -95 ramp into the park
 r = await rideTo(0, -200, { maxT: 20 });
-check('ATV stays on the beach (does not reach the park)', r.at[0] > 13, r);
+check('the seawall stops the ATV away from the ramps', r.at[0] > 12.9, r);
 r = await rideTo(0, -245, { maxT: 12 });
-check('ATV cannot climb the z = -245 access', r.at[0] > 13, r);
+check('ATV cannot climb the z = -245 access', r.at[0] > 12.9, r);
+r = await rideTo(24, -95, { maxT: 20 });
+await page.evaluate(() => window.__vehicles.place(24, -95, Math.PI / 2));   // lined up, facing west
+r = await rideTo(2, -95, { maxT: 12, hard: false });
+check('ATV drives up the z -95 vehicle ramp into the park', r.at[0] < 6, r);
+await shot('10b-atv-up-the-ramp', 100);
+r = await rideTo(20, -95, { maxT: 12 });
 // the whole beach north -> south
 r = await rideTo(60, -330, { maxT: 40 });
 r = await rideTo(60, 330, { maxT: 120 });
@@ -232,7 +243,7 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   await approach('car', 2.4, 270);
   s = await st();
   const carPrompt = await page.evaluate(() => document.getElementById('ride-prompt').textContent);
-  check('car prompt "E drive" from the sidewalk', s.near === 'car' && /drive/.test(carPrompt), { near: s.near, prompt: carPrompt });
+  check('car prompt "E enter" at the (passenger) door from the sidewalk', s.near === 'car' && /enter/.test(carPrompt), { near: s.near, prompt: carPrompt });
   await shot('13-car-prompt');
   await page.keyboard.press('KeyE');
   await page.waitForTimeout(300);
@@ -295,15 +306,23 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
   await page.evaluate(() => { const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
   r = await rideTo(-19.75, 300, { maxT: 60, stopAt: 3 });
   report.checks.carDrive = r;
-  check('car reaches ~60-70 km/h on the road', (r.bySurf.pavement ?? 0) * 3.6 > 58 && (r.bySurf.pavement ?? 99) * 3.6 < 76, r);
+  // (the old 70 km/h cap is lifted: ~120 km/h flat out, most of it reached in the 240 m run)
+  check('car reaches 75-124 km/h on the road', (r.bySurf.pavement ?? 0) * 3.6 > 75 && (r.bySurf.pavement ?? 99) * 3.6 < 124, r);
   await brake(4);
-  // curbs: try to drive onto the park-side sidewalk and the hotel side
+  // curbs: over the park-side curb onto the sidewalk and the lawn; over the hotel-side curb
+  // onto the sidewalk, where the hotel patio line holds it
   await page.evaluate(() => window.__vehicles.place(-17, 250, -Math.PI / 2));
-  r = await rideTo(-5, 250, { maxT: 5 });
-  check('park-side curb stops the car', r.at[0] < -14.4, r);
-  await page.evaluate(() => window.__vehicles.place(-20, 250, Math.PI / 2));
-  r = await rideTo(-35, 250, { maxT: 5 });
-  check('hotel-side curb stops the car', r.at[0] > -24.1, r);
+  r = await rideTo(-5, 250, { maxT: 8, hard: false });
+  check('car mounts the park-side curb onto the lawn', r.at[0] > -12.5, r);
+  // (a gap in the parked row to drive through)
+  const gapZ = await page.evaluate(() => {
+    const cols = window.__cars.colliders.filter((c) => !c.hero && c.max.x > -24 && c.min.x < -21.5);
+    for (let z = 210; z < 330; z += 0.5) if (!cols.some((c) => c.max.z > z - 4.5 && c.min.z < z + 4.5)) return z;
+    return 250;
+  });
+  await page.evaluate((z) => window.__vehicles.place(-20, z, Math.PI / 2), gapZ);
+  r = await rideTo(-35, gapZ, { maxT: 6, hard: false });
+  check('car mounts the hotel-side curb; the patio line stops it', r.at[0] < -24.2 && r.at[0] > -28, { ...r, gapZ });
   // a cross street (7 ST, z = 190)
   await page.evaluate(() => window.__vehicles.place(-19, 190, Math.PI / 2));
   r = await rideTo(-40, 190, { maxT: 12, hard: false });

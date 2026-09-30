@@ -108,12 +108,21 @@ for (const name of names) {
     });
     await sleep(500);
     const rb = await btn('#touch .ride');
-    check(rb.show && rb.text === 'Drive', `Drive button near the convertible ${JSON.stringify({ show: rb.show, text: rb.text })}`);
+    check(rb.show && rb.text === 'Enter', `Enter button at the convertible's door ${JSON.stringify({ show: rb.show, text: rb.text })}`);
     await page.touchscreen.tap(rb.x, rb.y);
     await sleep(1800);
     let c = await car();
     const labels = { ride: (await btn('#touch .ride')).text, jump: await page.evaluate(() => document.querySelector('#touch .jump span').textContent) };
-    check(c.ridden && c.on && labels.ride === 'Exit' && labels.jump === 'Brake', `tap Drive: seated, V8 running, Exit/Brake labels ${JSON.stringify({ ridden: c.ridden, on: c.on, ...labels })}`);
+    check(c.ridden && c.on && labels.ride === 'Exit' && labels.jump === 'Brake', `tap Enter: seated, V8 running, Exit/Brake labels ${JSON.stringify({ ridden: c.ridden, on: c.on, ...labels })}`);
+    // the camera button: shown in the car, toggles the chase view
+    const cb = await btn('#touch .cam');
+    await page.touchscreen.tap(cb.x, cb.y);
+    await sleep(600);
+    const chaseView = await page.evaluate(() => window.__vehicles.view);
+    await page.screenshot({ path: path.join(outDir, `${slug}-car-chase.png`) });
+    await page.touchscreen.tap(cb.x, cb.y);
+    await sleep(300);
+    check(cb.show && chaseView === 'chase' && (await page.evaluate(() => window.__vehicles.view)) === 'fp', `camera button toggles the chase view ${JSON.stringify({ show: cb.show, chaseView })}`);
     await page.screenshot({ path: path.join(outDir, `${slug}-car-driver.png`) });
     await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } const v = window.__vehicles.current; window.__vehicles.place(-19.75, v.z, Math.PI); });
     await touch('touchStart', [[jx, jy, 4]]);
@@ -127,6 +136,14 @@ for (const name of names) {
     c = await car();
     check(c.steer > 0.05, `stick right steers right ${c.steer.toFixed(3)}`);
     await touch('touchEnd', []);
+    // Brake held = the handbrake (released with the finger)
+    const jb2 = await btn('#touch .jump');
+    await touch('touchStart', [[jb2.x, jb2.y, 5]]);
+    await sleep(300);
+    const held = await page.evaluate(() => window.__walker.brakeHeld);
+    await touch('touchEnd', []);
+    await sleep(100);
+    check(held === true && (await page.evaluate(() => window.__walker.brakeHeld)) === false, 'Brake held pulls the handbrake, released with the finger');
     const eb = await btn('#touch .ride');
     await page.touchscreen.tap(eb.x, eb.y);
     for (let i = 0; i < 40 && (await car()).ridden; i++) await sleep(200);
