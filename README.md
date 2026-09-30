@@ -40,7 +40,8 @@ from any sub-path; every push to `main` deploys it to GitHub Pages through
 `.github/workflows/deploy.yml`.
 
 The Playwright scripts in `tools/` need the dev server running: `shots.mjs` captures the five
-fixed critic cameras, `walk-test.mjs` walks the route from the sidewalk to the water,
+fixed critic cameras, `walk-test.mjs` walks the route from the sidewalk to the water and checks
+the third-person view, `tp-shots.mjs` captures the third-person screenshots,
 `ride-test.mjs` and `vehicle-sim-test.mjs` check the bike, the ATV and the convertible (`car-ride-test.mjs`
 runs the convertible's enter / drive / exit flow in Node; `traffic-sim-test.mjs` and
 `traffic-visual-test.mjs` check the traffic in Node), and `mobile-test.mjs` runs
@@ -69,6 +70,12 @@ the touch controls on an emulated phone.
 | Release the pointer | Esc | |
 
 The key hints show small at the bottom left for a few seconds after you get in, then fade.
+
+The camera is remembered separately on foot (first or third person) and in a car (the driver's
+view or the chase camera), across reloads (`localStorage` `ocean-drive.view`). In third person
+the camera sits over your right shoulder, about 3 m back; it pulls in against walls, the seawall
+and cars and slides round palm trunks. In first person your own long shadow still walks ahead of
+you in the low sun.
 
 The last car you got out of stays where you left it, across reloads (`localStorage`
 `ocean-drive.car`); the minimap marks it with a small lozenge.
@@ -106,6 +113,9 @@ The last car you got out of stays where you left it, across reloads (`localStora
   promenade, sitting at the cafés and on the benches, a beach walker on the wet sand and a
   seated driver in every traffic car. They step out of a car's way and turn their heads to one
   coming at them.
+- You: the same Mixamo body that sits at the wheel, seen in third person on foot. It stands,
+  walks and runs with the stride matched to its speed, turns smoothly, jumps, wades with its arms
+  out and splashes in the surf, and walks to a car's door and slides into the seat.
 - Birds: pelicans in a line over the water, gulls that flee when you walk at them, sanderlings
   chasing the surf, grackles on the patios, a frigatebird and cormorants.
 - Cars modelled in Blender (`blender/`): the two-tone 1950s convertible and seven modern bodies,
@@ -233,7 +243,8 @@ src/
   world/         layout, hotels, palms, street, cars (GLB), traffic, crowd (Mixamo), exiting
                  drivers, beach, ocean, surf, birds, knockable props, world edges, lod
   vehicles/      bike, ATV and cars: simulation, chase camera, skids, spray, dents
-  player/        walker (collisions, surfaces, jump) and touch controls
+  player/        walker (collisions, surfaces, jump), the player's body, the third-person
+                 camera, touch controls
   ui/            driving HUD, minimap, radio card
   audio/         synthesis, spatial audio, waves, gulls, wind, car, music, radio, footsteps, vehicles
   textures/      procedural noise
