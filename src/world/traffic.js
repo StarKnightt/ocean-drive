@@ -99,6 +99,8 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
     if (!s.inst) {
       s.inst = take(c.model);
       s.inst.paint.color.setHex(c.color ?? 0xb9bcbf);
+      // (an instance whose driver got out when the player took the car: a new one)
+      attach(s.inst);
     }
     s.lod = -1;
     s.lamp = null;
@@ -200,6 +202,26 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
       return sim.cars.filter((c) => !c.hidden && Math.abs(c.z) < END_Z).map((c) => ({ id: c.id, x: c.x, z: c.z, v: c.v, a: c.a, dir: c.dir, classic: c.classic, braking: c.braking }));
     },
     honks() { return honkQueue.splice(0); },
+    // the player takes stopped car c (a modern one): its pose, body and paint, and its seated
+    // driver's person with the seat's world matrix; the car leaves the lane (the sim's
+    // detach) and its instance goes back to the pool without the driver
+    handOff(c) {
+      const s = slots.find((q) => q.car === c);
+      const I = s?.inst;
+      if (!I || I.classic || c.hidden || c.v > 0.3) return null;
+      const out = { kind: c.model, color: c.color, x: c.x, z: c.z, yaw: Math.atan2(0, c.dir) - Math.PI, len: c.len, driver: null };
+      const d = I.driver;
+      if (d?.P) {
+        const P = d.P;
+        if (!P.root.parent && P.home) P.home.add(P.root);
+        P.root.updateMatrixWorld(true);
+        out.driver = { P, matrix: P.root.matrixWorld.clone(), drive: P.actions.get('drive_car') };
+        I.driver = null;
+      }
+      sim.detach(c);
+      release(s);
+      return out;
+    },
     // the player bumped traffic car c: it stops with its hazards on and honks once
     bump(c, seconds = 4) {
       if (!c || c.hidden) return;

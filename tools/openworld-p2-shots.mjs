@@ -78,6 +78,48 @@ try {
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(1500);
   }
+  if (want.has('traffic')) {
+    // stand in the southbound lane ahead of a modern traffic car until it stops (it beeps and
+    // waits), then at its driver's door: E. The driver gets out, waves, walks off
+    const pick = await ev(() => {
+      const T = window.__traffic;
+      const c = T.cars.filter((q) => !q.hidden && !q.classic && q.dir === 1 && q.z > -150 && q.z < 60).sort((a, b) => b.z - a.z)[0];
+      if (!c) return null;
+      window.__walker.teleport(c.x, c.z + 16, 180, -4);
+      return { id: c.id, z: +c.z.toFixed(1), model: c.model };
+    });
+    console.log('traffic car', pick);
+    if (pick) {
+      await page.waitForFunction((id) => { const c = window.__traffic.cars.find((q) => q.id === id); return c && c.v < 0.05; }, pick.id, { timeout: 30000 });
+      const st = await ev((id) => {
+        const T = window.__traffic, c = T.cars.find((q) => q.id === id);
+        T.debug.freeze = true;
+        const V = window.__vehicles;
+        const [d] = V.doorsOf({ pose: { x: c.x, z: c.z, yaw: Math.atan2(0, c.dir) - Math.PI }, kind: c.model }).filter((q) => q.side === 'driver');
+        window.__walker.teleport(d.x + 0.35, d.z, Math.atan2(c.x - d.x - 0.35, -(c.z - d.z)) * 180 / Math.PI, -6);
+        return { honk: c.honk, startles: c.startles ?? 0, v: c.v, door: [d.x, d.z] };
+      }, pick.id);
+      console.log('stopped', st);
+      await page.waitForTimeout(500);
+      console.log('near', await ev(() => ({ near: window.__vehicles.near, door: window.__vehicles.nearDoor })));
+      await page.keyboard.press('KeyE');
+      await ev(() => { window.__traffic.debug.freeze = false; });
+      await page.waitForTimeout(150);
+      if (await ev(() => window.__vehicles.view) !== 'chase') await page.keyboard.press('KeyC');
+      // the chase arm swung round to the driver's side, low
+      const look = () => ev(() => { const w = window.__walker, v = window.__vehicles.current; if (v) { w.yaw = v.yaw - 1.9; w.pitch = -0.12; } });
+      await look();
+      await shot('5-traffic-driver-gets-out', 450);
+      await look();
+      await shot('5b-traffic-driver-waves', 900);
+      console.log('driver', await ev(() => window.__exitDrivers.state()));
+      await ev(() => { const w = window.__walker, v = window.__vehicles.current; if (v) { w.yaw = v.yaw - 2.6; w.pitch = -0.1; } });
+      await shot('5c-traffic-driver-walks-off', 3500);
+      console.log('driver', await ev(() => window.__exitDrivers.state()), 'entry', await ev(() => window.__vehicles.currentEntry?.origin));
+      await page.keyboard.press('KeyE');
+      await page.waitForTimeout(1200);
+    }
+  }
   console.log('errors', errors.length ? errors.slice(0, 5) : 'none');
 } finally {
   await browser.close();

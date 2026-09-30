@@ -21,6 +21,7 @@ import { QUALITY, IS_TOUCH } from './quality.js';
 import { createTouchControls } from './player/touch.js';
 import { createVehicles } from './vehicles/index.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
+import { createExitDrivers } from './world/exit-driver.js';
 import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './renderer/memory.js';
 import { OPEN_WORLD } from './vehicles/specs.js';
 import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
@@ -187,13 +188,18 @@ const people = peopleAssets
   });
 walkWorld.circles.push(...people.colliders, ...traffic.colliders);
 window.__people = people;
+// a traffic car's driver getting out when the player takes the car
+const exitDrivers = createExitDrivers(scene, { heightAt: (x, z) => beach.groundAt(x, z) });
+walkWorld.circles.push(...exitDrivers.colliders);
+window.__exitDrivers = exitDrivers;
 
 // --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
 await nextFrame();
 const vehicles = createVehicles(scene, {
   walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
-  staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c)),
-  dynamicCircles: [...people.colliders, ...traffic.colliders],
+  staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c) && !exitDrivers.colliders.includes(c) && !traffic.colliders.includes(c)),
+  dynamicCircles: [...people.colliders, ...traffic.colliders, ...exitDrivers.colliders],
+  onDriverOut: (info, car, door, face) => exitDrivers.start(info, car, door, face),
   requestShadow,
   getTouch: () => touch,
   car: cars.drive ?? null,
@@ -227,6 +233,7 @@ function trafficObstacles() {
     for (const c of v.circlesWorld) out.push({ x: c.x, z: c.z, r: c.r, v: v.ridden ? Math.max(0, v.lon) : 0, vx: moving ? v.vx : 0, vz: moving ? v.vz : 0, player: !!v.ridden });
   }
   for (const p of Object.values(people.people ?? {})) if (p.name === 'cyclist' && p.state === 'ride') out.push({ x: p.x, z: p.z, r: 0.5, v: p.speed });
+  exitDrivers.obstacles(out);
   return out;
 }
 
@@ -515,6 +522,7 @@ function frame(t) {
   birds.update(dt, camera); // BIRDS
   prof('birds');
   people.update(dt, camera); // PEOPLE
+  if (!SHOT) exitDrivers.update(dt, camera);
   prof('people');
   // (the hero's mirror waits a frame when the sun shadow is about to re-render)
   cars.update(dt, null, camera, shadowWanted && t / 1000 - shadowAt >= SHADOW_GAP);

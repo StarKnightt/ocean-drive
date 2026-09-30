@@ -57,7 +57,7 @@ html.touch #ride-prompt { display: none; }
 export function createVehicles(scene, {
   walker, camera, beach, staticBoxes, staticCircles, dynamicCircles = [], audio, shot = false, renderer,
   requestShadow = () => {}, getTouch = () => null, car = null, movers = [],
-  fleet = null, kit = null, seatPlayer = null, traffic = null,
+  fleet = null, kit = null, seatPlayer = null, traffic = null, onDriverOut = null,
 }) {
   const dyn = [];
   const world = {
@@ -224,9 +224,30 @@ export function createVehicles(scene, {
     retire();
     return e;
   }
-  // over MAX_LIVE: the longest-unused one out of sight goes back to its spot
+  // a stopped traffic car taken at its driver's door: a live car of its body and paint at its
+  // pose (its lane slot re-enters later with another model); the driver gets out and waves
+  function takeTraffic(c, door) {
+    const h = traffic?.handOff?.(c);
+    if (!h) return null;
+    const pose = { x: h.x, z: h.z, yaw: h.yaw };
+    const view = kit.makeDrivable(h.kind, h.color);
+    const v = createVehicle(OPEN_SPECS[h.kind], pose, world);
+    v.parked = true;
+    v.engineOn = true;          // (it was running)
+    v.rpm = v.spec.idle ?? 800;
+    const e = { kind: 'car', body: h.kind, origin: 'traffic', color: h.color, v, m: null, drive: view, kick: 1, startT: 0, door: doorZ(h.kind), used: clock };
+    list.push(e);
+    walker.world.circles?.push(...v.circlesWorld);
+    view.apply(v);
+    const dp = doors(pose, h.kind, v.spec.width ?? 1.9).find((d) => d.side === door) ?? doors(pose, h.kind, v.spec.width ?? 1.9)[0];
+    if (h.driver) onDriverOut?.(h.driver, { x: pose.x, z: pose.z, yaw: pose.yaw, len: h.len, width: v.spec.width ?? 1.9 }, dp, () => ({ x: v.x, z: v.z }));
+    retire();
+    return e;
+  }
+  // over MAX_LIVE: the longest-unused one out of sight goes back to its spot (a taken traffic
+  // car is simply dropped)
   function retire() {
-    const live = list.filter((e) => e.origin === 'parked');
+    const live = list.filter((e) => e.origin === 'parked' || e.origin === 'traffic');
     while (live.length > MAX_LIVE) {
       live.sort((a, b) => a.used - b.used);
       const e = live.find((q) => q !== rider && q !== saved && Math.hypot(camera.position.x - q.v.x, camera.position.z - q.v.z) > 60);
@@ -237,7 +258,7 @@ export function createVehicles(scene, {
       if (wc) for (const c of e.v.circlesWorld) { const i = wc.indexOf(c); if (i >= 0) wc.splice(i, 1); }
       e.detach?.();
       e.drive.dispose();
-      fleet.release(e.spot);
+      if (e.spot) fleet.release(e.spot);
     }
   }
 
@@ -301,9 +322,12 @@ export function createVehicles(scene, {
     hintT = 3.5;
     offReq = false;
     if (e.kind === 'car') {
-      v.engineOn = false; v.rpm = 0;
-      e.startT = e.origin === 'hero' ? STARTER.hero : STARTER.modern;
-      if (e.origin === 'parked' && !e.detach) e.detach = seatPlayer?.(e.drive) ?? null;
+      // (a car taken from the traffic is still running)
+      if (!(e.origin === 'traffic' && v.engineOn)) {
+        v.engineOn = false; v.rpm = 0;
+        e.startT = e.origin === 'hero' ? STARTER.hero : STARTER.modern;
+      }
+      if ((e.origin === 'parked' || e.origin === 'traffic') && !e.detach) e.detach = seatPlayer?.(e.drive) ?? null;
       pendingEvent = 'door';
     }
     setView(view);
@@ -351,6 +375,7 @@ export function createVehicles(scene, {
     if (rider) { if (Math.abs(rider.v.lon) > 1.2) offReq = true; else dismount(); return; }
     if (!near) return;
     if (near.spot) { const e = materialise(near.spot); mount(e, near.door); return; }
+    if (near.traffic) { const e = takeTraffic(near.traffic, near.door); if (e) mount(e, near.door); return; }
     mount(near.e ?? near, near.door);
   }
 
@@ -397,9 +422,10 @@ export function createVehicles(scene, {
     let best = null, bd = Infinity;
     const facing = (tx, tz) => { const dx = tx - wx, dz = tz - wz, dl = Math.hypot(dx, dz) || 1; return (dx * fx + dz * fz) / dl; };
     // a car: the nearer door point; looking roughly at the car unless right at the door
-    const tryCar = (cand, pose, body, width, groundY) => {
+    const tryCar = (cand, pose, body, width, groundY, only = null) => {
       if (Math.abs(pose.x - wx) > 7 || Math.abs(pose.z - wz) > 7 || Math.abs(walker.feetY - groundY) > 0.8) return;
       for (const d of doors(pose, body, width)) {
+        if (only && d.side !== only) continue;
         const dd = Math.hypot(d.x - wx, d.z - wz);
         if (dd > DOOR_REACH || dd >= bd) continue;
         if (dd > 0.8 && facing(pose.x, pose.z) < 0.3) continue;
@@ -418,6 +444,13 @@ export function createVehicles(scene, {
     for (const s of drivable) {
       if (s.taken || Math.abs(s.x - wx) > 7 || Math.abs(s.z - wz) > 7) continue;
       tryCar({ spot: s, kind: 'car' }, s.pose, s.kind, OPEN_SPECS[s.kind]?.width ?? 1.9, world.groundAt(s.pose.x, s.pose.z));
+    }
+    // a stopped modern traffic car, at its driver's door
+    if (OPEN_WORLD && !shot && kit?.makeDrivable && traffic?.handOff) {
+      for (const c of traffic.cars) {
+        if (c.hidden || c.classic || c.v > 0.3 || !OPEN_SPECS[c.model] || Math.abs(c.x - wx) > 7 || Math.abs(c.z - wz) > 7) continue;
+        tryCar({ traffic: c, kind: 'car' }, { x: c.x, z: c.z, yaw: Math.atan2(0, c.dir) - Math.PI }, c.model, OPEN_SPECS[c.model].width ?? 1.9, world.groundAt(c.x, c.z), 'driver');
+      }
     }
     return best;
   }
