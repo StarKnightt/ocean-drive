@@ -32,7 +32,7 @@ const mk = () => {
 const classics = [0, 1].map(() => { const m = mk(); return { car: m.root, sway: m.sway, levels: m.levels, wheels: [...m.wheels[0], ...m.wheels[1]], wheelR: 0.36, tail: new THREE.MeshPhysicalMaterial({ emissive: 0x2a0304 }) }; });
 const kit = {
   kinds: ['sedan', 'suv'], lens: { sedan: 4.8, suv: 4.7 }, classics, paints: [0x112233, 0x445566], lod1At: 42,
-  makeModern(kind, paint, tail) { built++; const m = mk(); scene.add(m.root); return { root: m.root, levels: m.levels, wheels: m.wheels, wheelR: 0.34, len: this.lens[kind] }; },
+  makeModern(kind, paint, tail) { built++; const m = mk(); scene.add(m.root); return { root: m.root, levels: m.levels, wheels: m.wheels, wheelR: 0.34, len: this.lens[kind], kind, paint: this.paint(0xffffff) }; },
   paint: (c) => new THREE.MeshPhysicalMaterial({ color: c }), tail: () => new THREE.MeshPhysicalMaterial({ emissive: 0x2a0304 }),
 };
 // SIGNAL_LIGHTS stand-ins (the street isn't built here)
@@ -56,7 +56,7 @@ for (let i = 0; i < 60 * 600; i++) {
   let vis = 0;
   for (const c of T.cars) {
     if (c.hidden) continue;
-    const circ = T.colliders.filter((q) => q.x === c.x && Math.abs(q.z - c.z) < 3);
+    const circ = T.colliders.filter((q) => q.car === c && q.x === c.x && Math.abs(q.z - c.z) < 3);
     if (circ.length !== 5 || circ.some((q) => q.r !== 0.95)) colliderOk = false;
   }
   scene.traverse((o) => { if (o.isGroup && o.visible && o.parent === scene) vis++; });
