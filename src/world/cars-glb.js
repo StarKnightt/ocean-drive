@@ -1160,6 +1160,8 @@ function collapsedLod1(gltf, kind, M) {
 
 function trafficKit(scene, gltf, M, env, pool, probe) {
   const kinds = gltf ? KINDS.filter((k) => gltf.scene.getObjectByName(k)) : [];
+  // (the painted panels keep their CPU arrays after upload: vehicles/damage.js dents copies)
+  for (const k of kinds) gltf.scene.getObjectByName(k).traverse((o) => { if (o.isMesh && /^(paint2?|trim|grille)$/.test(o.material?.name ?? '')) o.geometry.userData.keepArrays = true; });
   const box = new THREE.Box3();
   gltf?.scene.updateMatrixWorld(true);
   const lens = Object.fromEntries(kinds.map((k) => [k, box.setFromObject(gltf.scene.getObjectByName(k)).max.z - box.min.z]));

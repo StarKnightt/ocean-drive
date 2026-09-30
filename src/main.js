@@ -4,7 +4,9 @@ import { createPost } from './renderer/post.js';
 import { buildPlaceholders } from './world/placeholders.js';
 import { buildHotels } from './world/hotels.js';
 import { buildPalms, PALM_TREES } from './world/palms.js';
-import { buildStreet, STREET_COLLIDERS } from './world/street.js';
+import { buildStreet, STREET_COLLIDERS, KNOCKABLES } from './world/street.js';
+import { createDynProps } from './world/props-dyn.js';
+import { edgeKinds, edgeProps } from './world/edges.js';
 import { buildCarsGlb, preloadCars, mirrorHide } from './world/cars-glb.js'; // Blender-modelled cars (procedural fallback)
 import { createOcean } from './world/ocean.js';
 import { createSurf } from './world/surf.js';
@@ -149,7 +151,8 @@ const walkWorld = {
     ...hotels.userData.footprints.map((f) => ({ min: { x: -80, y: -5, z: f.z0 }, max: { x: f.fx, y: 60, z: f.z1 } })),
   ],
   circles: [
-    ...STREET_COLLIDERS.filter((c) => c.r),
+    // (the knockable bins and news boxes collide as their live props below)
+    ...STREET_COLLIDERS.filter((c) => c.r && !c.knock),
     ...PALM_TREES.filter((t) => Math.abs(t.z) < (OPEN_WORLD ? extentBounds(QUALITY.tier).z1 : DISTRICT.zMax) + 10).map((t) => ({ x: t.x, z: t.z, r: 0.26 })),
   ],
   bounds: { x0: HOTEL.patioX + 0.2, x1: 110, z0: DISTRICT.zMin, z1: DISTRICT.zMax, soft: 14 },
@@ -163,6 +166,17 @@ if (OPEN_WORLD) {
   walkWorld.softDistance = (x, z) => softDistance(x, z, tier);
   walkWorld.softWidth = EDGE_SOFT.walker;
 }
+// knockable props: the sidewalk bins and news boxes, the road-closed barricades and cones at
+// the world's ends (open world)
+const dynProps = OPEN_WORLD && !SHOT ? (() => {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 });
+  const kinds = { ...edgeKinds(mat) };
+  const K = { bin: { mass: 9, lie: 0.3 }, 'news-blue': { mass: 30, lie: 0.24 }, 'news-red': { mass: 30, lie: 0.24 } };
+  for (const it of KNOCKABLES) if (!kinds[it.kind] && K[it.kind]) kinds[it.kind] = { ...K[it.kind], parts: [{ geo: it.geo, mat }] };
+  return createDynProps(scene, { kinds, items: [...KNOCKABLES, ...edgeProps(QUALITY.tier)], groundAt: (x, z) => beach.groundAt(x, z), requestShadow });
+})() : null;
+if (dynProps) walkWorld.circles.push(...dynProps.colliders);
+window.__props = dynProps;
 const controls = new Walker(camera, renderer.domElement, walkWorld);
 // first frame: hotel sidewalk, looking up the row of sunlit fronts
 controls.set(-26, CURB_HEIGHT + EYE_HEIGHT, 40, 342, 4);
@@ -198,8 +212,9 @@ window.__exitDrivers = exitDrivers;
 await nextFrame();
 const vehicles = createVehicles(scene, {
   walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
-  staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c) && !exitDrivers.colliders.includes(c) && !traffic.colliders.includes(c)),
-  dynamicCircles: [...people.colliders, ...traffic.colliders, ...exitDrivers.colliders],
+  staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c) && !exitDrivers.colliders.includes(c) && !traffic.colliders.includes(c) && !c.knock),
+  dynamicCircles: [...people.colliders, ...traffic.colliders, ...exitDrivers.colliders, ...(dynProps?.colliders ?? [])],
+  props: dynProps,
   onDriverOut: (info, car, door, face) => exitDrivers.start(info, car, door, face),
   requestShadow,
   getTouch: () => touch,
@@ -532,6 +547,7 @@ function frame(t) {
   prof('birds');
   people.update(dt, camera); // PEOPLE
   if (!SHOT) exitDrivers.update(dt, camera);
+  dynProps?.update(dt, camera);
   prof('people');
   // (the hero's mirror waits a frame when the sun shadow is about to re-render)
   cars.update(dt, null, camera, shadowWanted && t / 1000 - shadowAt >= SHADOW_GAP);

@@ -24,6 +24,7 @@ import { createSkids } from './skids.js';
 import { createChaseCamera } from './camera.js';
 import { createHud } from '../ui/hud.js';
 import { createSpray, createWake, P_WATER, P_SAND, P_SPARK, P_GRASS, P_SMOKE, P_MIST } from './spray.js';
+import { createDamage, DENT_SPEED } from './damage.js';
 
 export const PARKED = {
   bike: { x: 7.5, z: -26.5, yaw: -0.17 },
@@ -57,7 +58,7 @@ html.touch #ride-prompt { display: none; }
 export function createVehicles(scene, {
   walker, camera, beach, staticBoxes, staticCircles, dynamicCircles = [], audio, shot = false, renderer,
   requestShadow = () => {}, getTouch = () => null, car = null, movers = [],
-  fleet = null, kit = null, seatPlayer = null, traffic = null, onDriverOut = null,
+  fleet = null, kit = null, seatPlayer = null, traffic = null, onDriverOut = null, props = null,
 }) {
   const dyn = [];
   const world = {
@@ -257,6 +258,7 @@ export function createVehicles(scene, {
       const wc = walker.world.circles;
       if (wc) for (const c of e.v.circlesWorld) { const i = wc.indexOf(c); if (i >= 0) wc.splice(i, 1); }
       e.detach?.();
+      e.damage?.dispose();
       e.drive.dispose();
       if (e.spot) fleet.release(e.spot);
     }
@@ -295,7 +297,7 @@ export function createVehicles(scene, {
       e.drive.apply(e.v);
     }
     if (!e) return null;
-    e.damage?.load?.(rec.damage);
+    if (rec.damage?.length && e.drive?.inst) (e.damage ??= createDamage(e.drive)).load(rec.damage);
     saved = e;
     return e;
   }
@@ -558,6 +560,11 @@ export function createVehicles(scene, {
         }
       }
       if (hit.obj?.car && hit.speed > 0.8) traffic?.bump?.(hit.obj.car);
+      // a hard knock dents the panels round the contact (the modern cars)
+      if (car && e.drive?.inst && hit.speed > DENT_SPEED && hit.material !== 'person' && hit.material !== 'prop' && clock - (e.dentT ?? -1) > 0.35) {
+        e.dentT = clock;
+        (e.damage ??= createDamage(e.drive)).hit(hit.px, v.groundY + 0.6, hit.pz, hit.nx, hit.nz, hit.speed);
+      }
     }
     scrape = Math.max(scrape * Math.exp(-dt * 8), hit && hit.tangent > 1 ? Math.min(1, hit.tangent / 8) : 0);
     shake *= Math.exp(-dt * 7);
@@ -631,7 +638,10 @@ export function createVehicles(scene, {
         if (!v.stalled || canRestart(v)) { v.engineOn = true; v.stalled = false; v.rpm = e.kind === 'atv' ? 1800 : 1250; }
       }
     }
+    // knockable props in the way at speed go flying before the contact would stop the car
+    const knocked = props?.sweep(v);
     stepVehicle(v, input, dt, world);
+    if (knocked?.length && !v.hit) { const p = knocked[0]; v.hit = { speed: Math.min(4, Math.hypot(v.vx, v.vz) * 0.4), tangent: 0, px: p.pos.x, pz: p.pos.z, nx: 0, nz: 0, material: 'prop', obj: null }; }
     if (offReq && Math.abs(v.lon) < 1.0) dismount();
     if (!rider) { spray.update(dt); wake?.update(null, dt, clock); return; }
     // stranded outside the world (pushed, a glitch): fade and back to the road

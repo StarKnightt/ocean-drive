@@ -93,6 +93,53 @@ try {
     await shot('3c-minimap-saved-car', 900);
     await shot('3d-minimap-saved-car-crop', 50, { x: 0, y: H - 200, width: 220, height: 200 });
   }
+  if (want.has('props') || want.has('dents')) {
+    await enterSuv(40);
+    await clearTraffic();
+    if (want.has('props')) {
+      // up the hotel sidewalk's curb edge at ~30 km/h into the bins
+      // north up the drive at ~30 km/h through the road-closed line at the world's north end
+      const bar = await ev(() => { const p = window.__props.nearest(-18, -560, 'barricade'); return { x: p.pos.x, z: p.pos.z }; });
+      console.log('barricade', bar);
+      await ev((b) => { const V = window.__vehicles; V.place(b.x + 0.3, b.z + 16, 0); const v = V.current; v.lon = 8.5; v.vx = 0; v.vz = -8.5; }, bar);
+      await ev(() => { window.__vehicles.simulate(['KeyW'], 1.75); const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 0.25; w.pitch = -0.2; });
+      await shot('6-knocked-bin-flying', 60);
+      console.log('props', await ev(() => window.__props.state()));
+      await ev(() => { window.__vehicles.simulate(['KeyS'], 1.5); const w = window.__walker, v = window.__vehicles.current; w.yaw = v.yaw + 0.3; w.pitch = -0.3; window.__vehicles.simulate([], 1.5); });
+      await shot('6b-knocked-props-down', 700);
+      console.log('props', await ev(() => window.__props.state()));
+    }
+    if (want.has('dents')) {
+      // west across the lanes at ~35 km/h into the parked row: the dented front corner
+      const s = await ev(() => { const s = window.__vehicles.parkedNear(-22, -60)[0]; return { x: s.x, z: s.z }; });
+      await ev((s) => { const V = window.__vehicles; V.place(s.x + 7.5, s.z + 0.6, Math.PI / 2); const v = V.current; v.lon = 13; v.vx = -13; v.vz = 0; V.simulate(['KeyW'], 0.5); V.simulate(['KeyS'], 0.8); V.simulate([], 1.2); }, s);
+      console.log('dents', await ev(() => ({ dents: window.__vehicles.currentEntry.damage?.count ?? 0, hit: window.__vehicles.current.hit })));
+      await ev(() => { const V = window.__vehicles; V.place(V.current.x + 3, V.current.z, Math.PI / 2); V.simulate([], 0.3); });
+      // out, and a look at the dented nose from the front corners (on foot)
+      await page.keyboard.press('KeyE');
+      await page.waitForTimeout(1300);
+      const lookAt = (side) => ev((side) => {
+        const e = window.__vehicles.saved, v = e.v, fx = -Math.sin(v.yaw), fz = -Math.cos(v.yaw), rx = Math.cos(v.yaw), rz = -Math.sin(v.yaw);
+        const tx = v.x + fx * 2.1 + rx * side * 0.55, tz = v.z + fz * 2.1 + rz * side * 0.55;
+        const cx = tx + fx * 1.5 + rx * side * 1.0, cz = tz + fz * 1.5 + rz * side * 1.0;
+        window.__walker.teleport(cx, cz, Math.atan2(tx - cx, -(tz - cz)) * 180 / Math.PI, -24);
+        return { dents: e.damage?.count ?? 0 };
+      }, side);
+      console.log(await lookAt(1));
+      await shot('7-dents', 900);
+      await lookAt(-1);
+      await shot('7b-dents-other-corner', 700);
+    }
+    if (await ev(() => window.__vehicles.riding)) { await page.keyboard.press('KeyE'); await page.waitForTimeout(1500); }
+  }
+  if (want.has('edge')) {
+    await ev(() => window.__walker.teleport(-17.5, -512, 0, -3));
+    await shot('8-road-closed-edge', 1800);
+    await ev(() => window.__walker.teleport(-18.6, -534, 5, -8));
+    await shot('8c-road-closed-close', 900);
+    await ev(() => window.__walker.teleport(-58, -300 + 4.5, 262, -5));
+    await shot('8b-road-closed-cross-street', 1200);
+  }
   if (want.has('traffic')) {
     // stand in the southbound lane ahead of a modern traffic car until it stops (it beeps and
     // waits), then at its driver's door: E. The driver gets out, waves, walks off

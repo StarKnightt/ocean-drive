@@ -8,6 +8,7 @@ import {
   CROSS, CROSS_STREETS, crossLegs, crossStreetAt, crossRoadHeight, DISTRICT,
 } from './layout.js';
 import { PALM_TREES } from './palms.js';
+import { OPEN_WORLD } from '../vehicles/specs.js';
 import { mulberry32, fbmField } from '../textures/noise.js';
 import { registerLod } from './lod.js';
 
@@ -808,6 +809,19 @@ function signPostGeo(h) {
 
 // Walk colliders for street furniture: { x, z, r } circles or { min, max } boxes.
 export const STREET_COLLIDERS = [];
+// Open world: the bins and news boxes are knockable (world/props-dyn.js draws and moves them):
+// { kind, geo (at the origin), x, y, z, rot, r }. Their STREET_COLLIDERS circle is flagged
+// `knock` (the people still plan round the spot; the walker and the vehicles use the prop's
+// own live collider instead). ?shot / ?openworld=0: merged into the furniture as before.
+export const KNOCKABLES = [];
+const KNOCK = OPEN_WORLD;
+function placeKnock(list, kind, g, x, y, z, rotY, r) {
+  if (!KNOCK) return place(list, g, x, y, z, rotY, typeof r === 'number' ? r : 'box');
+  if (!FORCE && blocksCrossing(x, z)) return false;
+  KNOCKABLES.push({ kind, geo: g, x, y, z, rot: rotY, r });
+  STREET_COLLIDERS.push({ x, z, r, knock: true });
+  return true;
+}
 
 // col: a radius (m) for a post-like circle, 'box' for the footprint of the piece
 // (pieces that would land in a cross street, its corner ramps or a leg crosswalk ramp are
@@ -846,7 +860,7 @@ function furniture() {
       while (palmNear(x, q, 3.2)) q += 1.2;
       if (Math.abs(q - CROSSWALK_Z) < 3) q += 4;
       place(L, lamp, x, H, q, 0, 0.14);
-      if (rnd() < 0.55) place(L, trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1), 0, 0.3);
+      if (rnd() < 0.55) placeKnock(L, 'bin', trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1), 0, 0.3);
     }
   }
   // parking pay stations on the hotel side, bike racks near hotel entrances
@@ -857,10 +871,10 @@ function furniture() {
   }
   for (const z of [-58, -19, 27, 61]) place(L, rack, SIDEWALK_W.x1 - 1.1, H, z, 0, 'box');
   // hotel-side bins, a valet stand at an entrance, news boxes, an extra pay kiosk
-  for (const z of [16, 4, -21, -47]) { let q = z; while (palmNear(hx, q, 1.2)) q += 1; place(L, trash, hx - 0.1, H, q, 0, 0.3); }
+  for (const z of [16, 4, -21, -47]) { let q = z; while (palmNear(hx, q, 1.2)) q += 1; placeKnock(L, 'bin', trash, hx - 0.1, H, q, 0, 0.3); }
   place(L, valet, -26.9, H, 25.5, Math.PI / 2, 'box');
-  place(L, newsB, SIDEWALK_W.x1 - 1.3, H, 13.2, -Math.PI / 2, 'box');
-  place(L, newsR, SIDEWALK_W.x1 - 1.3, H, 13.8, -Math.PI / 2, 'box');
+  placeKnock(L, 'news-blue', newsB, SIDEWALK_W.x1 - 1.3, H, 13.2, -Math.PI / 2, 0.3);
+  placeKnock(L, 'news-red', newsR, SIDEWALK_W.x1 - 1.3, H, 13.8, -Math.PI / 2, 0.3);
   place(L, pay, hx + 0.05, H, 20.5, -Math.PI / 2, 'box');
   // hydrants
   for (const [x, z] of [[hx + 0.15, -33], [hx + 0.15, 22], [px - 0.15, -8], [px - 0.15, 46], [hx + 0.15, -110], [px - 0.15, 120]]) place(L, hyd, x, H, z, 0, 0.2);
@@ -920,7 +934,7 @@ function districtFurniture(mat, G) {
       while (G.palmNear(x, q, 3.2)) q += 1.2;
       if (!within(q)) continue;
       place(L, G.lamp, x, H, q, 0, 0.14);
-      if (rnd() < 0.55) place(L, G.trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1), 0, 0.3);
+      if (rnd() < 0.55) placeKnock(L, 'bin', G.trash, x, H, q + 1.6 * (rnd() < 0.5 ? 1 : -1), 0, 0.3);
     }
   }
   for (const s of [-1, 1]) {
@@ -980,7 +994,7 @@ function districtFurniture(mat, G) {
         let x = x0;
         while (G.palmNear(x, z, 1.6)) x -= 1.2;
         place(L, G.lamp, x, H, z, 0, 0.14);
-        if (rnd() < 0.3) place(L, G.trash, x - 1.6, H, z, 0, 0.3);
+        if (rnd() < 0.3) placeKnock(L, 'bin', G.trash, x - 1.6, H, z, 0, 0.3);
         else if (rnd() < 0.2) place(L, G.hyd, x - 2.2, H, z + s * 0.2, 0, 0.2);
       }
     }
