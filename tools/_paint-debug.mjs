@@ -1,7 +1,7 @@
 // scratch: which term makes the fender highlight blob (hero-wheel pose)
 import { chromium } from 'playwright';
 const W = 1024, H = 576;
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`] });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
 await page.goto('http://localhost:5173/?shot=1&nopost');
 await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 120000 });

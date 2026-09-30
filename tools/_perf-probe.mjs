@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 const q = process.argv[2] ?? '';
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', '--window-size=1603,902', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'],
 });
 const page = await browser.newPage({ viewport: null });

@@ -1,6 +1,6 @@
 // Jump checks: apex, railing still blocks while jumping, curb step-up while hopping.
 import { chromium } from 'playwright';
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto('http://localhost:5173/?autostart');

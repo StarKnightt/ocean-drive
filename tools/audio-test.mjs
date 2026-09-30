@@ -4,7 +4,7 @@
 // check that the running app builds those voices. Usage: node tools/audio-test.mjs
 import { chromium } from 'playwright';
 
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));

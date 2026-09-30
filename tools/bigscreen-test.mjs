@@ -11,7 +11,6 @@ const query = process.argv[7] || '';
 const url = (process.env.URL ?? 'http://localhost:5173/') + '?autostart' + (query ? '&' + query : '');
 
 const browser = await chromium.launch({
-  channel: 'chrome',
   headless: false,
   args: ['--mute-audio', '--window-position=1940,120', '--window-size=1296,760',
     '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist', '--enable-precise-memory-info'],

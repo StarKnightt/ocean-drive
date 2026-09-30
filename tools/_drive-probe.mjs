@@ -4,7 +4,7 @@ import fs from 'node:fs';
 const out = 'shots/_drive-probe';
 fs.mkdirSync(out, { recursive: true });
 const W = 1024, H = 576;
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
 page.on('pageerror', (e) => console.log('pageerror', String(e)));
 page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text()); });

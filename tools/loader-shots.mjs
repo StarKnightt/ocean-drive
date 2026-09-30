@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 const [w = 1280, h = 720] = process.argv.slice(2).map(Number);
 const tag = process.argv[2] ? `-${w}x${h}` : '';
 mkdirSync('shots/loader', { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--mute-audio', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ headless: true, args: ['--mute-audio', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: w, height: h } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e));

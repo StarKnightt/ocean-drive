@@ -1,6 +1,6 @@
 // Which traffic cars carry a driver, and is it shown? (reuses people-shots' traffic framing)
 import { chromium } from 'playwright';
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 page.on('console', (m) => { if (m.text().startsWith('[')) console.log('HID', m.text()); });
 page.on('pageerror', (e) => console.log('ERR', String(e)));

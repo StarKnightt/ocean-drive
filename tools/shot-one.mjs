@@ -6,7 +6,6 @@ const [out, x, eye, z, heading, pitch] = process.argv.slice(2);
 const url = process.env.SHOT_URL || 'http://localhost:5173/';
 const W = 1024, H = 576;
 const browser = await chromium.launch({
-  channel: 'chrome',
   headless: false,
   args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'],
 });

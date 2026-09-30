@@ -4,7 +4,7 @@
 import { chromium } from 'playwright';
 
 const [X = -27.5, Z = 40] = process.argv.slice(2).map(Number);
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1100,700'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1100,700'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 page.on('pageerror', (e) => console.log('pageerror', String(e)));
 await page.goto('http://localhost:5173/?autostart');

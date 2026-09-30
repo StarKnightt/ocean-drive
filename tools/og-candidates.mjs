@@ -9,7 +9,6 @@ const cams = JSON.parse(json);
 fs.mkdirSync(outDir, { recursive: true });
 const W = 1280, H = 640;
 const browser = await chromium.launch({
-  channel: 'chrome',
   headless: false,
   args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'],
 });

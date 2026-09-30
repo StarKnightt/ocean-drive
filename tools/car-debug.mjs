@@ -6,7 +6,7 @@ import fs from 'node:fs';
 const views = (process.argv[2] || 'front,q34,side,top').split(',');
 const file = process.argv[3] || '/models/parked.glb';
 fs.mkdirSync('shots/car-debug', { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1616,900'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1616,900'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 800 } });
 page.on('pageerror', (e) => console.log('pageerror', String(e)));
 for (const v of views) {

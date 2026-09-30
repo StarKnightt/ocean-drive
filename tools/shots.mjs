@@ -21,7 +21,6 @@ export const SHOTS = [
 
 const W = 1024, H = 576;
 const browser = await chromium.launch({
-  channel: 'chrome',
   headless: false,
   args: ['--mute-audio', 
     '--window-position=1940,120',

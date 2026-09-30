@@ -11,7 +11,7 @@ const outDir = path.resolve('shots', 'ride-test');
 fs.mkdirSync(outDir, { recursive: true });
 const W = 1024, H = 576;
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });

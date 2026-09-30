@@ -8,7 +8,7 @@ const OUT = path.resolve('shots/_traffic-probe');
 fs.mkdirSync(OUT, { recursive: true });
 const only = process.argv[2] || '';
 const W = 1024, H = 576;
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`,
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`,
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'] });
 const page = await browser.newPage({ viewport: { width: W, height: H } });
 const errors = [];

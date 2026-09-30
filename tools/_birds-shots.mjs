@@ -7,7 +7,7 @@ const url = process.env.SHOT_URL || 'http://localhost:5173/';
 const W = 1024, H = 576;
 fs.mkdirSync(`shots/${label}`, { recursive: true });
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', `--window-size=${W + 16},${H + 160}`, '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });

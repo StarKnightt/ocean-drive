@@ -7,7 +7,7 @@ const label = process.argv[2] || 'debug';
 const query = process.argv[3] || '';
 const ts = (process.argv[4] || '0').split(',').map(Number);
 fs.mkdirSync('shots/people-debug', { recursive: true });
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1616,900'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1616,900'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 800 } });
 page.on('pageerror', (e) => console.log('pageerror', String(e)));
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log(m.type(), m.text()); });

@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 const q = process.argv[2] || 'shot=1';
 const out = process.argv[3] || 'shots/debug.png';
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 }, deviceScaleFactor: 1 });

@@ -1,6 +1,6 @@
 // scratch: why the top-speed run gets stuck
 import { chromium } from 'playwright';
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 await page.goto('http://localhost:5173/?autostart');
 await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 120000 });

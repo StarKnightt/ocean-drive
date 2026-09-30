@@ -7,7 +7,7 @@ import fs from 'node:fs';
 const url = process.env.URL ?? 'http://localhost:5173/';
 fs.mkdirSync('shots/ctxloss', { recursive: true });
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736', '--ignore-gpu-blocklist'],
 });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });

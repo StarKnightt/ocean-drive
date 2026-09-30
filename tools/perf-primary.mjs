@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 const q = process.argv[2] ?? '';
 const vp = process.env.PERF_VIEWPORT?.split('x').map(Number);
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', `--window-position=${process.env.PERF_POS ?? '0,0'}`, '--window-size=1603,902', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'],
 });
 const page = await browser.newPage({ viewport: vp ? { width: vp[0], height: vp[1] } : null });

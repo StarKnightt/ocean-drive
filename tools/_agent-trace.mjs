@@ -2,7 +2,7 @@
 // Usage: node tools/_agent-trace.mjs "a => a.path?.crossings?.length" [seconds] [x,z]
 import { chromium } from 'playwright';
 const pick = process.argv[2], secs = +(process.argv[3] || 30), tp = process.argv[4]?.split(',').map(Number);
-const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
+const browser = await chromium.launch({ headless: false, args: ['--mute-audio', '--window-position=1940,120', '--window-size=1040,736'] });
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 await page.goto('http://localhost:5173/?autostart');
 await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 120000 });

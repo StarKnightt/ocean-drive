@@ -12,7 +12,7 @@ const names = process.argv.slice(2).length ? process.argv.slice(2) : ['iPhone 13
 const expectTier = { 'iPhone 13': 'low', 'Pixel 7': 'low', 'iPad (gen 7)': 'medium' };
 
 const browser = await chromium.launch({
-  channel: 'chrome', headless: false,
+  headless: false,
   args: ['--mute-audio', '--window-position=1940,120', '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist'],
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
