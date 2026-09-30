@@ -15,6 +15,8 @@ globalThis.document = { createElement: el, head: el(), body: el(), documentEleme
 globalThis.addEventListener = (t, fn) => { (listeners[t] ??= []).push(fn); };
 globalThis.window = globalThis;
 globalThis.location = { search: '' };
+const store = {};
+globalThis.localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
 globalThis.matchMedia = () => ({ matches: false });
 globalThis.devicePixelRatio = 1;
 globalThis.screen = { width: 1920, height: 1080 };
@@ -153,6 +155,28 @@ for (const s of cars.slice(2)) {
 }
 const live = V.list.filter((q) => q.origin === 'parked').length;
 check('at most six live cars: the oldest out of sight went back to its spot', live <= 6 && releases >= 1 && disposed === releases && !cars[0].taken, { live, releases, disposed, sedanBack: !cars[0].taken });
+// 8. the saved car: the last car got out of is written to localStorage, and a fresh load puts
+// that body back where it was left (its spot stays empty), and it is never retired
+const rec = JSON.parse(store['ocean-drive.car'] ?? 'null');
+const lastHatch = cars.at(-1);
+const lastEntry = V.list.find((q) => q.spot === lastHatch);
+check('getting out saves the car (body, spot, pose)', rec && rec.body === 'hatch' && rec.spot === lastHatch.index && lastEntry && Math.abs(rec.x - lastEntry.v.x) < 0.05 && Math.abs(rec.z - lastEntry.v.z) < 0.05, rec);
+check('the saved car is the one live car the cap never retires', V.saved === lastEntry, {});
+const cars2 = cars.map((s) => ({ ...s, taken: false, col: { ...s.col, disabled: false }, pose: { ...s.pose } }));
+const fleet2 = { cars: cars2, take(c) { c.taken = true; c.col.disabled = true; }, release(c) { c.taken = false; c.col.disabled = false; } };
+walker.world.circles = [];
+const V2 = createVehicles(new THREE.Scene(), {
+  walker, camera, beach: { groundAt: groundHeight, waterDepthAt: () => 0, swashAt: () => ({ covered: false }) },
+  staticBoxes: [], staticCircles: [], audio: null, renderer: { getDrawingBufferSize: (v) => v.set(1024, 576) }, fleet: fleet2, kit, seatPlayer: () => () => {},
+});
+const back = V2.saved;
+check('a fresh load restores it at the saved pose, from its own spot (left empty)', back && back.body === 'hatch' && Math.hypot(back.v.x - rec.x, back.v.z - rec.z) < 0.05 && Math.abs(back.v.yaw - rec.yaw) < 0.01 && cars2.at(-1).taken && cars2.filter((s) => s.taken).length === 1, { x: back?.v.x, z: back?.v.z, taken: cars2.filter((s) => s.taken).length });
+store['ocean-drive.car'] = JSON.stringify({ ...rec, x: 5000 });
+const V3 = createVehicles(new THREE.Scene(), {
+  walker, camera, beach: { groundAt: groundHeight, waterDepthAt: () => 0, swashAt: () => ({ covered: false }) },
+  staticBoxes: [], staticCircles: [], audio: null, renderer: { getDrawingBufferSize: (v) => v.set(1024, 576) }, fleet: { ...fleet2, cars: cars.map((s) => ({ ...s, taken: false })) }, kit, seatPlayer: () => () => {},
+});
+check('a saved pose outside the world is ignored', V3.saved === null, {});
 const failed = results.filter((ok) => !ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
 process.exit(failed ? 1 : 0);

@@ -18,7 +18,7 @@ import { EYE_HEIGHT, TOWER, CROSS, crossStreetAt } from '../world/layout.js';
 import { QUALITY } from '../quality.js';
 import { createVehicle, stepVehicle, blockedAt, buildGrid, settle, dismountSpots, canRestart } from './sim.js';
 import { OPEN_WORLD, OPEN_SPECS } from './specs.js';
-import { edgeSteer, extentBounds } from '../world/extent.js';
+import { edgeSteer, extentBounds, insideWorld } from '../world/extent.js';
 import { buildBike, buildAtv } from './models.js';
 import { createSkids } from './skids.js';
 import { createChaseCamera } from './camera.js';
@@ -35,6 +35,7 @@ const RIDE_PITCH = { bike: -13, atv: -9, car: -3 };   // deg, the view settles t
 const CAR_LOOK = { yaw: 1.85, up: 0.5, down: -0.85 };   // rad: head turn limits in the driver's seat
 const STARTER = { hero: 1.05, modern: 0.45, atv: 0.6 };   // s of cranking before the engine catches
 const MAX_LIVE = 6;
+export const SAVE_KEY = 'ocean-drive.car';
 const BASE_FOV = 50;
 const TIER = QUALITY.tier;
 const LOW = TIER === 'low';
@@ -210,13 +211,13 @@ export function createVehicles(scene, {
   // --- the drivable fleet ---------------------------------------------------------------
   // a parked car becomes a live one: its own instance at the spot, a sim body, the spot's
   // batched instance and collider off
-  function materialise(spot) {
+  function materialise(spot, pose = spot.pose) {
     const view = kit.makeDrivable(spot.kind, spot.color);
-    const v = createVehicle(OPEN_SPECS[spot.kind], spot.pose, world);
+    const v = createVehicle(OPEN_SPECS[spot.kind], pose, world);
     v.parked = true;
     v.engineOn = false;
     fleet.take(spot);
-    const e = { kind: 'car', body: spot.kind, origin: 'parked', spot, v, m: null, drive: view, kick: 1, startT: 0, door: doorZ(spot.kind), used: clock };
+    const e = { kind: 'car', body: spot.kind, origin: 'parked', spot, color: spot.color, v, m: null, drive: view, kick: 1, startT: 0, door: doorZ(spot.kind), used: clock };
     list.push(e);
     walker.world.circles?.push(...v.circlesWorld);
     view.apply(v);
@@ -228,7 +229,7 @@ export function createVehicles(scene, {
     const live = list.filter((e) => e.origin === 'parked');
     while (live.length > MAX_LIVE) {
       live.sort((a, b) => a.used - b.used);
-      const e = live.find((q) => q !== rider && Math.hypot(camera.position.x - q.v.x, camera.position.z - q.v.z) > 60);
+      const e = live.find((q) => q !== rider && q !== saved && Math.hypot(camera.position.x - q.v.x, camera.position.z - q.v.z) > 60);
       if (!e) return;
       live.splice(live.indexOf(e), 1);
       list.splice(list.indexOf(e), 1);
@@ -238,6 +239,44 @@ export function createVehicles(scene, {
       e.drive.dispose();
       fleet.release(e.spot);
     }
+  }
+
+  // --- the saved car: the last car got out of stays where it was left, across reloads --------
+  let saved = null;
+  function saveCar(e) {
+    if (e.kind !== 'car' || shot) return;
+    saved = e;
+    const v = e.v;
+    const rec = { body: e.body, origin: e.origin, spot: e.spot?.index ?? null, color: e.color ?? null, x: +v.x.toFixed(2), z: +v.z.toFixed(2), yaw: +v.yaw.toFixed(3), damage: e.damage?.save?.() ?? null };
+    try { globalThis.localStorage?.setItem(SAVE_KEY, JSON.stringify(rec)); } catch { /* private mode */ }
+  }
+  function restoreCar() {
+    let rec = null;
+    try { rec = JSON.parse(globalThis.localStorage?.getItem(SAVE_KEY) ?? 'null'); } catch { rec = null; }
+    if (!rec || !Number.isFinite(rec.x) || !Number.isFinite(rec.z) || !insideWorld(rec.x, rec.z, 'vehicle', 1.5, TIER)) return null;
+    const pose = { x: rec.x, z: rec.z, yaw: rec.yaw ?? 0 };
+    let e = null;
+    if (rec.body === 'hero') {
+      e = list.find((q) => q.origin === 'hero');
+      if (!e) return null;
+      Object.assign(e.v, pose);
+      settle(e.v, world);
+      pose3(e, 0);
+    } else if (OPEN_SPECS[rec.body] && kit?.makeDrivable) {
+      // its own spot (left empty, as it was) when it came from the fleet; else a spot of
+      // that body stands in (the fleet has one fewer of it parked)
+      const spot = drivable.find((s) => !s.taken && s.index === rec.spot && s.kind === rec.body)
+        ?? drivable.find((s) => !s.taken && s.kind === rec.body);
+      if (!spot) return null;
+      e = materialise(spot, pose);
+      if (rec.color != null && rec.color !== spot.color) { e.drive.dispose(); e.drive = kit.makeDrivable(rec.body, rec.color); e.color = rec.color; }
+      settle(e.v, world);
+      e.drive.apply(e.v);
+    }
+    if (!e) return null;
+    e.damage?.load?.(rec.damage);
+    saved = e;
+    return e;
   }
 
   // a car's door points (sim local: -x is the driver's side), world coordinates
@@ -299,6 +338,7 @@ export function createVehicles(scene, {
       if (v.yawV) v.yawV = 0;
       if (e.kind === 'car') { v.engineOn = false; v.rpm = 0; v.gear = 1; pose3(e, clock); e.drive.setView?.('fp'); if (e.drive.rig && !e.drive.setView) e.drive.rig.chase = false; }
       rider = null; trans = null; offReq = false;
+      saveCar(e);
       audio?.vehicle?.({ kind: null, event: e.kind === 'car' ? 'door' : undefined });
       hud?.update(null);
       requestShadow();
@@ -740,7 +780,11 @@ export function createVehicles(scene, {
     state() {
       return list.map((e) => ({ kind: e.kind, body: e.body, origin: e.origin, x: +e.v.x.toFixed(2), z: +e.v.z.toFixed(2), yaw: +e.v.yaw.toFixed(3), ridden: e.v.ridden, speed: +e.v.lon.toFixed(2), surf: e.v.surf.kind, engineOn: e.v.engineOn }));
     },
+    // the saved car (the last one got out of): its entry, for the minimap marker
+    get saved() { return saved; },
+    restoreCar,
   };
+  if (OPEN_WORLD && !shot) restoreCar();
   return api;
 }
 
