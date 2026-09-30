@@ -21,7 +21,11 @@ import { preloadPeople } from './world/mixamo.js'; // PEOPLE: Mixamo characters,
 import { buildCrowd } from './world/crowd.js'; // PEOPLE: walkers, joggers, skaters, sitters, drivers
 import { QUALITY, IS_TOUCH } from './quality.js';
 import { createTouchControls } from './player/touch.js';
+import { createAvatar } from './player/avatar.js';
+import { createFootCamera, TP } from './player/foot-camera.js';
+import { loadViewPref, saveViewPref } from './player/view-pref.js';
 import { createVehicles } from './vehicles/index.js';
+import { P_WATER, P_MIST } from './vehicles/spray.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { createExitDrivers } from './world/exit-driver.js';
 import { createMinimap } from './ui/minimap.js';
@@ -209,9 +213,20 @@ const exitDrivers = createExitDrivers(scene, { heightAt: (x, z) => beach.groundA
 walkWorld.circles.push(...exitDrivers.colliders);
 window.__exitDrivers = exitDrivers;
 
+// --- on foot: first or third person (C / V, the touch camera button; kept across reloads)
+const footView = { mode: SHOT ? 'fp' : loadViewPref('foot') };
+let avatar = null, footCam = null;
+
 // --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
 await nextFrame();
 const vehicles = createVehicles(scene, {
+  footView: () => footView.mode,
+  onFootToggle: () => setFootView(footView.mode === 'tp' ? 'fp' : 'tp'),
+  onMount: (e, door, fromTp) => avatar?.enter(e, door, fromTp),
+  onDismount: (e, fromTp) => {
+    avatar?.exit(e, fromTp);
+    if (fromTp && footCam) { footCam.snap(); footCam.blendFrom(camera, 0.8); }
+  },
   walker: controls, camera, beach, audio, renderer, shot: SHOT && !params.has('vehicles'),   // ?shot=1&vehicles: show them for close-ups
   staticBoxes: walkWorld.boxes, staticCircles: walkWorld.circles.filter((c) => !people.colliders.includes(c) && !exitDrivers.colliders.includes(c) && !traffic.colliders.includes(c) && !c.knock),
   dynamicCircles: [...people.colliders, ...traffic.colliders, ...exitDrivers.colliders, ...(dynProps?.colliders ?? [])],
@@ -226,11 +241,49 @@ const vehicles = createVehicles(scene, {
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
+// the third-person camera (its arm stops at the static colliders and the cars standing near)
+// and the player's body (the seated driver's character); none in the ?shot harness
+const camCircles = [];
+function nearCarCircles() {
+  camCircles.length = 0;
+  const px = controls.pos.x, pz = controls.pos.y;
+  for (const e of vehicles.list) {
+    if (e.kind !== 'car' || e.v.ridden || Math.abs(e.v.x - px) > 10 || Math.abs(e.v.z - pz) > 10) continue;
+    for (const c of e.v.circlesWorld) camCircles.push(c);
+  }
+  for (const c of traffic.colliders) if (c.r > 0.3 && Math.abs(c.x - px) < 10 && Math.abs(c.z - pz) < 10) camCircles.push(c);
+}
+footCam = createFootCamera({ grid: vehicles.world.grid, groundAt: beach.groundAt, extra: () => camCircles });
+avatar = !SHOT && peopleAssets
+  ? createAvatar(scene, peopleAssets, { walker: controls, groundAt: beach.groundAt, waterDepthAt: beach.waterDepthAt, doorsOf: (e) => vehicles.doorsOf(e) })
+  : null;
+function footPitchLimits() {
+  const tp = footView.mode === 'tp';
+  controls.pitchMin = tp ? TP.pitchMin : -1.48;
+  controls.pitchMax = tp ? TP.pitchMax : 1.48;
+  controls.pitch = THREE.MathUtils.clamp(controls.pitch, controls.pitchMin, controls.pitchMax);
+}
+function setFootView(mode) {
+  if (SHOT || mode === footView.mode) return;
+  if (!vehicles.riding) footCam.blendFrom(camera, 0.4);
+  if (mode === 'tp') footCam.snap();
+  footView.mode = mode;
+  saveViewPref('foot', mode);
+  footPitchLimits();
+}
+footPitchLimits();
+window.__footView = { get mode() { return footView.mode; }, set: setFootView, toggle: () => vehicles.toggleView() };
+window.__footCam = footCam;
+window.__avatar = avatar;
 // the art-deco minimap (N hides it, Shift+N north up): you and the saved car
 const _mmDir = new THREE.Vector3();
 const minimap = createMinimap({
   shot: SHOT, footprints: hotels.userData.footprints ?? [],
-  getPose: () => { camera.getWorldDirection(_mmDir); return { x: camera.position.x, z: camera.position.z, heading: Math.atan2(_mmDir.x, -_mmDir.z) }; },
+  getPose: () => {
+    camera.getWorldDirection(_mmDir);
+    const foot = !vehicles.riding;   // (the body, not the third-person camera behind it)
+    return { x: foot ? controls.pos.x : camera.position.x, z: foot ? controls.pos.y : camera.position.z, heading: Math.atan2(_mmDir.x, -_mmDir.z) };
+  },
   getSaved: () => { const e = vehicles.saved; return e && e !== vehicles.currentEntry ? { x: e.v.x, z: e.v.z } : null; },
 });
 window.__minimap = minimap;
@@ -292,7 +345,17 @@ controls.onStep = ({ x, z, feetY, speed, land }) => {
   if (stepLog.length > 400) stepLog.shift();
   const gain = land ? 1.3 : Math.min(1.25, 0.8 + speed * 0.1);   // a jump lands a little harder
   audio.footstep(surface, { gain: gain * (surface === 'splash' ? 1.1 : 1), depth });
+  if (surface === 'splash' && avatar) splash(x, z, feetY + depth, speed, land);
 };
+// a splash thrown up round the foot at each step in the surf (and a jump landing in it)
+function splash(x, z, y, speed, land) {
+  const vx = controls.vel.x, vz = controls.vel.y, n = Math.round((land ? 16 : 5 + speed * 3) * (QUALITY.tier === 'low' ? 0.5 : 1));
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, out = 0.3 + Math.random() * (land ? 1.4 : 0.8);
+    vehicles.spray.emit(x + Math.cos(a) * 0.12, y + 0.02, z + Math.sin(a) * 0.12, vx * 0.5 + Math.cos(a) * out, 0.8 + Math.random() * (land ? 2.2 : 1.4), vz * 0.5 + Math.sin(a) * out, P_WATER);
+    if (i % 3 === 0) vehicles.spray.emit(x, y + 0.08, z, vx * 0.3 + Math.cos(a) * 0.3, 0.3 + Math.random() * 0.4, vz * 0.3 + Math.sin(a) * 0.3, P_MIST);
+  }
+}
 
 // UI: a quiet caption over the first frame; no HUD while walking
 const overlay = document.getElementById('overlay');
@@ -305,7 +368,7 @@ function begin() {
 // TOUCH: joystick + drag-look, shown on coarse-pointer devices or after the first touch
 let touch = null;
 const howEl = overlay.querySelector('.how');
-if (OPEN_WORLD && howEl) howEl.innerHTML = '<b>Click to walk</b> — WASD to move, mouse to look, Space to jump, Shift to stroll faster, E to ride the bike or the ATV or get into any parked car (C camera, Space handbrake, H horn, R back to the road), M to mute';
+if (OPEN_WORLD && howEl) howEl.innerHTML = '<b>Click to walk</b> — WASD to move, mouse to look, Space to jump, Shift to stroll faster, C to see yourself (third person), E to ride the bike or the ATV or get into any parked car (C camera, Space handbrake, H horn, R back to the road), M to mute';
 function enableTouch() {
   if (touch || SHOT) return;
   touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView(), onRadio: () => radioNext() });
@@ -542,6 +605,13 @@ function frame(t) {
     prof('walker');
     vehicles.update(dt);
     prof('vehicles');
+    // on foot: the third-person camera (or a first-person one easing in), the body and its shadow
+    const riding = vehicles.riding;
+    if (!riding) {
+      if (footView.mode === 'tp') { nearCarCircles(); footCam.update(controls, dt, camera); } else footCam.blendOnto(camera, dt);
+    }
+    avatar?.update(dt, { body: !riding && (footView.mode === 'tp' || footCam.blending), camera, riding, mounting: vehicles.mounting });
+    prof('avatar');
   }
   if (!SHOT) {
     audio.update(dt, camera); // SOUND: listener pose + auto footsteps

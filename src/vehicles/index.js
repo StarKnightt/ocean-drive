@@ -25,6 +25,7 @@ import { createChaseCamera } from './camera.js';
 import { createHud } from '../ui/hud.js';
 import { createSpray, createWake, P_WATER, P_SAND, P_SPARK, P_GRASS, P_SMOKE, P_MIST } from './spray.js';
 import { createDamage, DENT_SPEED } from './damage.js';
+import { loadViewPref, saveViewPref } from '../player/view-pref.js';
 
 export const PARKED = {
   bike: { x: 7.5, z: -26.5, yaw: -0.17 },
@@ -61,6 +62,8 @@ export function createVehicles(scene, {
   walker, camera, beach, staticBoxes, staticCircles, dynamicCircles = [], audio, shot = false, renderer,
   requestShadow = () => {}, getTouch = () => null, car = null, movers = [],
   fleet = null, kit = null, seatPlayer = null, traffic = null, onDriverOut = null, props = null,
+  // on foot: the view (player/foot-camera.js), C / the camera button there, getting in / out
+  footView = () => 'fp', onFootToggle = null, onMount = null, onDismount = null,
 }) {
   const dyn = [];
   const world = {
@@ -135,7 +138,7 @@ export function createVehicles(scene, {
   let lastShadow = null;
   let virtualKeys = null;
   let fov = BASE_FOV;
-  let view = 'fp';             // 'fp' | 'chase' (cars)
+  let view = loadViewPref('car');   // 'fp' | 'chase' (cars), kept across reloads
   let shake = 0, scrape = 0, lastRecover = -1e9, pendingEvent = null;
   let clock = 0;
 
@@ -211,6 +214,9 @@ export function createVehicles(scene, {
     }
     chase.reset();
     chase.snap();
+  }
+  function toggleView() {
+    if (rider?.kind === 'car') { setView(view === 'chase' ? 'fp' : 'chase'); saveViewPref('car', view); } else if (!rider) onFootToggle?.();
   }
 
   // --- the drivable fleet ---------------------------------------------------------------
@@ -322,7 +328,10 @@ export function createVehicles(scene, {
     rel = wrap(walker.yaw - v.yaw);
     lastYaw = walker.yaw;
     const slide = e.kind === 'car' && door === 'passenger';
-    trans = { t: 0, dur: e.kind === 'car' ? (slide ? 1.1 : 0.6) : 0.4, dip: e.kind === 'car' ? 0.25 : 0, pos: camera.position.clone(), quat: camera.quaternion.clone(), rel0: rel, pitch0: walker.pitch };
+    // (from the third-person view the body walks to the door and the camera blends in from behind)
+    const fromTp = footView() === 'tp';
+    trans = { t: 0, dur: (e.kind === 'car' ? (slide ? 1.1 : 0.6) : 0.4) + (fromTp ? 0.4 : 0), dip: e.kind === 'car' && !fromTp ? 0.25 : 0, pos: camera.position.clone(), quat: camera.quaternion.clone(), rel0: rel, pitch0: walker.pitch, fromTp };
+    onMount?.(e, door, fromTp);
     walker.vel.set(0, 0);
     walker.jumpReq = false;
     hintT = 4;
@@ -369,6 +378,7 @@ export function createVehicles(scene, {
       v.reverse = false;
       if (e.kind === 'car') { v.engineOn = false; v.rpm = 0; v.gear = 1; pose3(e, clock); e.drive.setView?.('fp'); if (e.drive.rig && !e.drive.setView) e.drive.rig.chase = false; }
       rider = null; trans = null; offReq = false;
+      onDismount?.(e, footView() === 'tp');
       saveCar(e);
       audio?.vehicle?.({ kind: null, event: e.kind === 'car' ? 'door' : undefined });
       hud?.update(null);
@@ -418,7 +428,7 @@ export function createVehicles(scene, {
     if (shot || ev.repeat) return;
     if (!walker.active && !rider) return;
     if (ev.code === 'KeyE' || ev.code === 'KeyF') toggle();
-    else if ((ev.code === 'KeyC' || ev.code === 'KeyV') && rider?.kind === 'car') setView(view === 'chase' ? 'fp' : 'chase');
+    else if (ev.code === 'KeyC' || ev.code === 'KeyV') toggleView();
     else if (ev.code === 'KeyR' || ev.code === 'Backspace') recover();
   });
   // (a tab switch can swallow the keyups: no key stays held down)
@@ -722,7 +732,7 @@ export function createVehicles(scene, {
       const k = trans.t, s = k * k * (3 - 2 * k);
       // (a car in the driver's view: the camera is in the head from the first frame, only the
       // look turns; the seated body stays hidden until the turn is done)
-      if (rig && !chaseOn) camera.position.copy(_v);
+      if (rig && !chaseOn && !trans.fromTp) camera.position.copy(_v);
       else {
         camera.position.lerpVectors(trans.pos, _v, s);
         camera.position.y -= trans.dip * Math.sin(Math.PI * Math.min(1, k * 1.4)) * (1 - s * 0.5);
@@ -804,13 +814,15 @@ export function createVehicles(scene, {
     get near() { return near?.kind ?? null; },
     get nearDoor() { return near?.door ?? null; },
     get view() { return view; },
+    // getting in: the transition's progress (0..1) and length (s)
+    get mounting() { return trans && rider ? { k: Math.min(1, trans.t), dur: trans.dur, fromTp: trans.fromTp } : null; },
     // test hook: a held steering input (-1..1), null for the keys
     steerHold: null,
     update,
     toggle,
     recover,
     setView: (mode) => setView(mode),
-    toggleView: () => { if (rider?.kind === 'car') setView(view === 'chase' ? 'fp' : 'chase'); },
+    toggleView,
     mount: (kind) => mount(list.find((e) => e.kind === kind)),
     dismount,
     // the parked fleet: spots that can be driven off (not taken), nearest first

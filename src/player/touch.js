@@ -1,5 +1,6 @@
 // Touch controls: a floating joystick under the left thumb (left ~40% of the screen),
-// drag anywhere else to look, a jump ring and a small mute button bottom-right.
+// drag anywhere else to look, a jump ring and a small mute button bottom-right, the camera
+// button (first / third person on foot, the driver's view / chase in a car).
 // Move and look work at the same time (one tracked touch each). The joystick only
 // writes walker.stick, so movement keeps the walker's acceleration, footsteps,
 // collisions and jump.
@@ -193,7 +194,8 @@ export function createTouchControls(walker, { audio, onRide, onCamera, onRadio }
       rideBtn.textContent = mode === 'off' ? (car ? 'Exit' : 'Off') : car ? 'Enter' : 'Ride';
       rideBtn.setAttribute('aria-label', mode === 'off' ? (car ? 'Get out' : 'Get off') : car ? 'Get in' : 'Ride');
       const riding = mode === 'off';
-      camBtn.classList.toggle('show', riding && car);
+      // (the camera button: first / third person on foot, driver's view / chase in a car)
+      camBtn.classList.toggle('show', riding ? car : true);
       radioBtn.classList.toggle('show', riding && car);
       if (!riding) walker.brakeHeld = false;
       jumpLabel.textContent = riding ? (kind === 'atv' ? 'Boost' : car ? 'Brake' : 'Hop') : 'Jump';
