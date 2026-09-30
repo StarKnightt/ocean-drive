@@ -69,7 +69,7 @@ export function createHud({ units = 'mph' } = {}) {
       if (n !== lastN) { lastN = n; num.textContent = String(n); }
       const a = Math.round(Math.min(1, n / full) * 200) / 200;
       if (a !== lastA) { lastA = a; sweep.setAttribute('d', a > 0.004 ? arc(FROM, FROM + (TO - FROM) * a, R - 2) : ''); }
-      const g = !v.engineOn ? (v.stalled ? 'stalled' : 'off') : v.lon < -0.3 ? 'R' : Math.abs(v.lon) < 0.3 && v.throttle <= 0.05 ? 'N' : v.kind === 'car' ? `D${v.gear}` : 'D';
+      const g = !v.engineOn ? (v.stalled ? 'stalled' : 'off') : v.reverse || v.lon < -0.3 ? 'R' : Math.abs(v.lon) < 0.3 && v.throttle <= 0.05 ? 'N' : v.kind === 'car' ? `D${v.gear}` : 'D';
       if (g !== lastG) { lastG = g; gear.textContent = g; }
     },
     get visible() { return shown; },

@@ -39,6 +39,9 @@ export const MAX_SUBSTEPS = 16;
 const RESTITUTION = { wall: 0.1, post: 0.2, car: 0.3 };
 const FRICTION = 0.3;
 
+// m/s: below this S selects reverse (and W drive) instead of braking
+export const REV_SHIFT = 0.5;
+
 // people are hard blockers, never impulse targets: tagged person, or an ownerless small circle
 export const isPersonCircle = (q) => q.person ?? (!q.owner && q.r > 0 && q.r < 0.6);
 
@@ -131,7 +134,7 @@ export function createVehicle(kind, { x, z, yaw = 0 }, world) {
     wheelH: spec.wheels.map(() => 0), groundY: 0,
     bodyY: 0, bodyV: 0, pitch: 0, pitchV: 0, roll: 0, rollV: 0, pitchT: 0, rollT: 0,
     airY: 0, vyAir: 0, grounded: true,
-    crank: 0, wheelRot: 0, pedal: 0, rpm: spec.idle ?? 0, throttle: 0, load: 0, gear: 1, shiftT: 0, braking: 0, engineOn: k !== 'car',
+    crank: 0, wheelRot: 0, pedal: 0, rpm: spec.idle ?? 0, throttle: 0, load: 0, gear: 1, shiftT: 0, braking: 0, reverse: false, drive: 0, driveDir: 0, engineOn: k !== 'car',
     boostT: 0, bump: 0, land: 0, t: 0, parked: true, ridden: false,
     surf: { kind: 'pavement', soft: 0, depth: 0 },
     wheelDepth: spec.wheels.map(() => 0),
@@ -443,22 +446,31 @@ function drive(v, input, h, hard) {
   let lon = v.vx * fx + v.vz * fz, lat = v.vx * rx + v.vz * rz;
   const vmax = vmaxFor(v, hard);
   const thr = input.throttle;
-  let a = 0;
+  // the selector: S held once nearly stopped selects R, W takes it out again once the
+  // car has been braked to (nearly) a stop; S / W against the motion is the brake
+  if (thr > 0.05 && lon > -REV_SHIFT) v.reverse = false;
+  else if (thr < -0.05 && Math.abs(lon) < REV_SHIFT) v.reverse = true;
+  let a = 0, bk = 0, fwd = false, rev = false;
   if (thr > 0.05) {
-    if (lon < -0.3) a = S.brake * thr;
+    if (v.reverse || lon < -0.3) bk = S.brake * thr;
     else {
       // drive force tapers to zero at the surface's top speed (resistance included)
       const q = lon / (vmax * Math.max(0.35, thr));
       a = (hard ? S.accelHard : S.accel) * thr * clamp(1 - q * q * Math.abs(q), -2, 1);
+      fwd = true;
     }
   } else if (thr < -0.05) {
-    if (lon > 0.3) a = -S.brake * -thr;
-    else a = -S.revAccel * -thr * clamp(1 + lon / S.revMax, -2, 1);
+    if (v.reverse && lon < 0.3) { a = -S.revAccel * -thr * clamp(1 + lon / S.revMax, -2, 1); rev = true; }
+    else bk = S.brake * -thr;
   }
+  // (a pure brake input, the touch Brake button: never selects R)
+  if (input.brake > 0) bk = Math.max(bk, S.brake * Math.min(1, input.brake));
+  v.drive = fwd ? thr : rev ? -thr : 0;
+  v.driveDir = fwd ? 1 : rev ? -1 : 0;
   // handbrake (car): drags the car down and lets the tail slide
   const hb = !!input.handbrake && !!S.handbrake;
   if (hb && Math.abs(lon) > 0.05) a -= Math.sign(lon) * S.handbrake;
-  v.braking = (thr < -0.05 && lon > 0.3) || (thr > 0.05 && lon < -0.3) ? Math.abs(thr) : hb ? 0.7 : 0;
+  v.braking = bk > 0 && Math.abs(lon) > 0.05 ? bk / S.brake : hb ? 0.7 : 0;
   // open world: inside the soft band at a world edge the car is reined in to the taper
   if (S.open && (v._edgeK ?? 1) < 1) {
     const cap = vmaxFor(v, true);
@@ -468,8 +480,10 @@ function drive(v, input, h, hard) {
   a -= G * clamp(Math.sin(v.pitchT), -0.1, 0.1) * 0.8;
   const lon0 = lon;
   lon += a * h;
+  // the brake pulls the speed to zero, never through it
+  if (bk > 0) { const d = bk * h; lon = Math.abs(lon) <= d ? 0 : lon - Math.sign(lon) * d; }
   if (hb && lon0 !== 0 && Math.sign(lon) !== Math.sign(lon0)) lon = 0;
-  const driving = (thr > 0.05 && lon > 0.3) || (thr < -0.05 && lon < -0.3);
+  const driving = (fwd && lon > 0.3) || (rev && lon < -0.3);
   // (open world: the surface's own drag, sand and sinking, holds back a driven car too)
   const rf = rollFor(v);
   const surfDrag = S.open && !S.surfTable ? rf - S.rollBase : 0;
@@ -603,12 +617,12 @@ function sinkStep(v, input, dt) {
   const S = v.spec, cap = S.sinkCap;
   const soft = v.surf.kind === 'sand' ? v.surf.soft : 0;
   const lon = v.vx * -Math.sin(v.yaw) + v.vz * -Math.cos(v.yaw), al = Math.abs(lon);
-  const thrRaw = v.engineOn ? input.throttle : Math.min(0, input.throttle);
-  const thr = Math.abs(thrRaw);
-  const sign = thr > 0.3 ? Math.sign(thrRaw) : 0;
+  // (only driven wheels dig: the brake doesn't, and reverse is a low gear that doesn't spin them)
+  const thr = v.engineOn ? v.drive : 0;
+  const sign = thr > 0.3 ? v.driveDir : 0;
   if (sign && v._rock && sign !== v._rock) for (let i = 0; i < v.sink.length; i++) v.sink[i] *= 0.7;
   if (sign) v._rock = sign;
-  const spin = thr > 0.6 ? (thr - 0.5) * 2 * clamp(1 - al / 4, 0, 1) * soft : 0;
+  const spin = thr > 0.6 && sign > 0 ? (thr - 0.5) * 2 * clamp(1 - al / 4, 0, 1) * soft : 0;
   const gentle = thr > 0.05 && thr <= 0.6;
   for (let i = 0; i < v.sink.length; i++) {
     let s = v.sink[i];
@@ -676,20 +690,20 @@ function post(v, input, dt, world, hard) {
   } else if (car) {
     // N-speed automatic: shift points rise with the throttle; a torque converter lets the
     // revs flare above road speed when pulling away
-    const thr = v.engineOn ? Math.max(0, input.throttle) : 0;
+    const thr = v.engineOn ? v.drive : 0;
     const N = S.ratios.length - 1;
     const up = (g) => lerp(S.shiftAt[g][0], S.shiftAt[g][1], thr);
     v.shiftT = Math.max(0, v.shiftT - dt);
     if (v.gear < N && lon > up(v.gear) && v.shiftT <= 0) { v.gear++; v.shiftT = 0.45; }
     else if (v.gear > 1 && lon < up(v.gear - 1) - 3 && v.shiftT <= 0) { v.gear--; v.shiftT = 0.3; }
-    if (lon < -0.3) v.gear = 1;
+    if (lon < -0.3 || v.reverse) v.gear = 1;
     const conv = S.idle + thr * (hard ? 1500 : 1150) * clamp(1 - al / 9, 0.2, 1);
     const target = v.engineOn ? Math.max(al * S.ratios[v.gear] + thr * 380, conv) : 0;
     v.rpm += (clamp(target, v.engineOn ? S.idle : 0, S.redline) - v.rpm) * (1 - Math.exp(-dt * (v.shiftT > 0.2 ? 10 : 4)));
     v.load = thr * clamp(1 - al / (vmaxFor(v, hard) + 1), 0.2, 1);
   } else {
     // CVT: revs rise with throttle, then with road speed
-    const thr = v.engineOn ? Math.max(0, input.throttle) : 0;
+    const thr = v.engineOn ? v.drive : 0;
     const target = v.engineOn ? S.idle + thr * (hard ? 3600 : 2800) + al * 330 + (thr > 0 ? 400 : 0) : 0;
     v.rpm += (clamp(target, v.engineOn ? S.idle : 0, S.redline) - v.rpm) * (1 - Math.exp(-dt * (target > v.rpm ? 5 : 2.5)));
     v.load = thr * clamp(1 - al / (vmaxFor(v, hard) + 0.5), 0.15, 1);

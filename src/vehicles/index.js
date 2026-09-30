@@ -366,6 +366,7 @@ export function createVehicles(scene, {
       v.ridden = false; v.parked = true;
       v.vx = v.vz = 0; v.lon = 0; v.steer *= 0.3; v.airY = 0; v.vyAir = 0;
       if (v.yawV) v.yawV = 0;
+      v.reverse = false;
       if (e.kind === 'car') { v.engineOn = false; v.rpm = 0; v.gear = 1; pose3(e, clock); e.drive.setView?.('fp'); if (e.drive.rig && !e.drive.setView) e.drive.rig.chase = false; }
       rider = null; trans = null; offReq = false;
       saveCar(e);
@@ -374,11 +375,12 @@ export function createVehicles(scene, {
       requestShadow();
       return true;
     }
-    offFail = 2;
+    // (no room: the controls come back, or the car would hold its brakes for good)
+    offFail = 2; offReq = false;
     return false;
   }
   function toggle() {
-    if (rider) { if (Math.abs(rider.v.lon) > 1.2) offReq = true; else dismount(); return; }
+    if (rider) { if (offReq) offReq = false; else if (Math.abs(rider.v.lon) > 1.2) offReq = true; else dismount(); return; }
     if (!near) return;
     if (near.spot) { const e = materialise(near.spot); mount(e, near.door); return; }
     if (near.traffic) { const e = takeTraffic(near.traffic, near.door); if (e) mount(e, near.door); return; }
@@ -403,7 +405,7 @@ export function createVehicles(scene, {
       api.place(p.x, p.z, p.yaw);
       const v = e.v;
       if (v.sink) v.sink.fill(0);
-      v.bogged = false; v.stalled = false; v.outsideT = 0; v.yawV = 0;
+      v.bogged = false; v.stalled = false; v.outsideT = 0; v.yawV = 0; v.reverse = false;
       if (e.kind === 'car' || e.kind === 'atv') { v.engineOn = true; v.rpm = v.spec.idle ?? 800; e.startT = 0; }
       chase.reset(); chase.snap();
       lastShadow = null;
@@ -419,6 +421,8 @@ export function createVehicles(scene, {
     else if ((ev.code === 'KeyC' || ev.code === 'KeyV') && rider?.kind === 'car') setView(view === 'chase' ? 'fp' : 'chase');
     else if (ev.code === 'KeyR' || ev.code === 'Backspace') recover();
   });
+  // (a tab switch can swallow the keyups: no key stays held down)
+  addEventListener('visibilitychange', () => { if (document.hidden) walker.keys.clear(); });
 
   function findNear() {
     if (!walker.active || walker.airY > 0) return null;
@@ -476,11 +480,14 @@ export function createVehicles(scene, {
     }
     let hop = walker.jumpReq || (virtualKeys ? key('Space') : false);
     walker.jumpReq = false;
-    // car: Space held = handbrake (the touch Brake button while held; a tap pulls it for a moment)
-    let handbrake = false;
+    // car: Space held = handbrake (a tap pulls it for a moment). The touch Brake button held is
+    // the footbrake plus the handbrake. With the controls gone (pointer lock lost, the overlay
+    // up) the car is braked rather than left rolling.
+    let handbrake = false, brake = active ? 0 : 1;
     if (e.kind === 'car') {
       if (hop) hbT = 0.6;
       handbrake = (active && key('Space')) || !!walker.brakeHeld || hbT > 0;
+      if (walker.brakeHeld) brake = 1;
       hop = false;
     }
     if (api.steerHold != null) r = api.steerHold;
@@ -490,7 +497,7 @@ export function createVehicles(scene, {
       const lon = e.v.lon;
       f = Math.abs(lon) > 0.3 ? -Math.sign(lon) : 0; r = 0; hard = false; hop = false;
     }
-    return { throttle: THREE.MathUtils.clamp(f, -1, 1), steer: THREE.MathUtils.clamp(r, -1, 1), hard, hop, handbrake, horn: active && key('KeyH') };
+    return { throttle: THREE.MathUtils.clamp(f, -1, 1), steer: THREE.MathUtils.clamp(r, -1, 1), hard, hop, handbrake, brake, horn: active && key('KeyH') };
   }
 
   // wheel contact point i (world)
@@ -752,9 +759,9 @@ export function createVehicles(scene, {
       // (the hero's voice keeps its own rev mapping: no idle / redline for it)
       kind: e.kind, engine: v.spec.engine ?? (e.kind === 'car' ? 'v8classic' : undefined),
       idle: e.origin === 'hero' ? undefined : v.spec.idle, redline: e.origin === 'hero' ? undefined : v.spec.redline,
-      lon: v.lon, throttle: input.throttle, rpm: v.rpm, load: v.load, surface: v.surf.kind, detail: v.surf.detail, soft: v.surf.soft,
+      lon: v.lon, throttle: v.reverse ? v.drive : input.throttle, rpm: v.rpm, load: v.load, surface: v.surf.kind, detail: v.surf.detail, soft: v.surf.soft,
       depth: Math.max(...v.wheelDepth), coasting: v.coasting, pedal: v.pedal, crank: v.crank, bump: v.curb > 0 ? 0 : v.bump, land: v.curb > 0 ? 0 : v.land,
-      gear: v.gear, braking: v.braking, engineOn: v.engineOn, stalled: !!v.stalled, turn: v.turn ?? 0, handbrake: input.handbrake,
+      gear: v.reverse ? -1 : v.gear, braking: v.braking, engineOn: v.engineOn, stalled: !!v.stalled, turn: v.turn ?? 0, handbrake: input.handbrake,
       hit: v.hit && v.hit.speed > 0.3 ? { speed: v.hit.speed, tangent: v.hit.tangent, material: v.hit.material } : null,
       scrape, curb: v.curb ?? 0, skid: v.skid ?? 0, horn: !!input.horn, event: pendingEvent ?? undefined,
     });
