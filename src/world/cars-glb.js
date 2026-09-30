@@ -553,6 +553,8 @@ const liteGlass = (M, env) => (LITE ??= new Map([
   [M.tint, glassMaterial(env, { color: 0x1a2226, opacity: 0.3, edge: 0.75, key: 'tint-lite', spec: 1.6, envI: 0.8 })],
   [M.windshield, glassMaterial(env, { color: 0x1c2428, opacity: 0.14, edge: 0.75, key: 'windshield-lite', spec: 1.2, envI: 0.7 })],
 ]));
+// (only from the driver's seat: seen from outside, the light panes left the roof reading as
+// the one dark pane of an empty glass box; returns set(lite))
 function lighterGlass(root, M, env) {
   liteGlass(M, env);
   const swap = new Map();
@@ -560,7 +562,14 @@ function lighterGlass(root, M, env) {
     const a = glassSides(from), b = glassSides(to);
     swap.set(a[0], b[0]).set(a[1], b[1]);
   }
-  root.traverse((o) => { if (o.isMesh && swap.has(o.material)) o.material = swap.get(o.material); });
+  const panes = [];
+  root.traverse((o) => { if (o.isMesh && swap.has(o.material)) panes.push([o, o.material, swap.get(o.material)]); });
+  let lite = false;
+  return (on) => {
+    if (on === lite) return;
+    lite = on;
+    for (const [o, dark, light] of panes) o.material = on ? light : dark;
+  };
 }
 
 function applyMaterials(root, M, paint, paint2) {
@@ -1251,7 +1260,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
         o.castShadow = !o.material.transparent;
         if (o.material === M.interior) o.material = M.interiorLite;
       });
-      lighterGlass(L0, M, env);
+      const setLite = lighterGlass(L0, M, env);
       const steer = L0.getObjectByName(kind + '_steer');
       if (steer) steer.userData.q0 = steer.quaternion.clone();
       const needle = L0.getObjectByName(kind + '_needle');
@@ -1271,6 +1280,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
         apply(v) {
           const g = I.root;
           g.visible = true;
+          setLite(!!v.ridden && !rig.chase);
           g.position.set(v.x, v.bodyY, v.z);
           g.rotation.set(-v.pitch, v.yaw + Math.PI, -v.roll, 'YXZ');
           const d = v.steer, ad = Math.abs(d), S = v.spec;
