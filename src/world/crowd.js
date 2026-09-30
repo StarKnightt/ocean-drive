@@ -504,7 +504,18 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     A.speed += (vT - A.speed) * (1 - Math.exp(-dt * acc));
     if (A.speed < 0.02 && vT === 0) A.speed = 0;
     const rate = (A.dodgeT > 0 ? 2.4 : A.kind === 'skate' ? 1.2 : 0.8) * dt;
-    const dLat = clamp(latT - A.lat, -rate, rate);
+    let dLat = clamp(latT - A.lat, -rate, rate);
+    // never step sideways into a vehicle (back to the lane beside a car that has stopped)
+    if (dLat) {
+      path.at(A.s, q);
+      const tx = q.dx * A.dir, tz = q.dz * A.dir, nl = A.lat + dLat;
+      const px = q.x - tz * nl, pz = q.z + tx * nl;
+      for (const o of near) {
+        if (!o.vehicle) continue;
+        const dn = Math.hypot(px - o.x, pz - o.z);
+        if (dn < o.r + R_PERSON + 0.08 && dn < Math.hypot(A.x - o.x, A.z - o.z)) { dLat = 0; break; }
+      }
+    }
     A.lat += dLat;
     A.latT = latT;
     A.s += A.dir * A.speed * dt;

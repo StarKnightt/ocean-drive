@@ -176,9 +176,11 @@ for (const [label, pick, file] of [['promenade', (a) => a.kind === 'walk' && a.p
       // (clearance counts while the car is moving: a stopped car is walked past like a parked one)
       const d = circ(A.x, A.z) - 0.28;
       if (Math.abs(v.lon) > 1.5) minD = Math.min(minD, d);
-      if (d < 0) contact++;
-      // anyone at all inside the body
-      for (const B of window.__people.agents) if (!B.hidden && circ(B.x, B.z) < 0.2) contact++;
+      // contact: anyone at all overlapping the car's collision circles (the body the sim moves)
+      for (const B of window.__people.agents) {
+        if (B.hidden || B.seat) continue;
+        if (v.circlesWorld.some((c) => Math.hypot(B.x - c.x, B.z - c.z) < c.r + 0.28 - 0.03)) contact++;
+      }
       if (!shotDone && d < 4) { shotDone = true; window.__shotNow = file; }
       // passed: the walker is behind the car
       const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
