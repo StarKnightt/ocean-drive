@@ -132,6 +132,14 @@ try {
     }
     if (await ev(() => window.__vehicles.riding)) { await page.keyboard.press('KeyE'); await page.waitForTimeout(1500); }
   }
+  if (want.has('classics')) {
+    const c = await ev(() => window.__cars.parkedClassics.map((q) => [+q.position.x.toFixed(1), +q.position.z.toFixed(1)]));
+    console.log('parked classics', c);
+    if (c[0]) {
+      await ev((p) => window.__walker.teleport(p[0] + 4.2, p[1] - 7, 208, -8), c[0]);
+      await shot('9-parked-classic', 1500);
+    }
+  }
   if (want.has('edge')) {
     await ev(() => window.__walker.teleport(-17.5, -512, 0, -3));
     await shot('8-road-closed-edge', 1800);

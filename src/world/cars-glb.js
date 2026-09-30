@@ -890,6 +890,24 @@ function buildFleet(scene, gltf, M) {
   const kinds = collectKinds(gltf);
   if (!Object.keys(kinds).length) return null;
   const spots = parkedLayout(kinds);
+  // a few of the Ocean Drive curb spots go to parked classics (buildCarsGlb draws them): ones
+  // with room for the longer body, 60 m apart at least
+  const classicSpots = [];
+  // (open world only: the ?shot frames keep their rows)
+  if (OPEN_WORLD) {
+    const row = spots.filter((s) => !s.cross).sort((a, b) => a.z - b.z);
+    const CL = 5.76;
+    for (const want of [-150, 118, -236, 212]) {
+      let best = null;
+      row.forEach((s, i) => {
+        if (s.fixed || Math.abs(s.z - want) > 40 || classicSpots.some((c) => Math.abs(c.z - s.z) < 60)) return;
+        const p = row[i - 1], n = row[i + 1];
+        const room = (o) => !o || Math.abs(o.z - s.z) - kinds[o.kind].L / 2 - CL / 2 > 0.45;
+        if (room(p) && room(n) && (!best || Math.abs(s.z - want) < Math.abs(best.z - want))) best = s;
+      });
+      if (best) { classicSpots.push({ x: best.x, z: best.z, yaw: best.yaw }); spots.splice(spots.indexOf(best), 1); row.splice(row.indexOf(best), 1); }
+    }
+  }
   // one BatchedMesh per material holding every kind's LOD0 + LOD1 geometry
   const mats = new Set();
   for (const k of Object.values(kinds)) for (const lv of k.lods) for (const m of Object.keys(lv)) mats.add(m);
@@ -1020,7 +1038,7 @@ function buildFleet(scene, gltf, M) {
     blobs.setMatrixAt(c.blob, taken || !c.vis ? hidden : blobMats[c.blob]);
     blobs.instanceMatrix.needsUpdate = true;
   };
-  return { colliders, cars, batches, blobs, update, take: (c) => setTaken(c, true), release: (c) => setTaken(c, false) };
+  return { colliders, cars, batches, blobs, update, classicSpots, take: (c) => setTaken(c, true), release: (c) => setTaken(c, false) };
 }
 
 function mergeList(list) {
@@ -1397,14 +1415,27 @@ export async function buildCarsGlb(scene, renderer) {
     scene.add(m.car);
     return { ...m, tail, id: null, spin: 0 };
   });
-  const all = [hero, ...pool];
-  probe.hide.push(hero.car, ...pool.map((m) => m.car));
+  // parked classics in the curb rows (scenery: two-tone paint, the contact blob for a shadow)
+  const PARKED_TONES = [[0x6f9f8c, 0xf1eee4], [0xe9c46a, 0xf6f1e4], [0x2f4f7a, 0xf1eee4], [0xc76a4f, 0xefe8d8]];
+  const parkedClassics = (fleet?.classicSpots ?? []).map((s, i) => {
+    const [c, c2] = PARKED_TONES[i % PARKED_TONES.length];
+    const m = heroInstance(heroGltf, paintMaterial(env, c, 'parked-classic' + i, LACQUER), paintMaterial(env, c2, 'parked-classic2-' + i, LACQUER), M);
+    m.car.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    seat(m.car, s.x, s.z, s.yaw);
+    scene.add(m.car);
+    colliders.push({ min: { x: s.x - 1.0, y: 0, z: s.z - 2.9 }, max: { x: s.x + 1.0, y: 1.2, z: s.z + 2.9 } });
+    m.parkedClassic = true;
+    return m;
+  });
+  const all = [hero, ...pool, ...parkedClassics];
+  probe.hide.push(hero.car, ...pool.map((m) => m.car), ...parkedClassics.map((m) => m.car));
   if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
   const kit = trafficKit(scene, parkedGltf, M, env, pool, probe);
   let heroDriven = false, heroChase = false;
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
+    parkedClassics: parkedClassics.map((m) => m.car),
     traffic: kit,
     // the drivable hero (vehicles/index.js): start pose in sim terms, pose from the sim, eye
     drive: {
@@ -1446,8 +1477,9 @@ export async function buildCarsGlb(scene, renderer) {
       M.screen.userData.uBaseY.value = hero.car.position.y;
       mirror?.update(camera, inside, busy);
       for (const m of all) {
-        if (!m.car.visible) continue;
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);
+        if (m.parkedClassic) m.car.visible = d < LOD.cars;
+        if (!m.car.visible) continue;
         setLevel(m, d < LOD1_AT.hero ? 0 : 1);
       }
     },

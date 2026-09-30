@@ -620,6 +620,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     for (const A of agents) {
       if (A.hidden) continue;
       if (A.path) steer(A, dt);
+      else if (vehicles) react(A, dt);
       const d = camera ? Math.hypot(camera.position.x - A.x, camera.position.z - A.z) : 0;
       // drawn: in range and in view (the long shadow reaches ~8 m away from the sun)
       let vis = d < CULL;
@@ -640,6 +641,74 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         if ((frame + A.skip) % every === 0) { const a = A.acc; A.acc = 0; animate(A, a); }
       }
       place(A);
+      if (vis && A.lookW > 0.01) lookAtCar(A);
+    }
+  }
+
+  // Standing and seated people and the player's vehicles: one coming their way (or pulling up
+  // close) is watched - the head turns to follow it, standing people turn toward it - and a
+  // standing person it would pass close to steps back out of its line (a few backward steps,
+  // facing it), drifting back to their spot once it has gone.
+  const _lk = new THREE.Vector3(), _lq = new THREE.Quaternion(), _lq2 = new THREE.Quaternion(), _Yax = new THREE.Vector3(0, 1, 0);
+  function react(A, dt) {
+    let best = null;
+    for (const e of vehicles.list) {
+      const v = e.v, sp = Math.hypot(v.vx, v.vz);
+      const dx = A.x - v.x, dz = A.z - v.z, d = Math.hypot(dx, dz);
+      if (d > 16 || (sp < 1.2 && !(v.ridden && d < 6))) continue;
+      const t = sp > 0.1 ? Math.max(0, (dx * v.vx + dz * v.vz) / (sp * sp)) : 0;
+      const mx = dx - v.vx * t, mz = dz - v.vz * t, miss = Math.hypot(mx, mz);
+      if (t > 3 || (miss > 4 && d > 6)) continue;
+      const score = t + miss * 0.3;
+      if (!best || score < best.score) best = { v, t, miss, mx, mz, score, sp };
+    }
+    A.lookT = Math.max(0, (A.lookT ?? 0) - dt);
+    if (best) { A.lookT = 2.2; A.lookX = best.v.x; A.lookZ = best.v.z; }
+    A.lookW = THREE.MathUtils.damp(A.lookW ?? 0, A.lookT > 0 ? 1 : 0, A.lookT > 0 ? 5 : 1.5, dt);
+    if (A.seat || !A.at) return;
+    // standing: step back off its line (away from the closest-approach point), face it
+    A.home ??= { x: A.at.x, z: A.at.z, heading: A.at.yaw };
+    if (best && best.miss < 2.6 && best.sp > 1.5) {
+      const ml = Math.hypot(best.mx, best.mz) || 1;
+      const want = Math.min(1.6, 2.8 - best.miss);
+      A.stepX = A.home.x + (best.mx / ml) * want; A.stepZ = A.home.z + (best.mz / ml) * want;
+      A.stepT = 1.6;
+    }
+    A.stepT = Math.max(0, (A.stepT ?? 0) - dt);
+    const tx = A.stepT > 0 ? A.stepX : A.home.x, tz = A.stepT > 0 ? A.stepZ : A.home.z;
+    const ddx = tx - A.x, ddz = tz - A.z, dd = Math.hypot(ddx, ddz);
+    const spd = A.stepT > 0 ? 1.5 : 0.45;
+    const move = Math.min(dd, spd * dt);
+    if (dd > 0.02) { A.x += (ddx / dd) * move; A.z += (ddz / dd) * move; }
+    A.moving = dd > 0.05 ? move / Math.max(dt, 1e-3) : 0;
+    // face the vehicle while it's about; home to the old heading after
+    const face = A.lookW > 0.3 ? Math.atan2(A.lookX - A.x, A.lookZ - A.z) : (A.moving > 0.05 ? Math.atan2(ddx, ddz) : A.home.heading);
+    A.heading += wrap(face - A.heading) * (1 - Math.exp(-dt * 4));
+    A.at.x = A.x; A.at.z = A.z; A.at.yaw = A.heading;
+    // backing away: a walk clip run backwards (forwards when walking back home)
+    if (!A.stepWalk) {
+      A.stepWalk = A.P.action(A.P.asset.fem ? 'walk_casual_f' : 'walk_casual_m');
+      if (A.stepWalk) { A.stepWalk.play(); A.stepWalk.setEffectiveWeight(0); A.stepSpeed = A.P.speedOf(A.stepWalk.getClip().name); }
+    }
+    if (A.stepWalk) {
+      const w = THREE.MathUtils.clamp(A.moving / 0.5, 0, 1);
+      const back = Math.cos(Math.atan2(ddx, ddz) - A.heading) < 0;
+      A.stepWalk.setEffectiveWeight(w);
+      A.idle.setEffectiveWeight(1 - w);
+      A.stepWalk.timeScale = (back ? -1 : 1) * THREE.MathUtils.clamp(A.moving / (A.stepSpeed || 1.3), 0.4, 1.4);
+    }
+  }
+  // the head and neck turned toward the vehicle being watched (after the clip's pose)
+  function lookAtCar(A) {
+    const B = A.P.bones;
+    if (!B.Head || !B.Neck) return;
+    A.P.root.updateMatrixWorld(true);
+    B.Head.getWorldPosition(_lk);
+    const want = Math.atan2(A.lookX - _lk.x, A.lookZ - _lk.z);
+    const rel = THREE.MathUtils.clamp(wrap(want - A.heading), -1.25, 1.25) * A.lookW;
+    for (const [b, f] of [[B.Neck, 0.4], [B.Head, 0.6]]) {
+      b.getWorldQuaternion(_lq);
+      setWorldQuat(b, _lq2.setFromAxisAngle(_Yax, rel * f).multiply(_lq));
     }
   }
 
