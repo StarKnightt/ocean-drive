@@ -1091,7 +1091,15 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
       I.paint.color.setHex(color ?? 0xb9bcbf);
       I.sun.visible = false;
       const L0 = I.levels[0];
-      L0.traverse((o) => { if (o.isMesh) o.castShadow = !o.material.transparent; });
+      // (from the seat the cabin is lit only by the bounce light through the glass: a lighter
+      // trim for the driven car's headliner, pillars and dash)
+      M.interiorLite ??= M.interior.clone();
+      M.interiorLite.color.setHex(0x6b665f);
+      L0.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = !o.material.transparent;
+        if (o.material === M.interior) o.material = M.interiorLite;
+      });
       lighterGlass(L0, M, env);
       const steer = L0.getObjectByName(kind + '_steer');
       if (steer) steer.userData.q0 = steer.quaternion.clone();

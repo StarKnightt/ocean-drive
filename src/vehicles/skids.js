@@ -80,7 +80,7 @@ export function createSkids(scene) {
     put(2, b.x - b.rx * HALF_W, b.y, b.z - b.rz * HALF_W);
     put(3, b.x + b.rx * HALF_W, b.y, b.z + b.rz * HALF_W);
     for (let j = 0; j < 4; j++) {
-      col.set([look[0], look[1], look[2], look[3] * k], (i * 4 + j) * 4);
+      col.set([look[0], look[1], look[2], look[3] * Math.min(1, 0.35 + k)], (i * 4 + j) * 4);
       born[i * 4 + j] = uTime.value;
     }
     lo = Math.min(lo, i); hi = Math.max(hi, i);
@@ -88,6 +88,12 @@ export function createSkids(scene) {
   return {
     mesh,
     get count() { return count; },
+    // the centre of the last n segments laid (for tests / shots)
+    recent(n = 40) {
+      const m = Math.min(n, count), c = { x: 0, z: 0, n: m };
+      for (let k = 1; k <= m; k++) { const i = (head - k + N) % N; c.x += pos[i * 12] / m; c.z += pos[i * 12 + 2] / m; }
+      return c;
+    },
     // one tyre's contact this frame: key (vehicle + wheel), ground point, the car's right
     // vector, skid strength 0..1 (0 ends the strip), surface kind
     mark(key, x, y, z, rx, rz, k, surf) {
@@ -104,8 +110,9 @@ export function createSkids(scene) {
     update(time) {
       uTime.value = time;
       if (hi < 0) return;
+      // (ranges pile up until the next upload, which clears them: several steps can run
+      // between two frames)
       for (const [a, n] of [[aPos, 12], [aCol, 16], [aBorn, 4]]) {
-        a.clearUpdateRanges();
         a.addUpdateRange(lo * n, (hi - lo + 1) * n);
         a.needsUpdate = true;
       }
