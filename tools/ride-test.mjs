@@ -211,7 +211,10 @@ await page.evaluate(() => window.__vehicles.place(24, -95, Math.PI / 2));   // l
 r = await rideTo(2, -95, { maxT: 12, hard: false });
 check('ATV drives up the z -95 vehicle ramp into the park', r.at[0] < 6, r);
 await shot('10b-atv-up-the-ramp', 100);
-r = await rideTo(20, -95, { maxT: 12 });
+// back down the ramp onto the beach, lined up facing east
+await page.evaluate(() => window.__vehicles.place(4, -95, -Math.PI / 2));
+r = await rideTo(24, -95, { maxT: 12, hard: false });
+check('ATV drives back down the ramp onto the sand', r.at[0] > 18, r);
 // the whole beach north -> south
 r = await rideTo(60, -330, { maxT: 40 });
 r = await rideTo(60, 330, { maxT: 120 });
@@ -321,8 +324,8 @@ check('E at speed brakes, then gets off', !brakeOff.riding, brakeOff);
     return 250;
   });
   await page.evaluate((z) => window.__vehicles.place(-20, z, Math.PI / 2), gapZ);
-  r = await rideTo(-35, gapZ, { maxT: 6, hard: false });
-  check('car mounts the hotel-side curb; the patio line stops it', r.at[0] < -24.2 && r.at[0] > -28, { ...r, gapZ });
+  const hotelSide = await page.evaluate(() => { const V = window.__vehicles; const r = V.simulate(['KeyW'], 4); return { x: +V.current.x.toFixed(2), surf: V.current.surf.detail, maxSpeed: r.maxSpeed }; });
+  check('car mounts the hotel-side curb; the patio line stops it', hotelSide.x < -24.2 && hotelSide.x > -28, { ...hotelSide, gapZ });
   // a cross street (7 ST, z = 190)
   await page.evaluate(() => window.__vehicles.place(-19, 190, Math.PI / 2));
   r = await rideTo(-40, 190, { maxT: 12, hard: false });
