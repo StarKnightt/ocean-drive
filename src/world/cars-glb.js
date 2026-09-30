@@ -1150,13 +1150,13 @@ const collapsedCache = new Map();
 function collapsedLod1(gltf, kind, M) {
   if (collapsedCache.has(kind)) return collapsedCache.get(kind);
   const src = gltf.scene.getObjectByName(kind + '_L1');
-  const buckets = { paint: [], tail: [], brake3: [], body: [], glass: [] };
+  const buckets = { paint: [], paint2: [], tail: [], brake3: [], body: [], glass: [] };
   const c = new THREE.Color();
   src?.traverse((o) => {
     if (!o.isMesh || o.parent?.isMesh) return;
     const name = o.material.name, mat = M[name];
     const glass = mat ? mat.transparent : o.material.transparent;
-    const b = name === 'paint' || name === 'paint2' ? 'paint' : mat === M.tail ? 'tail' : mat === M.brake3 ? 'brake3' : glass ? 'glass' : 'body';
+    const b = name === 'paint' ? 'paint' : name === 'paint2' ? 'paint2' : mat === M.tail ? 'tail' : mat === M.brake3 ? 'brake3' : glass ? 'glass' : 'body';
     const g = bake(o, src, b === 'body' ? ['position', 'normal', 'color'] : ['position', 'normal']);
     if (b === 'body') {
       const n = g.attributes.position.count, vc = g.attributes.color, out = new Float32Array(n * 3);
@@ -1225,7 +1225,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
         if (k === 1) {
           c = skipWhenHidden(new THREE.Group());
           c.name = n;
-          const L1 = lod1Materials(env), mats = { paint, tail, brake3, body: L1.body, glass: L1.glass };
+          const L1 = lod1Materials(env), mats = { paint, paint2: paint, tail, brake3, body: L1.body, glass: L1.glass };
           for (const [b, g] of Object.entries(collapsedLod1(gltf, kind, M))) {
             const m = new THREE.Mesh(g, mats[b]);
             m.castShadow = false;
@@ -1419,10 +1419,24 @@ export async function buildCarsGlb(scene, renderer) {
   const PARKED_TONES = [[0x6f9f8c, 0xf1eee4], [0xe9c46a, 0xf6f1e4], [0x2f4f7a, 0xf1eee4], [0xc76a4f, 0xefe8d8]];
   const parkedClassics = (fleet?.classicSpots ?? []).map((s, i) => {
     const [c, c2] = PARKED_TONES[i % PARKED_TONES.length];
-    const m = heroInstance(heroGltf, paintMaterial(env, c, 'parked-classic' + i, LACQUER), paintMaterial(env, c2, 'parked-classic2-' + i, LACQUER), M);
+    const p1 = paintMaterial(env, c, 'parked-classic' + i, LACQUER), p2 = paintMaterial(env, c2, 'parked-classic2-' + i, LACQUER);
+    const m = heroInstance(heroGltf, p1, p2, M);
     m.car.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     seat(m.car, s.x, s.z, s.yaw);
     scene.add(m.car);
+    // (beyond the near range: the far level collapsed to one draw per material, parked for good)
+    const L1 = lod1Materials(env), mats = { paint: p1, paint2: p2, tail: M.tail, brake3: M.brake3, body: L1.body, glass: L1.glass };
+    const far = skipWhenHidden(new THREE.Group());
+    for (const [b, g] of Object.entries(collapsedLod1(heroGltf, 'convertible', M))) {
+      const q = new THREE.Mesh(g, mats[b]);
+      q.castShadow = false; q.receiveShadow = true;
+      far.add(q);
+    }
+    far.add(m.blob.clone());
+    far.position.copy(m.car.position); far.quaternion.copy(m.car.quaternion);
+    far.visible = false;
+    scene.add(far);
+    m.far = far;
     colliders.push({ min: { x: s.x - 1.0, y: 0, z: s.z - 2.9 }, max: { x: s.x + 1.0, y: 1.2, z: s.z + 2.9 } });
     m.parkedClassic = true;
     return m;
@@ -1478,7 +1492,12 @@ export async function buildCarsGlb(scene, renderer) {
       mirror?.update(camera, inside, busy);
       for (const m of all) {
         const d = m.car.getWorldPosition(tmp).distanceTo(camera.position);
-        if (m.parkedClassic) m.car.visible = d < LOD.cars;
+        if (m.parkedClassic) {
+          const near = d < LOD1_AT.hero;
+          m.car.visible = near;
+          m.far.visible = !near && d < LOD.cars;
+          if (!near) continue;
+        }
         if (!m.car.visible) continue;
         setLevel(m, d < LOD1_AT.hero ? 0 : 1);
       }

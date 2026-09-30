@@ -24,6 +24,23 @@ export function staticCull(bm, { pad = 1.15, sort = false } = {}) {
     bm.getBoundingSphereAt(info[i].geometryIndex, _s).applyMatrix4(_m).applyMatrix4(bm.matrixWorld);
     S[i * 4] = _s.center.x; S[i * 4 + 1] = _s.center.y; S[i * 4 + 2] = _s.center.z; S[i * 4 + 3] = _s.radius * pad;
   }
+  // chunks of CH consecutive instances (the rows and clusters were placed in order, so a chunk
+  // is compact): a chunk wholly outside a plane skips its instances, one wholly inside all six
+  // skips their tests
+  const CH = 32, nc = Math.ceil(n / CH), C = new Float32Array(nc * 4), cstate = new Uint8Array(nc);
+  for (let c = 0; c < nc; c++) {
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = c * CH; i < Math.min(n, (c + 1) * CH); i++) {
+      const r = S[i * 4 + 3];
+      if (!(r > 0)) continue;
+      x0 = Math.min(x0, S[i * 4] - r); x1 = Math.max(x1, S[i * 4] + r);
+      y0 = Math.min(y0, S[i * 4 + 1] - r); y1 = Math.max(y1, S[i * 4 + 1] + r);
+      z0 = Math.min(z0, S[i * 4 + 2] - r); z1 = Math.max(z1, S[i * 4 + 2] + r);
+    }
+    if (x0 === Infinity) { C[c * 4 + 3] = -1; continue; }
+    C[c * 4] = (x0 + x1) / 2; C[c * 4 + 1] = (y0 + y1) / 2; C[c * 4 + 2] = (z0 + z1) / 2;
+    C[c * 4 + 3] = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2;
+  }
   const order = new Uint32Array(n).map((_, i) => i);
   const key = new Float32Array(n);
   const at = new THREE.Vector3(Infinity, 0, 0), f0 = new THREE.Vector3(0, 0, 0);
@@ -51,17 +68,36 @@ export function staticCull(bm, { pad = 1.15, sort = false } = {}) {
     const p0 = P[0], p1 = P[1], p2 = P[2], p3 = P[3], p4 = P[4], p5 = P[5];
     const starts = this._multiDrawStarts, counts = this._multiDrawCounts, geos = this._geometryInfo;
     const indirect = this._indirectTexture.image.data;
+    // chunk states: 0 outside, 1 inside, 2 straddling
+    for (let c = 0; c < nc; c++) {
+      const R = C[c * 4 + 3];
+      if (R < 0) { cstate[c] = 0; continue; }
+      const x = C[c * 4], y = C[c * 4 + 1], z = C[c * 4 + 2];
+      let st = 1;
+      for (let q = 0; q < 6; q++) {
+        const p = P[q], d = p.normal.x * x + p.normal.y * y + p.normal.z * z + p.constant;
+        if (d < -R) { st = 0; break; }
+        if (d < R) st = 2;
+      }
+      cstate[c] = st;
+    }
     let k = 0;
     for (let j = 0; j < n; j++) {
+      // (unsorted: the order is the index order, so a chunk out of view is skipped whole)
+      if (!sort && cstate[(j / CH) | 0] === 0) { j = ((j / CH) | 0) * CH + CH - 1; continue; }
       const i = order[j], it = info[i];
       if (!it.visible || !it.active) continue;
+      const cs = cstate[(i / CH) | 0];
+      if (cs === 0) continue;
       const x = S[i * 4], y = S[i * 4 + 1], z = S[i * 4 + 2], r = -S[i * 4 + 3];
-      if (p0.normal.x * x + p0.normal.y * y + p0.normal.z * z + p0.constant < r) continue;
-      if (p1.normal.x * x + p1.normal.y * y + p1.normal.z * z + p1.constant < r) continue;
-      if (p2.normal.x * x + p2.normal.y * y + p2.normal.z * z + p2.constant < r) continue;
-      if (p3.normal.x * x + p3.normal.y * y + p3.normal.z * z + p3.constant < r) continue;
-      if (p4.normal.x * x + p4.normal.y * y + p4.normal.z * z + p4.constant < r) continue;
-      if (p5.normal.x * x + p5.normal.y * y + p5.normal.z * z + p5.constant < r) continue;
+      if (cs === 2) {
+        if (p0.normal.x * x + p0.normal.y * y + p0.normal.z * z + p0.constant < r) continue;
+        if (p1.normal.x * x + p1.normal.y * y + p1.normal.z * z + p1.constant < r) continue;
+        if (p2.normal.x * x + p2.normal.y * y + p2.normal.z * z + p2.constant < r) continue;
+        if (p3.normal.x * x + p3.normal.y * y + p3.normal.z * z + p3.constant < r) continue;
+        if (p4.normal.x * x + p4.normal.y * y + p4.normal.z * z + p4.constant < r) continue;
+        if (p5.normal.x * x + p5.normal.y * y + p5.normal.z * z + p5.constant < r) continue;
+      }
       const g = geos[it.geometryIndex];
       starts[k] = g.start * bpe;
       counts[k] = g.count;

@@ -8,7 +8,7 @@ const browser = await chromium.launch({ headless: false, args: ['--mute-audio', 
 const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
-await page.goto('http://localhost:5173/?shot=0');
+await page.goto((process.env.URL ?? 'http://localhost:5173/') + '?shot=0');
 let failed = 0;
 const check = (ok, msg, data) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}${data ? ' ' + JSON.stringify(data) : ''}`); if (!ok) failed++; };
 
@@ -129,7 +129,7 @@ check(traffic.horn.peak > traffic.far.peak + 6, 'horn audible over traffic', tra
 check(!traffic.clipped && traffic.peak < -0.5, 'traffic: no clipping', { peak: traffic.peak });
 
 // live: start the app muted, ride the convertible past traffic, count voices in the running graph
-await page.goto('http://localhost:5173/?autostart&dynres=0&quality=low');
+await page.goto((process.env.URL ?? 'http://localhost:5173/') + '?autostart&dynres=0&quality=low');
 await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 120000 });
 await page.mouse.click(512, 300);
 await page.waitForTimeout(800);

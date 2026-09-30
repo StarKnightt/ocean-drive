@@ -1,19 +1,26 @@
 // Minimap, bottom left, in the HUD's art-deco manner: a 150 px circle under a thin double gold
 // ring with small spaced capitals for the compass point. The map itself is drawn once from
 // the layout (the drive and its cross streets, the sidewalks, the hotel row, the park and its
-// promenade, the sand, the sea) into an offscreen canvas; each shown frame is one rotated
-// drawImage plus the markers: you (a gold chevron) and the saved car (a small ivory lozenge,
-// pinned to the rim when it is off the map). Heading up by default; N hides / shows it,
+// promenade, the sand, the sea) into a canvas once; it is moved and turned under the disc by
+// a CSS transform (the compositor's work, no per-frame drawing), with the markers: you (a gold
+// chevron) and the saved car (a small ivory lozenge, pinned to the rim when off the map). Heading up by default; N hides / shows it,
 // Shift+N switches heading up / north up. Never in ?shot mode.
 import { HOTEL, SIDEWALK_W, SIDEWALK_E, LANES, PARKING, PARK, SAND, OCEAN, CROSS, CROSS_STREETS, TOWERS } from '../world/layout.js';
 import { promenadeX } from '../world/crowd.js';
 
 const CSS = `
 #minimap { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 30px); bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
-  z-index: 4; width: 150px; height: 150px; pointer-events: none; opacity: 0; transition: opacity 0.6s ease;
-  filter: drop-shadow(0 1px 6px rgba(30, 18, 12, 0.45)); }
+  z-index: 4; width: 150px; height: 150px; pointer-events: none; opacity: 0; transition: opacity 0.6s ease; }
 #minimap.show { opacity: 1; }
-#minimap canvas { position: absolute; inset: 0; width: 150px; height: 150px; }
+#minimap .disc { position: absolute; inset: 3px; border-radius: 50%; overflow: hidden; background: rgba(40, 30, 28, 0.35);
+  box-shadow: 0 1px 8px rgba(30, 18, 12, 0.45); transform: translateZ(0); }
+#minimap .map { position: absolute; left: -3px; top: -3px; transform-origin: 0 0; will-change: transform; }
+#minimap .map canvas { display: block; }
+#minimap .saved { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; background: rgba(255, 246, 228, 0.95); border: 1px solid rgba(120, 72, 40, 0.8); will-change: transform; }
+#minimap svg { position: absolute; inset: 0; width: 150px; height: 150px; overflow: visible; }
+#minimap .compass { will-change: transform; }
+#minimap .compass text { font: italic 400 11px Didot, 'Bodoni 72', 'Bodoni MT', 'Playfair Display', Georgia, serif; fill: #fff4e6; paint-order: stroke; stroke: rgba(40, 24, 14, 0.45); stroke-width: 1.5px; }
+#minimap .you { inset: auto; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); }
 html.touch #minimap { left: calc(env(safe-area-inset-left, 0px) + 12px); top: calc(env(safe-area-inset-top, 0px) + 12px); bottom: auto; scale: 0.72; transform-origin: 0 0; }
 `;
 const SIZE = 150, PX = 1.6;            // css px; map pixels per metre (offscreen)
@@ -71,14 +78,25 @@ export function createMinimap({ footprints = [], shot = false, getPose, getSaved
   document.head.appendChild(style);
   const el = document.createElement('div');
   el.id = 'minimap';
-  const cv = document.createElement('canvas');
-  const dpr = Math.min(2, globalThis.devicePixelRatio || 1);
-  cv.width = cv.height = Math.round(SIZE * dpr);
-  el.appendChild(cv);
+  // the map as a composited layer moved by a CSS transform (no per-frame canvas drawing), the
+  // compass ticks and north point on a layer turned with it; the chevron and the rings fixed
+  const r = SIZE / 2;
+  const ticks = [0, 1, 2, 3].map((q) => { const a = q * Math.PI / 2 - Math.PI / 2, c = Math.cos(a), sn = Math.sin(a); return `<line x1="${(r + c * (r - 8)).toFixed(1)}" y1="${(r + sn * (r - 8)).toFixed(1)}" x2="${(r + c * (r - 1)).toFixed(1)}" y2="${(r + sn * (r - 1)).toFixed(1)}" stroke-width="${q ? 0.8 : 1.4}" />`; }).join('');
+  el.innerHTML = `
+    <div class="disc"><div class="map"></div><i class="saved"></i></div>
+    <svg class="compass" viewBox="0 0 ${SIZE} ${SIZE}"><g stroke="rgba(246, 214, 154, 0.9)">${ticks}</g>
+      <text x="${r}" y="${16}" text-anchor="middle" dominant-baseline="middle">N</text></svg>
+    <svg class="frame" viewBox="0 0 ${SIZE} ${SIZE}"><circle cx="${r}" cy="${r}" r="${r - 2.5}" stroke="rgba(246, 214, 154, 0.85)" stroke-width="1" fill="none" />
+      <circle cx="${r}" cy="${r}" r="${r - 5.5}" stroke="rgba(255, 236, 214, 0.5)" stroke-width="0.7" fill="none" /></svg>
+    <svg class="you" viewBox="-8 -8 16 16"><defs><linearGradient id="mm-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6d8" /><stop offset="1" stop-color="#e9b765" /></linearGradient></defs>
+      <path d="M0 -7 L5 5 L0 2.2 L-5 5 Z" fill="url(#mm-gold)" stroke="rgba(60, 34, 20, 0.7)" stroke-width="0.8" /></svg>`;
   document.body.appendChild(el);
-  const g = cv.getContext('2d');
+  const mapEl = el.querySelector('.map'), compass = el.querySelector('.compass'), you = el.querySelector('.you'), savedEl = el.querySelector('.saved');
   const map = drawStatic(footprints);
-  let on = true, northUp = false, frame = 0;
+  map.style.width = `${map.width * VIEW / PX}px`;
+  map.style.height = `${map.height * VIEW / PX}px`;
+  mapEl.appendChild(map);
+  let on = true, northUp = false, frame = 0, last = '';
   el.classList.add('show');
 
   addEventListener('keydown', (ev) => {
@@ -89,77 +107,32 @@ export function createMinimap({ footprints = [], shot = false, getPose, getSaved
 
   function draw() {
     const p = getPose();
-    if (!p || !g?.save) return;
-    const r = SIZE / 2, k = VIEW;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, SIZE, SIZE);
-    // the map, clipped to the disc: heading up rotates it under the fixed chevron
-    g.save();
-    g.beginPath(); g.arc(r, r, r - 3, 0, Math.PI * 2); g.clip();
-    g.fillStyle = 'rgba(40, 30, 28, 0.35)';
-    g.fillRect(0, 0, SIZE, SIZE);
-    const rot = northUp ? 0 : -p.heading;
-    g.translate(r, r);
-    g.rotate(rot);
-    g.scale(k / PX, k / PX);
-    g.drawImage(map, -(p.x - MAP.x0) * PX, -(p.z - MAP.z0) * PX);
-    g.restore();
-    // the saved car: a small ivory lozenge (on the rim when off the map)
+    if (!p) return;
+    const rot = northUp ? 0 : -p.heading, k = VIEW;
+    const deg = (rot * 180 / Math.PI).toFixed(1);
+    const tx = (-(p.x - MAP.x0) * k).toFixed(1), tz = (-(p.z - MAP.z0) * k).toFixed(1);
+    const key = deg + tx + tz;
+    if (key !== last) {
+      last = key;
+      mapEl.style.transform = `translate(${r}px, ${r}px) rotate(${deg}deg) translate(${tx}px, ${tz}px)`;
+      compass.style.transform = `rotate(${deg}deg)`;
+      you.style.transform = `translate(-50%, -50%) rotate(${northUp ? (p.heading * 180 / Math.PI).toFixed(1) : 0}deg)`;
+    }
+    // the saved car: an ivory lozenge (on the rim when off the map)
     const s = getSaved();
+    savedEl.style.display = s ? 'block' : 'none';
     if (s) {
-      let dx = (s.x - p.x) * k, dz = (s.z - p.z) * k;
-      const c = Math.cos(rot), sn = Math.sin(rot);
+      const dx = (s.x - p.x) * k, dz = (s.z - p.z) * k, c = Math.cos(rot), sn = Math.sin(rot);
       let sx = dx * c - dz * sn, sy = dx * sn + dz * c;
       const d = Math.hypot(sx, sy), lim = r - 9;
       if (d > lim) { sx *= lim / d; sy *= lim / d; }
-      g.save();
-      g.translate(r + sx, r + sy);
-      g.rotate(Math.PI / 4);
-      g.fillStyle = 'rgba(255, 246, 228, 0.95)';
-      g.strokeStyle = 'rgba(120, 72, 40, 0.8)';
-      g.lineWidth = 1;
-      g.fillRect(-3.2, -3.2, 6.4, 6.4);
-      g.strokeRect(-3.2, -3.2, 6.4, 6.4);
-      g.restore();
+      savedEl.style.transform = `translate(${(r + sx).toFixed(1)}px, ${(r + sy).toFixed(1)}px) translate(-50%, -50%) rotate(45deg)`;
     }
-    // you: a gold chevron, pointing the way you face
-    g.save();
-    g.translate(r, r);
-    g.rotate(northUp ? p.heading : 0);
-    g.beginPath(); g.moveTo(0, -7); g.lineTo(5, 5); g.lineTo(0, 2.2); g.lineTo(-5, 5); g.closePath();
-    const gold = g.createLinearGradient(0, -7, 0, 5);
-    gold.addColorStop(0, '#fff6d8'); gold.addColorStop(1, '#e9b765');
-    g.fillStyle = gold;
-    g.fill();
-    g.strokeStyle = 'rgba(60, 34, 20, 0.7)';
-    g.lineWidth = 0.8;
-    g.stroke();
-    g.restore();
-    // the frame: a double gold hairline ring, tick marks at the quarters, the north point
-    g.strokeStyle = 'rgba(246, 214, 154, 0.85)';
-    g.lineWidth = 1;
-    g.beginPath(); g.arc(r, r, r - 2.5, 0, Math.PI * 2); g.stroke();
-    g.strokeStyle = 'rgba(255, 236, 214, 0.5)';
-    g.lineWidth = 0.7;
-    g.beginPath(); g.arc(r, r, r - 5.5, 0, Math.PI * 2); g.stroke();
-    for (let q = 0; q < 4; q++) {
-      const a = rot + q * Math.PI / 2 - Math.PI / 2;
-      g.strokeStyle = 'rgba(246, 214, 154, 0.9)';
-      g.lineWidth = q ? 0.8 : 1.4;
-      g.beginPath(); g.moveTo(r + Math.cos(a) * (r - 8), r + Math.sin(a) * (r - 8)); g.lineTo(r + Math.cos(a) * (r - 1), r + Math.sin(a) * (r - 1)); g.stroke();
-    }
-    const na = rot - Math.PI / 2, nx = r + Math.cos(na) * (r - 15), ny = r + Math.sin(na) * (r - 15);
-    g.font = "italic 400 11px Didot, 'Bodoni 72', 'Bodoni MT', 'Playfair Display', Georgia, serif";
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = 'rgba(40, 24, 14, 0.55)';
-    g.fillText('N', nx + 0.6, ny + 0.8);
-    g.fillStyle = '#fff4e6';
-    g.fillText('N', nx, ny);
   }
 
   return {
     el,
-    // (every second frame: ~0.1 ms)
+    // (every second frame; a transform write, the compositor does the rest)
     update() { if (on && (frame++ & 1) === 0) draw(); },
     toggle(v = !on) { on = v; el.classList.toggle('show', on); },
     setNorthUp(v) { northUp = !!v; },
