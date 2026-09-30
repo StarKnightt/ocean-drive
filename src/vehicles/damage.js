@@ -8,6 +8,8 @@ import * as THREE from 'three';
 
 export const DENT_SPEED = 3.5;      // m/s into the obstacle
 const MAX_DENTS = 24;
+const MAX_DISP = 0.07;              // m, the most any vertex is pushed in, all dents together
+const MAX_DISP_TRIM = 0.02;         // the grille and trim (the dark backing behind them can't dent: kept in front of it)
 const _p = new THREE.Vector3(), _c = new THREE.Vector3(), _n = new THREE.Vector3(), _m = new THREE.Matrix4(), _nm = new THREE.Matrix3();
 
 // view: the drivable modern car (world/cars-glb.js makeDrivable)
@@ -17,7 +19,7 @@ export function createDamage(view) {
   L0.traverse((o) => {
     if (!o.isMesh || o.material?.transparent || !o.geometry.attributes.position?.array) return;
     // the painted body, and the dark trim round it (the meshes that kept their arrays)
-    if (o.material === I.paint || o.geometry.userData.keepArrays) targets.push({ mesh: o, own: false, shared: o.geometry });
+    if (o.material === I.paint || o.geometry.userData.keepArrays) targets.push({ mesh: o, own: false, shared: o.geometry, cap: o.material === I.paint ? MAX_DISP : MAX_DISP_TRIM });
   });
   const dents = [];
 
@@ -61,10 +63,15 @@ export function createDamage(view) {
         if (d2 > Rl * Rl) continue;
         if (!any) { own(t); any = true; }
         const P = t.mesh.geometry.attributes.position;
-        // (smooth falloff, crumpled a little so the reflections break up)
-        const f = 1 - d2 / (Rl * Rl), h = Math.sin(pos.getX(i) * 91.7 + pos.getY(i) * 57.3 + pos.getZ(i) * 33.1) * 43758.5;
-        const k = dl * f * f * (0.7 + 0.6 * (h - Math.floor(h)));
-        P.setXYZ(i, P.getX(i) + ln.x * k, P.getY(i) + ln.y * k, P.getZ(i) + ln.z * k);
+        // (smooth falloff, crumpled a little so the reflections break up; the vertex never
+        // further than MAX_DISP from where it was modelled, however many dents pile up, so
+        // panels don't cross through each other)
+        const q = 1 - Math.sqrt(d2) / Rl, f = q * q * (3 - 2 * q), h = Math.sin(pos.getX(i) * 91.7 + pos.getY(i) * 57.3 + pos.getZ(i) * 33.1) * 43758.5;
+        const k = dl * f * (0.88 + 0.24 * (h - Math.floor(h)));
+        let ox = P.getX(i) + ln.x * k - pos.getX(i), oy = P.getY(i) + ln.y * k - pos.getY(i), oz = P.getZ(i) + ln.z * k - pos.getZ(i);
+        const ol = Math.hypot(ox, oy, oz), cap = t.cap / sc;
+        if (ol > cap) { const s = cap / ol; ox *= s; oy *= s; oz *= s; }
+        P.setXYZ(i, pos.getX(i) + ox, pos.getY(i) + oy, pos.getZ(i) + oz);
         moved.push(i);
       }
       if (any) {
@@ -76,8 +83,14 @@ export function createDamage(view) {
           tmp.setAttribute('position', G.attributes.position);
           if (G.index) tmp.setIndex(G.index);
           tmp.computeVertexNormals();
-          const TN = tmp.attributes.normal;
-          for (const i of moved) N.setXYZ(i, TN.getX(i), TN.getY(i), TN.getZ(i));
+          const TN = tmp.attributes.normal, N0 = g.attributes.normal;
+          // (on the modelled normal's side: a face wound the other way doesn't turn black)
+          for (const i of moved) {
+            let x = TN.getX(i), y = TN.getY(i), z = TN.getZ(i);
+            if (N0 && x * N0.getX(i) + y * N0.getY(i) + z * N0.getZ(i) < 0) { x = -x; y = -y; z = -z; }
+            if (!(x * x + y * y + z * z > 1e-6)) { x = N0?.getX(i) ?? 0; y = N0?.getY(i) ?? 1; z = N0?.getZ(i) ?? 0; }
+            N.setXYZ(i, x, y, z);
+          }
           N.needsUpdate = true;
           tmp.deleteAttribute('normal');
         }
