@@ -262,7 +262,7 @@ function enableTouch() {
   touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView() });
   window.__touch = touch;
   if (howEl) howEl.innerHTML = OPEN_WORLD
-    ? '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV, Enter at any parked car's door'
+    ? '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV, Enter at any parked car’s door'
     : '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike, the ATV or the convertible';
   if (controls.active && !controls.locked) touch.setEnabled(true);
 }

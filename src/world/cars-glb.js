@@ -882,14 +882,14 @@ function buildFleet(scene, gltf, M) {
     blobs.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(s.x, y + 0.012, s.z), q, new THREE.Vector3(2.25, 1, k.L + 0.6)));
     // (the cross-street rows only within ~120 m: they sit behind the hotels from Ocean Drive)
     const hx = s.cross ? k.L / 2 + 0.05 : 1.0, hz = s.cross ? 1.0 : k.L / 2 + 0.05;
-    const col = { min: { x: s.x - hx, y: 0, z: s.z - hz }, max: { x: s.x + hx, y: k.top, z: s.z + hz }, parked: i };
-    colliders.push(col);
+    const box = { min: { x: s.x - hx, y: 0, z: s.z - hz }, max: { x: s.x + hx, y: k.top, z: s.z + hz }, parked: i };
+    colliders.push(box);
     // (the spot, for the drivable fleet: the model origin in sim terms, yaw 0 = north, and
     // the colour; taken = driven off, its instances and collider switched off)
     const R = s.yaw;
     cars.push({
       x: s.x, z: s.z, parts, lod: 0, vis: true, blob: i, far2: s.cross ? 120 * 120 : null,
-      kind: s.kind, color: s.color, index: i, col, taken: false, L: k.L,
+      kind: s.kind, color: s.color, index: i, col: box, taken: false, L: k.L,
       pose: { x: s.x - k.zc * Math.sin(R), z: s.z - k.zc * Math.cos(R), yaw: R - Math.PI },
     });
   });
