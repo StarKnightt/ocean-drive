@@ -140,7 +140,7 @@ export function createVehicle(kind, { x, z, yaw = 0 }, world) {
   if (spec.open) {
     Object.assign(v, {
       yawV: 0, sink: spec.wheels.map(() => 0), bogged: false, stalled: false, stallT: 0,
-      hit: null, curb: 0, edge: Infinity, outsideT: 0, _rock: 0,
+      hit: null, curb: 0, edge: Infinity, outsideT: 0, _rock: 0, slip: 0, skid: 0,
     });
     const m = spec.mass ?? 1500, L = spec.length ?? 4.8, W = spec.width ?? 1.8;
     spec._m ??= m;
@@ -523,8 +523,12 @@ const _c = {};
 function substepOpen(v, input, h, world, hard) {
   const S = v.spec;
   const { fx, fz, rx, rz, lon, lat, yawRate } = drive(v, input, h, hard);
-  // collision spin relaxes as the tyres bite
-  v.yawV *= Math.exp(-h * 3 * Math.max(0.3, gripFor(v)));
+  // collision spin relaxes as the tyres bite. A car on the handbrake at speed: the locked
+  // rear loses grip (the spin relaxes slowly) and the steering swings the tail out; counter-
+  // steering (the kinematic rate the other way) holds the angle
+  const hb = v.kind === 'car' && !!input.handbrake && Math.abs(lon) > 2;
+  v.yawV *= Math.exp(-h * 3 * Math.max(0.3, gripFor(v)) * (hb ? 0.25 : 1));
+  if (hb) v.yawV = clamp(v.yawV - lon * v.steer * 0.6 * (S.drift ?? 1) * h, -2.5, 2.5);
   const yaw = v.yaw + (yawRate + v.yawV) * h;
   let vx = fx * lon + rx * lat, vz = fz * lon + rz * lat;
   const nx = v.x + vx * h, nz = v.z + vz * h;
@@ -696,6 +700,9 @@ function post(v, input, dt, world, hard) {
     v.wheelDepth[i] = px > SAND.x0 + 30 && world.waterDepthAt ? world.waterDepthAt(px, pz) : 0;
   }
   if (S.open) {
+    // tyre slip (m/s sideways) and a 0..1 skid level: sliding, or the handbrake at speed
+    v.slip = v.vx * cy - v.vz * sy;
+    v.skid = v.kind === 'car' ? Math.max(clamp((Math.abs(v.slip) - 1.5) / 3, 0, 1), input.handbrake && al > 2 ? 0.6 * Math.min(1, al / 8) : 0) : 0;
     if (S.sinkCap) sinkStep(v, input, dt);
     // the engine drowns once the water (plus the bow wave at speed) reaches the intake
     if (S.intake) {

@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   WORLD_Z, CURB_HEIGHT, SIDEWALK_W, PARKING, LANES, SIDEWALK_E, PARK, SAND,
-  CAR, TOWER, sandHeight, SHORE_X, CROSS, CROSS_STREETS,
+  CAR, TOWER, sandHeight, SHORE_X, CROSS, CROSS_STREETS, RAMPS,
 } from './layout.js';
+import { OPEN_WORLD } from '../vehicles/specs.js';
 import { noiseColorTexture, mulberry32 } from '../textures/noise.js';
 
 // Box from explicit bounds with world-space planar UVs (u = x / tile, v = z / tile).
@@ -184,8 +185,14 @@ function buildGround(group) {
   coral.customProgramCacheKey = () => 'coral-wall-v3';
   const cap = new THREE.MeshStandardMaterial({ map: coralTex, color: 0xcfc2aa, roughness: 0.9, shadowSide: THREE.FrontSide });
   // (texture covers 2.4 m: coursed blocks 0.6 x 0.3 m)
-  group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, -Z, Z, 2.4), coral, { cast: true }));
-  group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, -Z, Z, 2.4), cap, { cast: true }));
+  // (open world: cut where the vehicle ramps pass through; beach.js builds them)
+  const runs = OPEN_WORLD
+    ? [-Z, ...RAMPS.flatMap((r) => [r.z - r.hw - 0.2, r.z + r.hw + 0.2]), Z].reduce((o, z, i, a) => (i % 2 ? o : [...o, [z, a[i + 1]]]), [])
+    : [[-Z, Z]];
+  for (const [z0, z1] of runs) {
+    group.add(mesh(slab(PARK.wallX - 0.25, PARK.wallX + 0.35, 0, 0.6, z0, z1, 2.4), coral, { cast: true }));
+    group.add(mesh(slab(PARK.wallX - 0.3, PARK.wallX + 0.4, 0.6, 0.68, z0, z1, 2.4), cap, { cast: true }));
+  }
 
   // (sand, swash and the lifeguard tower: beach.js)
 }

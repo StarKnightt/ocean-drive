@@ -43,7 +43,7 @@ const kmh = (v) => +(v.lon * 3.6).toFixed(1);
 const results = [];
 const check = (name, ok, info) => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${JSON.stringify(info)}`); };
 
-check('OPEN_WORLD is off by default; specFor keeps the current specs', OPEN_WORLD === false && specFor('car') === specFor('car', false) && !specFor('car').open && specFor('car', true).body === 'hero', { OPEN_WORLD });
+check('OPEN_WORLD is on by default; specFor(kind, false) keeps the road-only specs', OPEN_WORLD === (process.env.OPEN_WORLD !== '0') && !specFor('car', false).open && specFor('car', true).body === 'hero' && specFor('car').open === OPEN_WORLD, { OPEN_WORLD });
 
 // --- road: 0-100 and top speed per body (flat, unbounded)
 for (const [body, t100, top] of [['sedan', 9, 170], ['hatch', 10, 150], ['pickup', 11, 150], ['coupe', 8.5, 175], ['hero', 14.5, 120]]) {
@@ -170,15 +170,15 @@ function wade(body) {
   check('the swash drifts a car in the surf up the beach', a.x < b.x - 0.05 && Math.abs(b.x - 60) < 0.01, { drift: +(a.x - b.x).toFixed(3) });
 }
 
-// --- the beach ramps (z -95 and +95)
+// --- the beach ramps (z -95 and +112)
 check('ramp grades from the park to the sand crest', Math.abs(rampHeight(RAMP_X.x0, -95) - 0.15) < 1e-6 && Math.abs(rampHeight(RAMP_X.x1, -95) - sandHeight(RAMP_X.x1)) < 1e-6 && rampHeight(10, -80) === null, { top: +rampHeight(RAMP_X.x1, -95).toFixed(3) });
 for (const body of ['sedan', 'hero', 'pickup', 'atv']) {
   const down = make(body, { x: 3, z: -95, yaw: E });
   drive(down, { throttle: 0.6, steer: 0 }, 8, world, (q) => q.x > 18);
-  const up = make(body, { x: 16, z: 95, yaw: W });
+  const up = make(body, { x: 16, z: 112, yaw: W });
   up.vx = -3; up.lon = 3;   // (rolling in off the beach: a car can't pull away gently in dry sand)
   drive(up, { throttle: 0.6, steer: 0 }, 10, world, (q) => q.x < 4);
-  check(`${body} drives down the z -95 ramp onto the beach and up the z 95 ramp`, down.x > 18 && up.x < 4, { down: +down.x.toFixed(2), up: +up.x.toFixed(2) });
+  check(`${body} drives down the z -95 ramp onto the beach and up the z 112 ramp`, down.x > 18 && up.x < 4, { down: +down.x.toFixed(2), up: +up.x.toFixed(2) });
 }
 {
   const v = make('sedan', { x: 3, z: -80, yaw: E });

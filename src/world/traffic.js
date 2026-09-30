@@ -70,7 +70,7 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
 
   const slots = sim.cars.map((c) => ({
     car: c, inst: null, pitch: 0, pitchV: 0, spin: 0, lod: -1, lastRespawn: -1, vPrev: 0, lamp: null,
-    circles: CIRCLES.map((dz) => ({ x: 0, z: 0, r: 0, dz })),
+    circles: CIRCLES.map((dz) => ({ x: 0, z: 0, r: 0, dz, car: c })),
   }));
   for (const s of slots) colliders.push(...s.circles);
 
@@ -156,8 +156,8 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
       }
       s.spin += (c.v * dt) / I.wheelR;
       for (const set of I.wheels) for (const w of set) w.rotation.x = s.spin;
-      // lamps
-      const lamp = c.braking ? 'brake' : 'run';
+      // lamps (stunned after a bump: the tail lamps flash as hazards)
+      const lamp = c.stunT > 0 ? ((sim.time * 1.6) % 1 < 0.5 ? 'brake' : 'run') : c.braking ? 'brake' : 'run';
       if (s.lamp !== lamp) {
         s.lamp = lamp;
         setLamp(I.tail, TAIL[lamp]);
@@ -198,6 +198,12 @@ export function buildTraffic(scene, { kit, shot = false, seed = 11 } = {}) {
       return sim.cars.filter((c) => !c.hidden && Math.abs(c.z) < END_Z).map((c) => ({ id: c.id, x: c.x, z: c.z, v: c.v, a: c.a, dir: c.dir, classic: c.classic, braking: c.braking }));
     },
     honks() { return honkQueue.splice(0); },
+    // the player bumped traffic car c: it stops with its hazards on and honks once
+    bump(c, seconds = 4) {
+      if (!c || c.hidden) return;
+      if (!(c.stunT > 0)) c.honk++;
+      c.stunT = Math.max(c.stunT ?? 0, seconds);
+    },
     state() {
       return sim.cars.map((c) => ({ id: c.id, model: c.model, color: c.color, dir: c.dir, z: +c.z.toFixed(1), v: +c.v.toFixed(2), a: +c.a.toFixed(2), braking: c.braking, reason: c.reason, hidden: c.hidden, len: c.len }));
     },

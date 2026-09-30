@@ -5,6 +5,7 @@ const ctx2d = new Proxy({}, { get: () => () => ({ addColorStop() {} }) });
 const el = () => ({
   style: {}, classList: { toggle() {}, add() {}, remove() {}, contains: () => false },
   appendChild() {}, set innerHTML(v) {}, set textContent(v) {}, getContext: () => ctx2d, width: 0, height: 0,
+  querySelector: () => el(), setAttribute() {},
 });
 const listeners = {};
 globalThis.document = { createElement: el, head: el(), body: el(), documentElement: el() };

@@ -16,8 +16,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   SAND, SEA_LEVEL, SHORE_X, BREAK_X, WET_LINE_X, TOWER, TOWERS, PARK, SAND_DETAIL_Z, DISTRICT,
-  sandHeight, sandDetail, groundHeight, compassToDir, SUN,
+  sandHeight, sandDetail, groundHeight, groundHeightOpen, compassToDir, SUN, RAMPS, RAMP_X, rampHeight,
 } from './layout.js';
+import { OPEN_WORLD } from '../vehicles/specs.js';
 import { SKY_FULL_GLSL, FOG_FN_GLSL } from '../sky.js';
 import { SURF_GLSL, FOAM_GLSL } from './surf.js';
 import { mulberry32 } from '../textures/noise.js';
@@ -35,6 +36,9 @@ const STEPS = [[10.8, 11.1, 0.33], [11.1, 11.4, 0.5], [11.4, 12.55, 0.7]];   // 
 const nearAccess = (z, pad = 0) => ALL_ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
 const nearOrigAccess = (z, pad = 0) => ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
 const nearMoreAccess = (z, pad = 0) => MORE_ACCESS_Z.some((a) => Math.abs(z - a) < ACCESS_HALF + pad);
+// open world: the vehicle ramps through the seawall (layout.js RAMPS) and their clear run-out
+const RAMPS_ON = OPEN_WORLD ? RAMPS : [];
+const nearRamp = (z, pad = 0) => RAMPS_ON.some((r) => Math.abs(z - r.z) < r.hw + pad);
 
 // ---------------------------------------------------------------------------
 // churned-sand bake: R,G = slope (dh/dx, dh/dz), B = lit fraction under the fixed
@@ -892,7 +896,7 @@ function addInBlocks(scene, im, block = 60) {
 
 // ranges: z spans to plant; path: the gaps that steer the random stream (the original
 // accesses for the original span), gap: extra gaps left empty without touching the stream
-function duneVegetation(scene, rnd, colliders, ranges = [[-220, 220]], path = (z) => nearOrigAccess(z, 1.3), gap = (z) => nearMoreAccess(z, 1.3)) {
+function duneVegetation(scene, rnd, colliders, ranges = [[-220, 220]], path = (z) => nearOrigAccess(z, 1.3), gap = (z) => nearMoreAccess(z, 1.3) || nearRamp(z, 1.6)) {
   const ground = (x, z) => sandHeight(x) + sandDetail(x, z);
   const fenceX = SAND.x0 + 4.6;
   const grape = [], oats = [], palms = [];
@@ -1002,12 +1006,43 @@ function seawallAccess(scene, colliders) {
   const m = new THREE.Mesh(mergeGeometries(parts), paintedMaterial({ wear: 0 }));
   m.castShadow = m.receiveShadow = true;
   scene.add(m);
-  const cuts = [DISTRICT.zMin - 10, ...[...ALL_ACCESS_Z].sort((a, b) => a - b).flatMap((a) => [a - ACCESS_HALF, a + ACCESS_HALF]), DISTRICT.zMax + 10];
+  const gaps = [...ALL_ACCESS_Z.map((a) => [a - ACCESS_HALF, a + ACCESS_HALF]), ...RAMPS_ON.map((r) => [r.z - r.hw - 0.2, r.z + r.hw + 0.2])].sort((a, b) => a[0] - b[0]);
+  const cuts = [DISTRICT.zMin - 10, ...gaps.flat(), DISTRICT.zMax + 10];
   for (let i = 0; i < cuts.length; i += 2) colliders.push({ min: { x: WALL.x0, y: 0, z: cuts[i] }, max: { x: WALL.x1, y: WALL.top, z: cuts[i + 1] } });
   for (const az of ALL_ACCESS_Z) for (const s of [-1, 1]) {
     const zc = az + s * (ACCESS_HALF + 0.1);
     colliders.push({ min: { x: 10.75, y: 0, z: zc - 0.1 }, max: { x: 12.6, y: 0.78, z: zc + 0.1 } });
   }
+  if (!RAMPS_ON.length) return;
+  // vehicle ramps: a grooved concrete grade from the lawn over the cut wall to the sand
+  // crest, between low cheek walls that follow the slope
+  const { x0, x1 } = RAMP_X;
+  const grade = (x) => rampHeight(Math.min(x1, Math.max(x0, x)), RAMPS_ON[0].z);
+  const wedge = (xa, xb, za, zb, lift, bottom, hex) => {
+    const g = new THREE.BoxGeometry(xb - xa, 1, zb - za, 12, 1, 1).translate((xa + xb) / 2, 0.5, (za + zb) / 2);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) > 0.5 ? grade(p.getX(i)) + lift : bottom);
+    g.computeVertexNormals();
+    return colorize(g, hex);
+  };
+  const ramp = [];
+  for (const r of RAMPS_ON) {
+    ramp.push(wedge(x0, x1, r.z - r.hw, r.z + r.hw, 0.004, -0.3, 0xd3c8b4));
+    // traction grooves across the grade
+    for (let x = x0 + 0.35; x < SAND.x0 - 0.1; x += 0.45) {
+      const y = grade(x);
+      ramp.push(boxAt(x - 0.03, x + 0.03, y - 0.01, y + 0.009, r.z - r.hw + 0.15, r.z + r.hw - 0.15, 0xa99d88));
+    }
+    for (const s of [-1, 1]) {
+      const zc = r.z + s * (r.hw + 0.1);
+      ramp.push(wedge(x0, x1 + 0.3, zc - 0.1, zc + 0.1, 0.38, 0, 0xcbbd9f));
+      colliders.push({ min: { x: x0, y: 0, z: zc - 0.1 }, max: { x: x1 + 0.3, y: 0.95, z: zc + 0.1 }, ramp: true });
+    }
+  }
+  const rm = new THREE.Mesh(mergeGeometries(ramp), paintedMaterial({ wear: 0 }));
+  rm.castShadow = rm.receiveShadow = true;
+  rm.name = 'beach-ramps';
+  scene.add(rm);
 }
 
 function props(scene, colliders) {
@@ -1083,7 +1118,8 @@ export function buildBeach(scene, surf) {
   duneVegetation(scene, mulberry32(2025), colliders, [[-DISTRICT.zMax - 5, -221], [221, DISTRICT.zMax + 5]], (z) => nearAccess(z, 1.3), () => false);
   const towers = [{ surfaces, flagU }, ...TOWERS.slice(1).map((tw) => buildTower(scene, colliders, tw))];
 
-  const groundAt = (x, z) => groundHeight(x, z);
+  // (open world: the vehicle ramps are part of the ground for the walker, the people and the cars)
+  const groundAt = OPEN_WORLD ? groundHeightOpen : groundHeight;
   function heightAt(x, z, currentY = -Infinity) {
     const g = groundAt(x, z);
     const reach = (y) => currentY >= y - 0.45;   // a step up of up to 45 cm is walkable

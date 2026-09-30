@@ -3,9 +3,9 @@
 // blender/modern.py K, all on the shared surface table (SURF). Pure data and maths (no three,
 // no DOM) so the Node tests can load it.
 //
-// OPEN_WORLD picks which set specFor() hands out. It is off by default; turn it on with
-// ?openworld=1 in the URL, globalThis.OPEN_WORLD = true before the app loads, or
-// OPEN_WORLD=1 in the environment (Node). ?shot=1 always forces it off.
+// OPEN_WORLD picks which set specFor() hands out. It is on by default; turn it off with
+// ?openworld=0 in the URL, globalThis.OPEN_WORLD = false before the app loads, or
+// OPEN_WORLD=0 in the environment (Node). ?shot=1 always forces it off.
 import { crossStreetAt } from '../world/layout.js';
 
 function readFlag() {
@@ -16,7 +16,7 @@ function readFlag() {
   const env = g.process?.env?.OPEN_WORLD;
   if (env != null) return env === '1' || env === 'true';
   if (q?.has('openworld')) return q.get('openworld') !== '0';
-  return false;
+  return true;
 }
 export const OPEN_WORLD = readFlag();
 
@@ -134,7 +134,7 @@ function modern(body, b) {
   const eng = ENGINES[b.engine];
   const accel = accelFor(b.t100, vtop[0]);
   return {
-    kind: 'car', body, open: true, engine: b.engine,
+    kind: 'car', body, open: true, engine: b.engine, drift: body === 'coupe' ? 1.3 : body === 'pickup' ? 0.8 : 1,
     wheelbase: b.uF - b.uR, track: 2 * b.track, wheelR: b.R,
     wheels: [[-b.track, -b.uF], [b.track, -b.uF], [-b.track, -b.uR], [b.track, -b.uR]],
     circles: circlesFor(b.L, b.W0), length: b.L, width: 2 * b.W0,
@@ -155,7 +155,7 @@ const heroOpen = (() => {
   const accel = accelFor(14.5, vtop[0]);
   return {
     ...car, kind: 'car', body: 'hero', open: true, engine: 'v8classic',
-    xMin: -Infinity, maxStep: 0.2, accessStep: 0.2, intake: 0.32, maxDepth: 0.52,
+    xMin: -Infinity, maxStep: 0.2, accessStep: 0.2, intake: 0.32, maxDepth: 0.52, drift: 1.15,
     mass: 1750, offroad: 0.5, sinkCap: 0.12, length: 5.76, width: 2.0,
     vtop, rollBase: 0.2, accel, accelHard: accel * 1.2,
     // shifts spread over the wider speed range (the 3-speed keeps its ratios)

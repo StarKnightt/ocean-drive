@@ -15,7 +15,8 @@ const JUMP_V = Math.sqrt(2 * GRAVITY * 0.45);   // 0.45 m apex
 const DIP_K = 120;                      // landing dip spring stiffness (1/s^2)
 
 export class Walker {
-  // world: { heightAt(x, z, currentY), boxes: [{min,max}], circles: [{x,z,r}], bounds: {x0,x1,z0,z1} }
+  // world: { heightAt(x, z, currentY), boxes: [{min,max}], circles: [{x,z,r}], bounds: {x0,x1,z0,z1},
+  //   optional inside(x, z), softDistance(x, z), softWidth (world/extent.js) }
   constructor(camera, dom, world) {
     this.camera = camera;
     this.dom = dom;
@@ -164,9 +165,15 @@ export class Walker {
     let tx = -sy * f + cy * r, tz = -cy * f - sy * r;
     const tl = Math.hypot(tx, tz);
     if (tl > 0) { tx = (tx / tl) * speed; tz = (tz / tl) * speed; }
-    // soft ends of the walkable district: walking on toward z0 / z1 slows to a stop
-    const B = this.world.bounds;
-    if (B.soft) {
+    // soft ends of the walkable world (the open road ends): walking on toward one slows to a stop
+    const W = this.world, B = W.bounds;
+    if (W.softDistance && tl > 0) {
+      const d0 = W.softDistance(this.pos.x, this.pos.y), soft = W.softWidth ?? 14;
+      if (d0 < soft && W.softDistance(this.pos.x + tx * 0.2, this.pos.y + tz * 0.2) < d0) {
+        const k = Math.pow(THREE.MathUtils.clamp(d0 / soft, 0, 1), 0.75);
+        tx *= k; tz *= k;
+      }
+    } else if (B.soft) {
       const room = tz < 0 ? this.pos.y - B.z0 : B.z1 - this.pos.y;
       tz *= Math.pow(THREE.MathUtils.clamp(room / B.soft, 0, 1), 0.75);
     }
@@ -253,19 +260,22 @@ export class Walker {
     return true;
   }
 
+  // world: inside(x, z) (world/extent.js) when given, else the bounds rectangle; colliders
+  // flagged disabled (a parked car that has been driven off) are skipped
   blocked(x, z) {
     const W = this.world, b = W.bounds;
-    if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) return true;
+    if (W.inside ? !W.inside(x, z) : x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1) return true;
     const g = W.heightAt(x, z, this.feetY);
     if (g - this.feetY > STEP_UP) return true;
     if (SEA_LEVEL - g > MAX_WADE) return true;
     const feet = this.feetY, head = feet + 1.8;
     for (const c of W.circles) {
+      if (c.disabled) continue;
       const dx = x - c.x, dz = z - c.z, rr = RADIUS + c.r;
       if (dx * dx + dz * dz < rr * rr) return true;
     }
     for (const q of W.boxes) {
-      if (q.max.y < feet + 0.05 || q.min.y > head) continue;  // below the feet, or overhead
+      if (q.disabled || q.max.y < feet + 0.05 || q.min.y > head) continue;  // below the feet, or overhead
       const cx = Math.max(q.min.x, Math.min(x, q.max.x)), cz = Math.max(q.min.z, Math.min(z, q.max.z));
       const dx = x - cx, dz = z - cz;
       if (dx * dx + dz * dz < RADIUS * RADIUS) return true;

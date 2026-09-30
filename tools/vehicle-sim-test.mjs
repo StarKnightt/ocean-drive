@@ -1,16 +1,21 @@
 // Node-only checks of the vehicle physics (no browser): speeds per surface, the water
-// limit, the ATV's beach-only bound, the seawall accesses and no tunnelling at speed.
+// limit and the ATV's stall, the seawall accesses and the vehicle ramps, the curbs, and no
+// tunnelling at speed. Runs the default game (open world on; OPEN_WORLD=0 for the old
+// road-only rules, which the checks marked [road-only] then cover instead).
 // Usage: node tools/vehicle-sim-test.mjs
-import { createVehicle, stepVehicle, buildGrid, ACCESS_ZS } from '../src/vehicles/sim.js';
-import { groundHeight, SEA_LEVEL, PARK } from '../src/world/layout.js';
+import { createVehicle, stepVehicle, buildGrid, ACCESS_ZS, canRestart, OPEN_WORLD } from '../src/vehicles/sim.js';
+import { groundHeight, SEA_LEVEL, PARK, RAMPS, RAMP_X } from '../src/world/layout.js';
 import { createSurf } from '../src/world/surf.js';
 
 const surf = createSurf({ frozen: true });
-// the seawall as beach.js builds it: solid except at the accesses, plus the cheek walls
+// the seawall as beach.js builds it: solid except at the accesses (and, open world, the
+// vehicle ramps), plus the cheek walls
 const boxes = [];
-const cuts = [-350, ...[...ACCESS_ZS].sort((a, b) => a - b).flatMap((a) => [a - 1.2, a + 1.2]), 350];
+const gaps = [...ACCESS_ZS.map((a) => [a - 1.2, a + 1.2]), ...(OPEN_WORLD ? RAMPS : []).map((r) => [r.z - r.hw - 0.2, r.z + r.hw + 0.2])].sort((a, b) => a[0] - b[0]);
+const cuts = [-350, ...gaps.flat(), 350];
 for (let i = 0; i < cuts.length; i += 2) boxes.push({ min: { x: PARK.wallX - 0.3, y: 0, z: cuts[i] }, max: { x: PARK.wallX + 0.4, y: 0.68, z: cuts[i + 1] } });
 for (const a of ACCESS_ZS) for (const s of [-1, 1]) { const zc = a + s * 1.3; boxes.push({ min: { x: 10.75, y: 0, z: zc - 0.1 }, max: { x: 12.6, y: 0.78, z: zc + 0.1 } }); }
+if (OPEN_WORLD) for (const r of RAMPS) for (const s of [-1, 1]) { const zc = r.z + s * (r.hw + 0.1); boxes.push({ min: { x: RAMP_X.x0, y: 0, z: zc - 0.1 }, max: { x: RAMP_X.x1 + 0.3, y: 0.95, z: zc + 0.1 } }); }
 const thin = { min: { x: 60, y: -2, z: 99.95 }, max: { x: 70, y: 3, z: 100.05 } };   // a 10 cm wall across the sand
 boxes.push(thin);
 const world = {
@@ -77,15 +82,39 @@ r = run('atv', { x: 87.5, z: -150, yaw: yawFor(180) }, { throttle: 1, steer: 0 }
 check('ATV hard sand ~10 m/s', r.maxV > 9.2 && r.maxV < 10.6, r);
 r = run('atv', { x: 30, z: -150, yaw: yawFor(180) }, { throttle: 1, steer: 0, hard: true }, 12);
 check('ATV dry soft sand ~8 m/s (boost)', r.maxV > 7.4 && r.maxV < 8.8, r);
-r = run('atv', { x: 25, z: 30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
-check('ATV stays on the beach (x >= 12.9 + radius)', r.x > 13.3, r);
-r = run('atv', { x: 25, z: -30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
-check('ATV cannot climb the access steps', r.x > 13.3, r);
-r = run('atv', { x: 84, z: 60, yaw: yawFor(90) }, { throttle: 1, steer: 0, hard: true }, 20);
-const atvDepth = SEA_LEVEL - groundHeight(r.x + 1.1, r.z);
-check('ATV splashes in but stops before 0.32 m', atvDepth < 0.36 && r.x > 91 && r.end < 1, { ...r, depthAhead: +atvDepth.toFixed(3) });
+if (OPEN_WORLD) {
+  r = run('atv', { x: 25, z: -95, yaw: yawFor(270) }, { throttle: 0.8, steer: 0 }, 10);
+  check('ATV leaves the beach through the z -95 vehicle ramp into the park', r.x < 5, r);
+  r = run('atv', { x: 25, z: 30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
+  check('the seawall still stops the ATV away from the ramps', r.x > 12.9, r);
+  r = run('atv', { x: 25, z: -30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
+  check('ATV still cannot climb the access steps', r.x > 12.9, r);
+  // wading: the engine drowns at its intake (0.40 m), the hard limit is 0.60 m; no restart
+  // until it has been pushed back out
+  const q = createVehicle('atv', { x: 84, z: 60, yaw: yawFor(90) }, world); q.parked = false; q.ridden = true;
+  let stallDepth = null, maxDepth = 0;
+  for (let t = 0; t < 20; t += 1 / 60) {
+    stepVehicle(q, { throttle: 1, steer: 0, hard: true }, 1 / 60, world);
+    maxDepth = Math.max(maxDepth, ...q.wheelDepth);
+    if (q.stalled && stallDepth === null) stallDepth = Math.max(...q.wheelDepth);
+  }
+  check('ATV wades in and stalls at its intake (~0.25-0.45 m), never past 0.6 m', q.stalled && !q.engineOn && stallDepth > 0.22 && stallDepth < 0.46 && maxDepth < 0.62, { stallDepth: +stallDepth?.toFixed(3), maxDepth: +maxDepth.toFixed(3) });
+  check('the drowned ATV cannot restart in the water', !canRestart(q), {});
+  Object.assign(q, { x: 84, vx: 0, vz: 0 });
+  stepVehicle(q, { throttle: 0, steer: 0 }, 1 / 60, world);
+  check('pushed back to the damp sand it may restart', canRestart(q), { x: q.x });
+} else {
+  r = run('atv', { x: 25, z: 30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
+  check('[road-only] ATV stays on the beach (x >= 12.9 + radius)', r.x > 13.3, r);
+  r = run('atv', { x: 25, z: -30, yaw: yawFor(270) }, { throttle: 1, steer: 0, hard: true }, 8);
+  check('[road-only] ATV cannot climb the access steps', r.x > 13.3, r);
+  r = run('atv', { x: 84, z: 60, yaw: yawFor(90) }, { throttle: 1, steer: 0, hard: true }, 20);
+  const atvDepth = SEA_LEVEL - groundHeight(r.x + 1.1, r.z);
+  check('[road-only] ATV splashes in but stops before 0.32 m', atvDepth < 0.36 && r.x > 91 && r.end < 1, { ...r, depthAhead: +atvDepth.toFixed(3) });
+}
 // sliding along the wading limit, throttle held: steering still turns it back to the beach
-for (const kind of ['atv', 'bike']) {
+// (open world: the ATV drowns before it gets there, above)
+for (const kind of OPEN_WORLD ? ['bike'] : ['atv', 'bike']) {
   const west = yawFor(270);
   r = run(kind, { x: 86, z: 60, yaw: yawFor(60) }, (v, t) => {
     const err = Math.atan2(Math.sin(west - v.yaw), Math.cos(west - v.yaw));
@@ -124,8 +153,15 @@ check('ATV runs the whole beach north -> south (z -335 -> 330)', r.z > 330 - 1, 
   drive(v, { throttle: 1, steer: 0 }, 60, (q, t) => { if (t50 === null && q.lon > 50 / 3.6) t50 = t; if (t70 === null && q.lon > 65 / 3.6) t70 = t; return q.z > 320; });
   console.log('      (0-65 km/h:', t70?.toFixed(1), 's)');
   check('car 0-50 km/h in 6-11 s (a cruiser)', t50 > 6 && t50 < 11, { t50: +t50?.toFixed(2) });
-  check('car top speed ~70 km/h', v.lon * 3.6 > 64 && v.lon * 3.6 < 72, { kmh: +(v.lon * 3.6).toFixed(1), gear: v.gear, rpm: Math.round(v.rpm) });
-  check('car in top gear at speed', v.gear === 3 && v.rpm > 1400 && v.rpm < 2200, { gear: v.gear, rpm: Math.round(v.rpm) });
+  if (OPEN_WORLD) {
+    // (the cruiser keeps its wallow; only the old 70 km/h cap is lifted: ~120 km/h flat out,
+    // nearly there by the end of the district run)
+    check('car top speed ~105-124 km/h (the hero, cap lifted)', v.lon * 3.6 > 105 && v.lon * 3.6 < 124, { kmh: +(v.lon * 3.6).toFixed(1), gear: v.gear, rpm: Math.round(v.rpm) });
+    check('car in top gear at speed, under the redline', v.gear === 3 && v.rpm > 2500 && v.rpm < v.spec.redline, { gear: v.gear, rpm: Math.round(v.rpm) });
+  } else {
+    check('[road-only] car top speed ~70 km/h', v.lon * 3.6 > 64 && v.lon * 3.6 < 72, { kmh: +(v.lon * 3.6).toFixed(1), gear: v.gear, rpm: Math.round(v.rpm) });
+    check('[road-only] car in top gear at speed', v.gear === 3 && v.rpm > 1400 && v.rpm < 2200, { gear: v.gear, rpm: Math.round(v.rpm) });
+  }
   // braking from 50 km/h
   v = car({ x: -19.75, z: -300, yaw: S });
   drive(v, { throttle: 1, steer: 0 }, 30, (q) => q.lon > 50 / 3.6);
@@ -142,8 +178,9 @@ check('ATV runs the whole beach north -> south (z -335 -> 330)', r.z > 330 - 1, 
   v = car({ x: -18, z: -200, yaw: S });
   let x0 = Infinity, x1 = -Infinity, zl0 = Infinity, zl1 = -Infinity;
   const hold = (q) => ({ throttle: q.lon < 2 ? 0.5 : 0, steer: 1 });
-  const cw2 = { ...cw, bounds: { x0: -200, x1: 200, z0: -340, z1: 340 }, groundAt: () => 0 };
-  const loop = createVehicle('car', { x: 0, z: 0, yaw: S }, cw2); loop.parked = false; loop.engineOn = true;
+  // (a flat stand-in world on the roadway: at x 0 the open-world surface is the park lawn)
+  const cw2 = { ...cw, bounds: { x0: -200, x1: 200, z0: -340, z1: 340 }, groundAt: () => 0, edgeDistance: () => 1e9, softDistance: () => Infinity, grid: buildGrid([], []) };
+  const loop = createVehicle('car', { x: -18, z: 0, yaw: S }, cw2); loop.parked = false; loop.engineOn = true;
   for (let t = 0; t < 40; t += 1 / 60) {
     stepVehicle(loop, hold(loop), 1 / 60, cw2);
     if (t > 8) { x0 = Math.min(x0, loop.x); x1 = Math.max(x1, loop.x); zl0 = Math.min(zl0, loop.z); zl1 = Math.max(zl1, loop.z); }
@@ -160,13 +197,30 @@ check('ATV runs the whole beach north -> south (z -335 -> 330)', r.z > 330 - 1, 
   let maxRoll = 0;
   drive(v, { throttle: 0.4, steer: 1 }, 1.5, (q) => { maxRoll = Math.max(maxRoll, q.roll); return false; });
   check('car body rolls out of a right turn (2-5 deg)', maxRoll > 0.035 && maxRoll < 0.09, { rollDeg: +(maxRoll * 57.3).toFixed(2) });
-  // curbs: steer hard for the park-side sidewalk and the hotel sidewalk
-  v = car({ x: -16.5, z: 200, yaw: yawFor(90) });
-  drive(v, { throttle: 1, steer: 0, hard: true }, 6);
-  check('car stopped by the park-side curb (x -14.5)', v.x < -14.5 - 0.3, { x: +v.x.toFixed(2) });
-  v = car({ x: -20, z: 220, yaw: yawFor(270) });
-  drive(v, { throttle: 1, steer: 0, hard: true }, 6);
-  check('car stopped by the hotel-side curb (x -24)', v.x > -24 + 0.5, { x: +v.x.toFixed(2) });
+  // curbs: steer for the park-side sidewalk and the hotel sidewalk
+  if (OPEN_WORLD) {
+    for (const [name, x0, head, over] of [['park-side curb (x -14.5)', -17.5, 90, (q) => q.x > -13.5], ['hotel-side curb (x -24)', -21, 270, (q) => q.x < -24.3]]) {
+      v = car({ x: x0, z: 200, yaw: yawFor(head) });
+      let curb = 0;
+      drive(v, { throttle: 0.35, steer: 0 }, 5, (q) => { curb = Math.max(curb, q.curb); return false; });
+      const mounted = over(v);
+      // at 50 km/h the step costs at least 40 % of the speed
+      const q = car({ x: x0, z: 230, yaw: yawFor(head) });
+      const sp = 50 / 3.6;
+      q.vx = -Math.sin(q.yaw) * sp; q.vz = -Math.cos(q.yaw) * sp; q.lon = sp;
+      // (both axles over: the speed half a second after the front wheels hit)
+      let after = null, hitT = null;
+      drive(q, { throttle: 0, steer: 0 }, 2, (w, t) => { if (w.curb > 0.08 && hitT === null) hitT = t; if (hitT !== null && t > hitT + 0.5) after = w.lon; return after !== null; });
+      check(`car mounts the ${name} at walking pace with a bump; loses >= 40 % at 50 km/h`, mounted && curb > 0.1 && after !== null && after < sp * 0.6, { x: +v.x.toFixed(2), curb: +curb.toFixed(3), kmhAfter: +((after ?? 0) * 3.6).toFixed(1) });
+    }
+  } else {
+    v = car({ x: -16.5, z: 200, yaw: yawFor(90) });
+    drive(v, { throttle: 1, steer: 0, hard: true }, 6);
+    check('[road-only] car stopped by the park-side curb (x -14.5)', v.x < -14.5 - 0.3, { x: +v.x.toFixed(2) });
+    v = car({ x: -20, z: 220, yaw: yawFor(270) });
+    drive(v, { throttle: 1, steer: 0, hard: true }, 6);
+    check('[road-only] car stopped by the hotel-side curb (x -24)', v.x > -24 + 0.5, { x: +v.x.toFixed(2) });
+  }
   // down a cross street (8 ST, z = 79): west past the sidewalk line
   v = car({ x: -20, z: 79, yaw: yawFor(270) });
   drive(v, { throttle: 0.6, steer: 0 }, 8);

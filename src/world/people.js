@@ -1065,7 +1065,7 @@ export function buildPeople(scene, { beach, hotels, getCars = () => [], walker =
   function pathPerson(F, path, o) {
     const st = o.style;
     const strideW = calibrate(F, WALK, st), strideR = o.run ? calibrate(F, RUN, st) : strideW;
-    const col = { x: 0, z: 0, r: 0 };
+    const col = { x: 0, z: 0, r: 0, person: true };
     colliders.push(col);
     const P = {
       F, path, s: o.s0 ?? 0, speed: o.speed, phase: o.phase0 ?? 0, heading: 0, x: 0, z: 0, col, visible: true, turnSlow: o.turnSlow ?? 0,
@@ -1227,7 +1227,7 @@ export function buildPeople(scene, { beach, hotels, getCars = () => [], walker =
   // --- cyclist: a slow city-bike ride along the road every minute or so ---
   {
     const F = makeFigure(scene, R.cyclist);
-    const col = { x: 0, z: 0, r: 0 };
+    const col = { x: 0, z: 0, r: 0, person: true };
     colliders.push(col);
     const rnd = rng(77);
     const Cy = {

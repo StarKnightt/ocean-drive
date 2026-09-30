@@ -269,7 +269,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     A.lift ??= 0;
     for (const a of [A.loco, A.walk, A.idle]) if (a) { a.play(); a.time = rnd() * a.getClip().duration; a.setEffectiveWeight(0); }
     A.idle?.setEffectiveWeight(1);
-    A.col = { x: 0, z: 0, r: 0 };
+    A.col = { x: 0, z: 0, r: 0, person: true };
     colliders.push(A.col);
     if (c.path) {
       A.s = clamp(c.s, 0, c.path.total);
@@ -351,6 +351,12 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
 
   // crossers: wait at the curb unless every car that would reach the crosswalk soon can stop
   function roadClear(z) {
+    // (the player's car too: on the crosswalk, or coming and too close to stop)
+    const pv = vehicles?.current;
+    if (pv && pv.x > SIDEWALK_W.x1 - 1 && pv.x < SIDEWALK_E.x0 + 1) {
+      const sp = Math.abs(pv.lon), d = (z - pv.z) * Math.sign(pv.vz || 1);
+      if (Math.abs(pv.z - z) < 5 || (sp > 0.5 && d > 0 && d < 45 && d < (sp * sp) / 5 + 5)) return false;
+    }
     for (const c of getCars() || []) {
       if (c.hidden) continue;
       // on the crosswalk now
@@ -360,6 +366,33 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
       if (c.v > 0.5 && d < (c.v * c.v) / (2 * 2.5) + 2.5) return false;   // too close to stop for us
     }
     return true;
+  }
+
+  // the ridden vehicle (or any moving one) within 25 m, faster than 1.5 m/s, whose line
+  // passes within ~1.6 m of the body in the next 2.2 s: the lateral offset to step to (away
+  // from the line on the side the walker is already on; round the far side if the corridor
+  // has no room there)
+  const MISS = 1.6, _tq = {};
+  function threatFrom(A) {
+    if (!vehicles) return null;
+    let best = null;
+    for (const e of vehicles.list) {
+      const v = e.v, sp = Math.hypot(v.vx, v.vz);
+      if (sp < 1.5 || Math.abs(v.x - A.x) > 25 || Math.abs(v.z - A.z) > 25) continue;
+      const rx = A.x - v.x, rz = A.z - v.z;
+      const t = (rx * v.vx + rz * v.vz) / (sp * sp);
+      if (t < 0 || t > 2.2 || (best && t > best.t)) continue;
+      const mx = rx - v.vx * t, mz = rz - v.vz * t, half = (v.spec.width ?? 1.8) / 2;
+      if (Math.hypot(mx, mz) > half + MISS) continue;
+      A.path.at(A.s, _tq);
+      const rxh = -_tq.dz * A.dir, rzh = _tq.dx * A.dir;
+      const along = mx * rxh + mz * rzh, side = Math.sign(along) || 1, clear = half + MISS + 0.3;
+      let target = A.lat + side * (clear - Math.abs(along));
+      // (not into the hotel fronts)
+      if (Math.abs(target) > A.path.half + 2.5 || _tq.x + rxh * target < HOTEL.frontX + 0.5) target = A.lat - side * (clear + Math.abs(along));
+      best = { t, target };
+    }
+    return best;
   }
 
   function steer(A, dt) {
@@ -391,8 +424,22 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         }
       }
     }
+    // threat pass: a vehicle coming at speed on a line that passes close: step well off it
+    // (past the lane corridor), then rejoin once it has gone by
+    const threat = threatFrom(A);
+    if (threat) {
+      A.dodgeT = 1.1;
+      A.dodgeLat = clamp(threat.target, -(path.half + 2.5), path.half + 2.5);
+    }
+    if (A.dodgeT > 0) {
+      A.dodgeT -= dt;
+      A.state = 'dodge';
+      latT = A.dodgeLat;
+      vT = Math.min(vT, 0.45);
+    } else if (A.state === 'dodge') A.state = 'go';
     obstaclesFor(A, near);
     for (const o of near) {
+      if (A.dodgeT > 0 && o.vehicle) continue;
       const ox = o.x - A.x, oz = o.z - A.z;
       const along = ox * dx + oz * dz, side = ox * rx + oz * rz;
       if (along < -0.2 || along > look) continue;
@@ -454,7 +501,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     const acc = vT < A.speed ? 3.2 : 1.1;
     A.speed += (vT - A.speed) * (1 - Math.exp(-dt * acc));
     if (A.speed < 0.02 && vT === 0) A.speed = 0;
-    const rate = (A.kind === 'skate' ? 1.2 : 0.8) * dt;
+    const rate = (A.dodgeT > 0 ? 2.4 : A.kind === 'skate' ? 1.2 : 0.8) * dt;
     const dLat = clamp(latT - A.lat, -rate, rate);
     A.lat += dLat;
     A.latT = latT;
@@ -818,8 +865,8 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
           const dt = t0 === null ? 1 / 60 : THREE.MathUtils.clamp(rig.t - t0, 0, 0.1);
           t0 = rig.t;
           P.mixer.update(dt);
-          // (the first-person camera sits in the head: no head, no hair)
-          P.bones.Head.scale.setScalar(0.001);
+          // (the first-person camera sits in the head: no head, no hair; shown in the chase view)
+          P.bones.Head.scale.setScalar(rig.chase ? 1 : 0.001);
           P.root.updateMatrixWorld(true);
           handsOnRim(P, rig, G, hold, dt);
           feetOnPedals(P, rig.pelvis.parent, feet, v, dt);
@@ -828,6 +875,35 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
       playerDriver = P;
       P.hold = hold; P.grip = G;
     }
+  }
+
+  // the player's body in a driven modern car (vehicles/index.js): one character, moved from
+  // car to car; hands on its rim (drive view: vehicles' attachDriver hook)
+  let modernDriver = null, modernDetach = null;
+  function seatPlayer(view) {
+    if (!driverChars.length || !view?.attachDriver) return () => {};
+    if (!modernDriver) {
+      const name = chars.megan ? 'megan' : driverChars[0];
+      const P = createPerson(chars[name], { tints: [lin(0xb9d3e3, 0.85), null, null], shadow: false });
+      P.setLevel(0);
+      P.root.name = 'player-driver-modern';
+      modernDriver = { P, G: measureGrip(P) };
+    }
+    modernDetach?.();
+    const { P, G } = modernDriver, hold = {};
+    let seated = false, t0 = null;
+    modernDetach = view.attachDriver(P.root, {
+      update(rig, v) {
+        if (!seated) { seated = true; seatBody(P, rig.pelvis); }
+        const dt = t0 === null ? 1 / 60 : THREE.MathUtils.clamp(rig.t - t0, 0, 0.1);
+        t0 = rig.t;
+        P.mixer.update(dt);
+        P.bones.Head.scale.setScalar(rig.chase ? 1 : 0.001);
+        P.root.updateMatrixWorld(true);
+        handsOnRim(P, rig, G, hold, dt);
+      },
+    });
+    return () => { modernDetach?.(); modernDetach = null; };
   }
 
   const tris = agents.reduce((n, A) => n + A.P.asset.tris0, 0);
@@ -842,6 +918,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
     setVehicles(v) { vehicles = v; },
     get playerDriver() { return playerDriver; },
     attachDrivers,
+    seatPlayer,
     // pedestrians for the traffic sim (right of way on the crosswalks)
     peds() { const out = []; for (const A of agents) if (!A.hidden && A.path?.crossings.length) out.push({ x: A.x, z: A.z }); return out; },
     update(dt, camera) { lastCam = camera; update(dt, camera); },

@@ -101,7 +101,7 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
     const m = pickModel(rnd, prev);
     return {
       id: ++ids, dir, z, x: LANE_X[dir], v, v0: desired(follow ? prev : null), a: 0, len: m.len, model: m.model, classic: !!m.classic, color: m.color,
-      braking: false, brakeT: 0, reason: null, blockedT: 0, honk: 0, honked: false, holdT: 0, hidden: false, respawns: 0,
+      braking: false, brakeT: 0, reason: null, blockedT: 0, stunT: 0, honk: 0, honked: false, holdT: 0, hidden: false, respawns: 0,
       // (people.js / audio compatibility: the old audio car's fields)
       active: true, progress: 0.5, speed: v,
     };
@@ -204,6 +204,12 @@ export function createTrafficSim({ count = 4, seed = 11, pickModel = () => ({ mo
       for (let k = 0; k < n; k++) {
         for (const c of cars) {
           if (c.hidden) { c.holdT += h; if (tryRespawn(c, viewer)) c.holdT = 0; continue; }
+          // bumped by the player: stopped, hazards on, for stunT seconds
+          if (c.stunT > 0) {
+            c.stunT = Math.max(0, c.stunT - h);
+            c.v = 0; c.a = 0; c.braking = true; c.reason = 'stunned'; c.speed = 0;
+            continue;
+          }
           const L = leader(c, peds, obstacles, sig);
           let acc = idm(c, L);
           acc = Math.max(-7, Math.min(IDM.a, acc));

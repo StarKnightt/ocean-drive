@@ -8,6 +8,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { CAR, roadHeight, CROSS, CROSS_STREETS, crossRoadHeight, DISTRICT } from './layout.js';
+import { OPEN_WORLD } from '../vehicles/specs.js';
+import { extentBounds } from './extent.js';
 import { registerLodHook, LOD } from './lod.js';
 import { QUALITY } from '../quality.js';
 import {
@@ -49,6 +51,7 @@ export function preloadCars() {
 // envMap: once at load, and again whenever the viewer has moved PROBE.step metres along the
 // drive (then one cube face per frame, so driving past doesn't hitch). The render target is
 // reused, so its texture (and every car program) stays the same.
+const PROBE_Z = OPEN_WORLD ? extentBounds(QUALITY.tier) : { z0: DISTRICT.zMin, z1: DISTRICT.zMax };
 const PROBE = { high: { size: 256, step: 50 }, medium: { size: 128, step: 50 }, low: { size: 64, step: 80 } }[QUALITY.tier] ?? { size: 128, step: 50 };
 function createProbe(renderer, scene) {
   const cubeRT = new THREE.WebGLCubeRenderTarget(PROBE.size, { type: THREE.HalfFloatType });
@@ -88,9 +91,10 @@ function createProbe(renderer, scene) {
       face = -1;
       probe.captures++;
     },
-    // along the drive the probe follows the viewer (clamped to the modelled district)
+    // along the drive the probe follows the viewer (clamped to the modelled district, or the
+    // open world's extent)
     follow(p) {
-      const z = THREE.MathUtils.clamp(p.z, DISTRICT.zMin, DISTRICT.zMax);
+      const z = THREE.MathUtils.clamp(p.z, PROBE_Z.z0, PROBE_Z.z1);
       if (probe.z === null) { probe.capture(z); return; }
       if (face < 0 && Math.abs(z - probe.z) > PROBE.step) { face = 0; pendingZ = z; }
       if (face < 0) return;
@@ -483,6 +487,22 @@ function splitGlass(o) {
   o.add(twin);
 }
 
+// The driven modern car's glass: the fleet's dark tint reads nearly black from the seat, so
+// its panes get lighter copies (shared by every driven car; two extra glass programs)
+let LITE = null;
+function lighterGlass(root, M, env) {
+  LITE ??= new Map([
+    [M.tint, glassMaterial(env, { color: 0x1a2226, opacity: 0.3, edge: 0.75, key: 'tint-lite', spec: 1.6, envI: 0.8 })],
+    [M.windshield, glassMaterial(env, { color: 0x1c2428, opacity: 0.14, edge: 0.75, key: 'windshield-lite', spec: 1.2, envI: 0.7 })],
+  ]);
+  const swap = new Map();
+  for (const [from, to] of LITE) {
+    const a = glassSides(from), b = glassSides(to);
+    swap.set(a[0], b[0]).set(a[1], b[1]);
+  }
+  root.traverse((o) => { if (o.isMesh && swap.has(o.material)) o.material = swap.get(o.material); });
+}
+
 function applyMaterials(root, M, paint, paint2) {
   const split = [];
   root.traverse((o) => {
@@ -861,9 +881,17 @@ function buildFleet(scene, gltf, M) {
     }
     blobs.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(s.x, y + 0.012, s.z), q, new THREE.Vector3(2.25, 1, k.L + 0.6)));
     // (the cross-street rows only within ~120 m: they sit behind the hotels from Ocean Drive)
-    cars.push({ x: s.x, z: s.z, parts, lod: 0, vis: true, blob: i, far2: s.cross ? 120 * 120 : null });
     const hx = s.cross ? k.L / 2 + 0.05 : 1.0, hz = s.cross ? 1.0 : k.L / 2 + 0.05;
-    colliders.push({ min: { x: s.x - hx, y: 0, z: s.z - hz }, max: { x: s.x + hx, y: k.top, z: s.z + hz } });
+    const col = { min: { x: s.x - hx, y: 0, z: s.z - hz }, max: { x: s.x + hx, y: k.top, z: s.z + hz }, parked: i };
+    colliders.push(col);
+    // (the spot, for the drivable fleet: the model origin in sim terms, yaw 0 = north, and
+    // the colour; taken = driven off, its instances and collider switched off)
+    const R = s.yaw;
+    cars.push({
+      x: s.x, z: s.z, parts, lod: 0, vis: true, blob: i, far2: s.cross ? 120 * 120 : null,
+      kind: s.kind, color: s.color, index: i, col, taken: false, L: k.L,
+      pose: { x: s.x - k.zc * Math.sin(R), z: s.z - k.zc * Math.cos(R), yaw: R - Math.PI },
+    });
   });
   blobs.instanceMatrix.needsUpdate = true;
   scene.add(blobs);
@@ -874,6 +902,7 @@ function buildFleet(scene, gltf, M) {
   const update = (p) => {
     let changed = false;
     for (const c of cars) {
+      if (c.taken) continue;
       const d2 = (c.x - p.x) ** 2 + (c.z - p.z) ** 2;
       const vis = d2 < (c.far2 ?? far2), lod = d2 < near2 ? 0 : 1;
       if (vis === c.vis && lod === c.lod) continue;
@@ -889,7 +918,15 @@ function buildFleet(scene, gltf, M) {
     return changed;
   };
   registerLodHook(update);
-  return { colliders, cars, batches, blobs, update };
+  // a parked car driven off / put back: its batch instances, contact blob and collider
+  const setTaken = (c, taken) => {
+    c.taken = taken;
+    c.col.disabled = taken;
+    for (const pt of c.parts) pt.bm.setVisibleAt(pt.id, !taken && c.vis && (c.lod === 0 ? pt.g0 : pt.g1) != null);
+    blobs.setMatrixAt(c.blob, taken || !c.vis ? hidden : blobMats[c.blob]);
+    blobs.instanceMatrix.needsUpdate = true;
+  };
+  return { colliders, cars, batches, blobs, update, take: (c) => setTaken(c, true), release: (c) => setTaken(c, false) };
 }
 
 function mergeList(list) {
@@ -988,6 +1025,12 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
   const box = new THREE.Box3();
   gltf?.scene.updateMatrixWorld(true);
   const lens = Object.fromEntries(kinds.map((k) => [k, box.setFromObject(gltf.scene.getObjectByName(k)).max.z - box.min.z]));
+  // the driver's hips along each body (model z, the nose is +z): where its doors are
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+  const seatZ = Object.fromEntries(kinds.map((k) => {
+    const p = gltf.scene.getObjectByName(k + '_driver_pelvis');
+    return [k, p ? p.getWorldPosition(_a).z - gltf.scene.getObjectByName(k).getWorldPosition(_b).z : 0.3];
+  }));
   const sunMat = new THREE.MeshBasicMaterial({ color: 0x000000, map: softRectTexture(), transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const sunGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const sunShadow = () => {
@@ -1005,7 +1048,7 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
     m.halos = lampHalos(m.levels[0], body, m.tail, null);
   }
   return {
-    kinds, lens, classics: pool, paints: PAINTS,
+    kinds, lens, seatZ, classics: pool, paints: PAINTS,
     lod1At: LOD1_AT.parked,
     // one instance of `kind` with its own paint / lamp materials (world/traffic.js pools them)
     makeModern(kind) {
@@ -1039,6 +1082,100 @@ function trafficKit(scene, gltf, M, env, pool, probe) {
         gripL: levels[0].getObjectByName(kind + '_grip_L'), gripR: levels[0].getObjectByName(kind + '_grip_R'),
       };
       return { root, levels, wheels, wheelR: WHEEL_RADII[kind] ?? 0.34, len: lens[kind], paint, tail, brake3, rig, sun, halos, kind };
+    },
+    // a player-drivable modern car (vehicles/index.js): an instance posed from the sim,
+    // casting real sun shadows, with a turning steering wheel and speedo needle where the
+    // model has them, the eye anchor, and a driver hook like the hero's (see drive below)
+    makeDrivable(kind, color) {
+      const I = this.makeModern(kind);
+      I.paint.color.setHex(color ?? 0xb9bcbf);
+      I.sun.visible = false;
+      const L0 = I.levels[0];
+      L0.traverse((o) => { if (o.isMesh) o.castShadow = !o.material.transparent; });
+      lighterGlass(L0, M, env);
+      const steer = L0.getObjectByName(kind + '_steer');
+      if (steer) steer.userData.q0 = steer.quaternion.clone();
+      const needle = L0.getObjectByName(kind + '_needle');
+      if (needle) needle.userData.q0 = needle.quaternion.clone();
+      let eye = L0.getObjectByName(kind + '_eye');
+      if (!eye && I.rig.pelvis) {
+        // (models without the anchor: 0.62 m over the hips, a little back)
+        eye = new THREE.Object3D();
+        eye.position.copy(I.rig.pelvis.position).add(new THREE.Vector3(0, 0.62, -0.05));
+        L0.add(eye);
+      }
+      const rig = { ...I.rig, wheel: steer, eye, wheelAngle: 0, t: 0, body: null, update: null, chase: false };
+      let level = 0, lit = null;
+      const lamp = (m, hex, k) => { if (m) { m.emissive.setHex(hex); m.emissiveIntensity = k; } };
+      const view = {
+        kind, inst: I, root: I.root, rig,
+        apply(v) {
+          const g = I.root;
+          g.visible = true;
+          g.position.set(v.x, v.bodyY, v.z);
+          g.rotation.set(-v.pitch, v.yaw + Math.PI, -v.roll, 'YXZ');
+          const d = v.steer, ad = Math.abs(d), S = v.spec;
+          let inner = d, outer = d;
+          if (ad > 1e-4) {
+            const R = S.wheelbase / Math.tan(ad);
+            inner = Math.sign(d) * Math.atan(S.wheelbase / Math.max(0.5, R - S.track / 2));
+            outer = Math.sign(d) * Math.atan(S.wheelbase / (R + S.track / 2));
+          }
+          const angFL = d > 0 ? outer : inner, angFR = d > 0 ? inner : outer;
+          for (const w of I.wheels) {
+            w[0]?.rotation.set(v.wheelRot, -angFL, 0, 'YXZ');
+            w[1]?.rotation.set(v.wheelRot, -angFR, 0, 'YXZ');
+            w[2]?.rotation.set(v.wheelRot, 0, 0);
+            w[3]?.rotation.set(v.wheelRot, 0, 0);
+          }
+          // (1.5 turns lock to lock: a modern rack)
+          rig.wheelAngle = (v.steer / S.steerMax) * 0.75 * 2 * Math.PI;
+          if (steer) steer.quaternion.copy(steer.userData.q0).multiply(_qs.setFromAxisAngle(_ax, rig.wheelAngle));
+          if (needle) {
+            const mph = Math.min(SPEEDO_SWEEP.max, Math.abs(v.lon) * 2.237);
+            const deg = SPEEDO_SWEEP.from + (SPEEDO_SWEEP.to - SPEEDO_SWEEP.from) * mph / SPEEDO_SWEEP.max;
+            needle.quaternion.copy(needle.userData.q0).multiply(_qs.setFromAxisAngle(_ax, -THREE.MathUtils.degToRad(deg)));
+          }
+          // tail lamps lit with the engine running, brake lamps on the brake
+          const want = !v.engineOn ? 'off' : v.braking > 0.05 ? 'brake' : 'run';
+          if (want !== lit) {
+            lit = want;
+            lamp(I.tail, want === 'off' ? 0x2a0304 : want === 'brake' ? 0xff0010 : 0x5a0304, want === 'brake' ? 1.55 : 1);
+            lamp(I.brake3, want === 'brake' ? 0xff0010 : 0x140102, want === 'brake' ? 1.55 : 1);
+            I.halos.visible = want === 'brake';
+          }
+          if (rig.body) {
+            rig.body.visible = !!v.ridden;
+            if (v.ridden && rig.update) {
+              rig.t = v.t;
+              g.updateMatrixWorld(true);
+              rig.update(rig, v);
+            }
+          }
+        },
+        // distance LOD for a car left standing (the ridden one stays at LOD0)
+        lod(dist) {
+          const k = dist < LOD1_AT.parked ? 0 : 1;
+          if (k !== level) { level = k; I.levels.forEach((lv, i) => { lv.visible = i === k; }); }
+          I.root.visible = dist < LOD.cars;
+        },
+        eye: (out) => (eye ? eye.getWorldPosition(out) : I.root.getWorldPosition(out).setY(I.root.position.y + 1.2)),
+        eyeQuat: (out) => I.root.getWorldQuaternion(out).multiply(FLIP_Y),
+        attachDriver(body, { update = null } = {}) {
+          if (!rig.pelvis) return () => {};
+          rig.pelvis.add(body);
+          rig.body = body;
+          rig.update = update;
+          body.visible = false;
+          return () => { rig.pelvis.remove(body); rig.body = rig.update = null; };
+        },
+        dispose() {
+          scene.remove(I.root);
+          const k = probe.hide.indexOf(I.root);
+          if (k >= 0) probe.hide.splice(k, 1);
+        },
+      };
+      return view;
     },
     // where a car's shadow falls on the road (unit ground direction, away from the sun) and
     // how far it reaches for a car-height caster
@@ -1090,7 +1227,7 @@ export async function buildCarsGlb(scene, renderer) {
   probe.hide.push(hero.car, ...pool.map((m) => m.car));
   if (fleet) probe.hide.push(...Object.values(fleet.batches).map((b) => b.bm), fleet.blobs);
   const tmp = new THREE.Vector3();
-  let heroDriven = false;
+  let heroDriven = false, heroChase = false;
   return {
     hero: hero.car, mover: pool[0].car, movers: pool.map((m) => m.car), colliders, fleet, probe, glb: true,
     traffic: trafficKit(scene, parkedGltf, M, env, pool, probe),
@@ -1103,6 +1240,10 @@ export async function buildCarsGlb(scene, renderer) {
       // against the horizon); the model's nose is +z, a camera looks down -z
       eyeQuat: (out) => hero.car.userData.eyeAnchor.getWorldQuaternion(out).multiply(FLIP_Y),
       root: hero.car,
+      rig: hero.driverRig,
+      // 'fp' (the driver's eye) or 'chase' (the third-person camera): the screen's inside look
+      // and the driver's head follow it
+      setView(mode) { heroChase = mode === 'chase'; hero.driverRig.chase = heroChase; },
       // Seat a skinned driver (e.g. a Mixamo character) in the hero: `body` is parented to
       // the `driver_pelvis` anchor (glTF axes: +z toward the nose, +x the car's left, +y up)
       // and shown only while someone drives. `update(rig, v)` runs after each pose with the
@@ -1124,7 +1265,7 @@ export async function buildCarsGlb(scene, renderer) {
     update(dt, cars, camera) {
       if (!camera) return;
       probe.follow(camera.position);
-      const inside = heroDriven;
+      const inside = heroDriven && !heroChase;
       M.screen.userData.uInside.value = inside ? 1 : 0;
       M.screen.userData.uBaseY.value = hero.car.position.y;
       mirror?.update(camera, inside);

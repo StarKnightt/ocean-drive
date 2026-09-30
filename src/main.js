@@ -22,6 +22,8 @@ import { createTouchControls } from './player/touch.js';
 import { createVehicles } from './vehicles/index.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './renderer/memory.js';
+import { OPEN_WORLD } from './vehicles/specs.js';
+import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
 import { createGpuTimer } from './renderer/gpu-timer.js';
 
 const params = new URLSearchParams(location.search);
@@ -146,10 +148,19 @@ const walkWorld = {
   ],
   circles: [
     ...STREET_COLLIDERS.filter((c) => c.r),
-    ...PALM_TREES.filter((t) => Math.abs(t.z) < DISTRICT.zMax + 10).map((t) => ({ x: t.x, z: t.z, r: 0.26 })),
+    ...PALM_TREES.filter((t) => Math.abs(t.z) < (OPEN_WORLD ? extentBounds(QUALITY.tier).z1 : DISTRICT.zMax) + 10).map((t) => ({ x: t.x, z: t.z, r: 0.26 })),
   ],
   bounds: { x0: HOTEL.patioX + 0.2, x1: 110, z0: DISTRICT.zMin, z1: DISTRICT.zMax, soft: 14 },
 };
+// open world: the walkable space is world/extent.js's (Ocean Drive and the beach to its open
+// ends, the near cross streets back to the rear row), with a soft slow-down at the road ends
+if (OPEN_WORLD) {
+  const tier = QUALITY.tier;
+  walkWorld.bounds = { ...extentBounds(tier), soft: EDGE_SOFT.walker };
+  walkWorld.inside = (x, z) => edgeDistance(x, z, tier) >= 0;
+  walkWorld.softDistance = (x, z) => softDistance(x, z, tier);
+  walkWorld.softWidth = EDGE_SOFT.walker;
+}
 const controls = new Walker(camera, renderer.domElement, walkWorld);
 // first frame: hotel sidewalk, looking up the row of sunlit fronts
 controls.set(-26, CURB_HEIGHT + EYE_HEIGHT, 40, 342, 4);
@@ -185,6 +196,9 @@ const vehicles = createVehicles(scene, {
   requestShadow,
   getTouch: () => touch,
   car: cars.drive ?? null,
+  // open world: the parked fleet is drivable (enter at a door), the player's body seated in it
+  fleet: cars.fleet ?? null, kit: cars.traffic ?? null, traffic,
+  seatPlayer: (view) => people.seatPlayer?.(view),
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
@@ -242,11 +256,14 @@ function begin() {
 // TOUCH: joystick + drag-look, shown on coarse-pointer devices or after the first touch
 let touch = null;
 const howEl = overlay.querySelector('.how');
+if (OPEN_WORLD && howEl) howEl.innerHTML = '<b>Click to walk</b> — WASD to move, mouse to look, Space to jump, Shift to stroll faster, E to ride the bike or the ATV or get into any parked car (C camera, Space handbrake, H horn, R back to the road), M to mute';
 function enableTouch() {
   if (touch || SHOT) return;
-  touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle() });
+  touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView() });
   window.__touch = touch;
-  if (howEl) howEl.innerHTML = '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike, the ATV or the convertible';
+  if (howEl) howEl.innerHTML = OPEN_WORLD
+    ? '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV, Enter at any parked car's door'
+    : '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike, the ATV or the convertible';
   if (controls.active && !controls.locked) touch.setEnabled(true);
 }
 function beginTouch() {
@@ -441,7 +458,17 @@ const timer = new THREE.Timer();
 timer.connect(document);
 let elapsed = 0, frames = 0, fpsAcc = 0, fpsFrames = 0, shadowRenders = 0;
 
+// main-thread work per frame (ms), for the perf gate: window.__frameCpu()
+const cpuMs = new Float32Array(600);
+let cpuN = 0;
+window.__frameCpu = (reset = false) => {
+  const n = Math.min(cpuN, cpuMs.length), a = Array.from(cpuMs.subarray(0, n)).sort((x, y) => x - y);
+  const p = (f) => (n ? +a[Math.min(n - 1, Math.floor(n * f))].toFixed(2) : 0);
+  if (reset) cpuN = 0;
+  return { n, p50: p(0.5), p95: p(0.95), max: p(1) };
+};
 function frame(t) {
+  const cpu0 = performance.now();
   timer.update(t);
   const rawDt = timer.getDelta();
   const dt = Math.min(rawDt, 0.1);
@@ -493,6 +520,7 @@ function frame(t) {
   if (startScale < 1 && frames % 8 === 0) { startScale = Math.min(1, startScale + 0.125); onResize(); }
   if (frames <= 3 || frames === 10) bootMark('frame ' + frames);
   if (frames === 10) window.__sceneReady = true;
+  cpuMs[cpuN++ % cpuMs.length] = performance.now() - cpu0;
 }
 
 renderer.shadowMap.needsUpdate = true;

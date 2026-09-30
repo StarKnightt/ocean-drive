@@ -151,19 +151,21 @@ export function groundHeight(x, z) {
 }
 
 // Vehicle beach ramps through the seawall (lifeguard-truck style), clear of the access
-// steps, the towers and the crosswalk legs: a concrete grade from the park to the sand
-// crest. hw: half width of the running surface (the cheek walls stand just outside it).
-export const RAMPS = [{ z: -95, hw: 2.6 }, { z: 95, hw: 2.6 }];
+// steps, the towers and the park palms on the approach: a concrete grade from the park to
+// the sand crest. hw: half width of the running surface (the cheek walls stand just outside it).
+export const RAMPS = [{ z: -95, hw: 2.6 }, { z: 112, hw: 2.6 }];
 export const RAMP_X = { x0: 8.5, x1: 12.8 };
 export function rampAt(z, pad = 0) {
   for (const r of RAMPS) if (Math.abs(z - r.z) < r.hw + pad) return r;
   return null;
 }
 // Ramp surface height at (x, z), or null off the ramps.
+// (a straight grade from the lawn to the sand crest at the wall line, then along the sand)
 export function rampHeight(x, z) {
   if (x < RAMP_X.x0 || x > RAMP_X.x1 || !rampAt(z)) return null;
-  const t = (x - RAMP_X.x0) / (RAMP_X.x1 - RAMP_X.x0);
-  return CURB_HEIGHT + (sandHeight(RAMP_X.x1) - CURB_HEIGHT) * t;
+  if (x >= SAND.x0) return sandHeight(x);
+  const t = (x - RAMP_X.x0) / (SAND.x0 - RAMP_X.x0);
+  return CURB_HEIGHT + (sandHeight(SAND.x0) - CURB_HEIGHT) * t;
 }
 // Ground with the ramps: what groundHeight() becomes once beach.js cuts the seawall for them
 // (open-world phase 1). Until then only the open-world vehicle sim uses it.

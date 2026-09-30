@@ -460,11 +460,14 @@ export async function createSky(renderer, scene, { requestShadow = () => { rende
   texels();
   let step = QUALITY.shadowStep;
   const _d = new THREE.Vector3(), _c = new THREE.Vector3();
-  let lastZ = NaN;
-  function placeShadow(z) {
-    if (Math.abs(z - lastZ) < step) return;   // 0.5 m at 'high'; a re-render of the casters in the box
-    lastZ = z;
-    _d.set(0, 0, z);
+  let lastZ = NaN, lastX = 0;
+  // (the box spans x -62..96 around the street; down the cross streets past x -40 it follows
+  // the viewer west as well)
+  function placeShadow(x, z) {
+    const sx = Math.min(0, x + 40);
+    if (Math.abs(z - lastZ) < step && Math.abs(sx - lastX) < step) return;   // 0.5 m at 'high'; a re-render of the casters in the box
+    lastZ = z; lastX = sx;
+    _d.set(sx, 0, z);
     const u = _d.dot(axX), v = _d.dot(axY);
     // keep the along-light part, snap the two light-space image axes to whole texels
     _c.copy(_d).addScaledVector(axX, -u).addScaledVector(axY, -v)
@@ -497,7 +500,7 @@ export async function createSky(renderer, scene, { requestShadow = () => { rende
     },
     update(camera) {
       dome.position.copy(camera.position);
-      placeShadow(camera.position.z);
+      placeShadow(camera.position.x, camera.position.z);
     },
   };
 }
