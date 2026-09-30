@@ -78,6 +78,21 @@ try {
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(1500);
   }
+  if (want.has('minimap')) {
+    // driving an SUV up the drive past 10 ST, a car saved behind (the minimap's lozenge)
+    await enterSuv(60);
+    await clearTraffic();
+    await ev(() => { const V = window.__vehicles; V.place(-16.25, -40, 0); V.simulate(['KeyW'], 2); });
+    await chaseLook(0, -0.12, 0.3);
+    await shot('3-minimap', 500);
+    await shot('3b-minimap-crop', 50, { x: 0, y: H - 200, width: 220, height: 200 });
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(1500);
+    // on foot up the park sidewalk: the car left behind is the saved car's lozenge
+    await ev(() => window.__walker.teleport(-12.4, -118, 200, -2));
+    await shot('3c-minimap-saved-car', 900);
+    await shot('3d-minimap-saved-car-crop', 50, { x: 0, y: H - 200, width: 220, height: 200 });
+  }
   if (want.has('traffic')) {
     // stand in the southbound lane ahead of a modern traffic car until it stops (it beeps and
     // waits), then at its driver's door: E. The driver gets out, waves, walks off

@@ -22,6 +22,7 @@ import { createTouchControls } from './player/touch.js';
 import { createVehicles } from './vehicles/index.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { createExitDrivers } from './world/exit-driver.js';
+import { createMinimap } from './ui/minimap.js';
 import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './renderer/memory.js';
 import { OPEN_WORLD } from './vehicles/specs.js';
 import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
@@ -209,6 +210,14 @@ const vehicles = createVehicles(scene, {
 });
 walkWorld.circles.push(...vehicles.colliders);
 window.__vehicles = vehicles;
+// the art-deco minimap (N hides it, Shift+N north up): you and the saved car
+const _mmDir = new THREE.Vector3();
+const minimap = createMinimap({
+  shot: SHOT, footprints: hotels.userData.footprints ?? [],
+  getPose: () => { camera.getWorldDirection(_mmDir); return { x: camera.position.x, z: camera.position.z, heading: Math.atan2(_mmDir.x, -_mmDir.z) }; },
+  getSaved: () => { const e = vehicles.saved; return e && e !== vehicles.currentEntry ? { x: e.v.x, z: e.v.z } : null; },
+});
+window.__minimap = minimap;
 // what the hero's rear-view mirror draws besides the cars (world/cars-glb.js)
 const MIRRORED = new Set(['placeholders', 'hotels', 'palms', 'street', 'ocean', 'parked-paint', 'parked-dark', 'parked-trim', 'parked-tyre']);
 for (const o of scene.children) if (MIRRORED.has(o.name) || o.material?.name === 'Sky') o.userData.mirror = true;
@@ -533,6 +542,7 @@ function frame(t) {
     for (const h of traffic.honks()) audio.horn(h);
   }
   prof('traffic');
+  if (!SHOT) minimap.update();
 
   renderer.info.reset();
   const now = t / 1000;
