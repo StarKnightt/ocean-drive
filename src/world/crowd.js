@@ -637,7 +637,7 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         A.P.setLevel(d < LOD_AT ? 0 : 1);
         if (A.P.shadow) A.P.shadow.visible = d < SHADOW_AT;
         // animation LOD: every frame near, every 2nd / 4th further out
-        const every = d < 30 ? 1 : d < 65 ? 2 : 4;
+        const every = d < 22 ? 1 : d < 50 ? 2 : 4;
         if ((frame + A.skip) % every === 0) { const a = A.acc; A.acc = 0; animate(A, a); }
       }
       place(A);
@@ -925,13 +925,17 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
         acc += 1 / 60;
         if (!show) return;
         t++;
-        if (d > 35 && t % 3) return;
+        // (the seated clip at a lower rate further off; the hands IK'd onto the rim only where
+        // the difference shows, the finger grip up close)
+        if ((d > 35 && t % 3) || (d > 18 && t % 2)) return;
         P.setLevel(d < 10 ? 0 : 1);
         const step = acc;
         P.mixer.update(acc);
         acc = 0;
-        P.root.updateMatrixWorld(true);
-        if (d < 45 && hw < 0.1) handsOnRim(P, rg, G, hold, step, d < 16);
+        if (d < 28 && hw < 0.1) {
+          P.root.updateMatrixWorld(true);
+          handsOnRim(P, rg, G, hold, step, d < 12);
+        }
       },
     };
   };
