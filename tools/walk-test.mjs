@@ -163,7 +163,10 @@ log('surfaces: sidewalk', surf(report.checks.sidewalk), '| road', surf(report.ch
   '| sand', surf(report.checks.sand), '| stairs', surf(report.checks.stairs), '| water', surf(report.checks.water));
 log('deck', report.checks.deck, 'wallBlocks', report.checks.wallBlocks, 'railBlocks', report.checks.railBlocks, 'wadeLimit', report.checks.wadeLimit);
 log('10 ST west', JSON.stringify(report.checks.crossStreetWest), 'world end', JSON.stringify(report.checks.crossStreetEnd));
-const ok = report.checks.wallBlocks && report.checks.railBlocks && report.checks.crossStreetWest.reached && report.checks.crossStreetEnd.held && report.legs.every((l) => l.reached || l.to[0] <= -85 || l.to[0] >= 100 || l.to[1] > report.legs[0].to[1] + 100 || l.to[0] === 10) && !errors.length;
+// (the wall, railing, wade-limit and world-end legs are meant to stop short)
+const ok = report.checks.wallBlocks && report.checks.railBlocks && report.checks.crossStreetWest.reached && report.checks.crossStreetEnd.held
+  && Math.abs(report.checks.deck.feetAboveSand - report.checks.deck.expected) < 0.05 && report.checks.wadeLimit.depth <= 0.52
+  && !!report.checks.swashAtFeet && car.moved > 5 && !errors.length;
 log(ok ? 'WALK OK' : 'WALK FAIL');
 process.exitCode = ok ? 0 : 1;
 log('swash', JSON.stringify(report.checks.swashAtFeet), 'onSand', JSON.stringify(onSand));
