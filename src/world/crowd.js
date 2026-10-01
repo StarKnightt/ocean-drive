@@ -870,8 +870,8 @@ export function buildCrowd(scene, assets, { beach, hotels, walker = null, getCar
   function feetOnPedals(P, frame, st, v, dt) {
     const B = P.bones;
     if (!B.RightUpLeg || !B.RightToeBase) return;
-    const brk = v && (v.braking > 0.05 || v.throttle < -0.05) ? 1 : 0;
-    const press = v ? Math.max(0, v.throttle ?? 0) : 0;
+    const brk = v && v.braking > 0.05 ? 1 : 0;
+    const press = v ? Math.max(0, v.drive ?? v.throttle ?? 0) : 0;
     st.brk = THREE.MathUtils.damp(st.brk ?? 0, brk, 9, dt);
     st.press = THREE.MathUtils.damp(st.press ?? 0, press, 12, dt);
     const M = frame.matrixWorld;
