@@ -25,6 +25,7 @@ import { createAvatar } from './player/avatar.js';
 import { createFootCamera, TP } from './player/foot-camera.js';
 import { loadViewPref, saveViewPref } from './player/view-pref.js';
 import { createVehicles } from './vehicles/index.js';
+import { createFastTravel } from './player/fasttravel.js';
 import { P_WATER, P_MIST } from './vehicles/spray.js';
 import { buildTraffic } from './world/traffic.js'; // TRAFFIC: cars cruising the drive, crosswalks, the 11 ST signal
 import { createExitDrivers } from './world/exit-driver.js';
@@ -275,6 +276,9 @@ footPitchLimits();
 window.__footView = { get mode() { return footView.mode; }, set: setFootView, toggle: () => vehicles.toggleView() };
 window.__footCam = footCam;
 window.__avatar = avatar;
+// FASTTRAVEL: 1-0 (touch: the pin button) jump to ten places; on foot the body and the camera snap there
+const fastTravel = createFastTravel({ walker: controls, vehicles, beach, hotels, shot: SHOT, onArrive: ({ riding }) => { if (!riding) { avatar?.exit(null, false); footCam.snap(); footCam.blendFrom(camera, 0.01); } requestShadow(); } });
+window.__fastTravel = fastTravel;
 // the art-deco minimap (N hides it, Shift+N north up): you and the saved car
 const _mmDir = new THREE.Vector3();
 const minimap = createMinimap({
@@ -373,6 +377,7 @@ function enableTouch() {
   if (touch || SHOT) return;
   touch = createTouchControls(controls, { audio, onRide: () => vehicles.toggle(), onCamera: () => vehicles.toggleView(), onRadio: () => radioNext() });
   window.__touch = touch;
+  fastTravel.attachTouch(touch);
   if (howEl) howEl.innerHTML = OPEN_WORLD
     ? '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike or the ATV, Enter at any parked car’s door'
     : '<b>Tap to walk</b> — left thumb to move, drag to look, Ride by the bike, the ATV or the convertible';

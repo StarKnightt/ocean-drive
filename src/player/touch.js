@@ -179,6 +179,7 @@ export function createTouchControls(walker, { audio, onRide, onCamera, onRadio }
 
   return {
     stick,
+    root,
     get enabled() { return enabled; },
     setEnabled(on) {
       enabled = !!on;
