@@ -227,7 +227,7 @@ const mission = SHOT ? null : createDemoDay(scene, {
   paused: () => !controls.active, radioVisible: () => radioUi.visible,
   onTeleport: () => { avatar?.exit(null, false); footCam?.snap(); footCam?.blendFrom(camera, 0.01); requestShadow(); },
   // (the recorded take: a short clock that runs out close behind the autopilot, a brief intro)
-  ...(CAPTURE ? { time: parseFloat(params.get('clock') ?? '40') || 40, intro: 1.4 } : {}),
+  ...(CAPTURE ? { time: parseFloat(params.get('clock') ?? '50') || 50, intro: 1.0 } : {}),
 });
 window.__mission = mission;
 
@@ -681,7 +681,8 @@ function frame(t) {
   gpuTimer?.begin(frames);
   prof('pre-render');
   const profT0 = performance.now();
-  if (params.has('nopost')) renderer.render(scene, camera);
+  if (CAPTURE && params.has('dry')) { /* (capture dry run: the autopilot without drawing) */ }
+  else if (params.has('nopost')) renderer.render(scene, camera);
   else post.render(elapsed);
   gpuTimer?.end();
   prof('render');

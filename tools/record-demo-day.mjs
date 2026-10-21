@@ -4,6 +4,8 @@
 // Options: --width --height --fps --seconds (stop after this much; default: the end of the
 // take) --quality (the game's tier, default high) --clock (the mission clock, s) --headed
 // --swiftshader (software GL, for machines without a GPU) --out
+// Without --clock, a quick dry pass first (the same take, nothing drawn) measures the run so the
+// mission clock can be set to end the take with ~0:08 left (--left to change that).
 // Env: FFMPEG (path to ffmpeg, default ffmpeg on PATH), CHROMIUM (a browser to use instead of
 // Playwright's).
 //
@@ -25,7 +27,8 @@ const W = +opt('width', 1920), H = +opt('height', 1080), FPS = +opt('fps', 60);
 const LIMIT = opt('seconds', null) == null ? Infinity : +opt('seconds');
 const OUT = path.resolve(opt('out', 'output/demo-day.mp4'));
 const FFMPEG = process.env.FFMPEG ?? 'ffmpeg';
-const PRIME = Math.round(FPS * 1.5);              // unrecorded frames first: the world settles
+const PRIME = Math.round(FPS * 1.5);
+const LEFT = +opt('left', 8);              // unrecorded frames first: the world settles
 const MAX_S = 60;                                  // the take ends itself at ~35 s
 
 if (spawnSync(FFMPEG, ['-version']).status !== 0) {
@@ -40,7 +43,7 @@ const videoTmp = path.join(tmp, 'video.mp4'), audioTmp = path.join(tmp, 'audio.w
 const server = await createServer({ root: path.resolve('.'), logLevel: 'error', server: { port: 0, strictPort: false } });
 await server.listen();
 const url = server.resolvedUrls.local[0];
-const query = new URLSearchParams({ capture: '1', fps: String(FPS), quality: opt('quality', 'high'), seconds: String(MAX_S + 10), ...(opt('clock') ? { clock: opt('clock') } : {}) });
+const base = { capture: '1', fps: String(FPS), quality: opt('quality', 'high'), seconds: String(MAX_S + 10) };
 
 const gl = flag('swiftshader') ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : ['--enable-gpu', '--ignore-gpu-blocklist', '--enable-gpu-rasterization'];
 const browser = await chromium.launch({
@@ -55,10 +58,28 @@ const ffmpeg = spawn(FFMPEG, ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-
   '-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-r', String(FPS), videoTmp], { stdio: ['pipe', 'inherit', 'inherit'] });
 const ffmpegDone = new Promise((r) => ffmpeg.on('close', r));
 
+// the dry pass: the take with a long clock and nothing drawn, to time the run
+async function measureClock() {
+  const dry = await browser.newPage({ viewport: { width: 320, height: 180 } });
+  dry.on('pageerror', (e) => errors.push(String(e)));
+  await dry.goto(`${url}?${new URLSearchParams({ ...base, clock: '600', dry: '1' })}`);
+  await dry.waitForFunction(() => !!window.__capture, null, { timeout: 15 * 60 * 1000 });
+  await dry.evaluate((n) => window.__capture.prime(n), PRIME);
+  await dry.evaluate(() => window.__capture.begin());
+  const r = await dry.evaluate(async (max) => {
+    for (let i = 0; i < max && !window.__capture.done; i++) await window.__capture.step();
+    return { done: window.__capture.done, state: window.__mission.state, used: 600 - window.__mission.timeLeft };
+  }, MAX_S * FPS);
+  await dry.close();
+  if (!r.done || r.state !== 'won') throw new Error(`the dry pass did not finish the mission (${r.state})`);
+  return Math.round((r.used + LEFT) * 10) / 10;
+}
+
 let frames = 0;
 try {
-  console.log(`loading ${url} (${W}x${H} ${FPS} fps)…`);
-  await page.goto(`${url}?${query}`);
+  const clock = opt('clock') ?? String(await (console.log('timing the take (dry pass)…'), measureClock()));
+  console.log(`loading ${url} (${W}x${H} ${FPS} fps, clock ${clock} s)…`);
+  await page.goto(`${url}?${new URLSearchParams({ ...base, clock })}`);
   await page.waitForFunction(() => !!window.__capture, null, { timeout: 15 * 60 * 1000 });
   await page.evaluate((n) => window.__capture.prime(n), PRIME);
   await page.evaluate(() => window.__capture.begin());

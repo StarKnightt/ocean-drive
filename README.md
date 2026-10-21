@@ -79,6 +79,15 @@ the way. People with questions step into your path, and touching one costs 10 se
 E at the big red button reboots the rack. Enter retries or runs it again, E closes the card.
 The clock holds while the game is paused. `tools/mission-test.mjs` plays it through headless.
 
+`pnpm record` films it: an autopilot plays the mission under a cinematic camera (an aerial
+push-in, a low chase on foot and in the convertible, a side angle on the blocker's bubble, a
+push-in on the red button), letterboxed 2.35:1, into `output/demo-day.mp4` (1920x1080, 60 fps,
+H.264 crf 16, the game's own audio rendered offline in step with the frames). It needs ffmpeg on
+the PATH (or `FFMPEG=`) and is best on a machine with a GPU. A quick dry pass first times the
+take so the mission clock ends with about 0:08 left. Options: `--width --height --fps --seconds
+--clock --left --quality --headed --swiftshader --out`. The game side is `?capture=1` (frame
+stepped; nothing of it runs in normal play): `src/capture/`.
+
 The key hints show small at the bottom left for a few seconds after you get in, then fade.
 
 The camera is remembered separately on foot (first or third person) and in a car (the driver's

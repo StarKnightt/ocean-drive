@@ -16,10 +16,10 @@ const ease = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t < 0.5 ? 4 * t * t * t : 1 - Mat
 const smooth = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 const clamp = THREE.MathUtils.clamp;
 
-const SPOT = { x: -26.1, z: 38.2 };                      // where the player stands as it opens
-const CAR_AT = { x: -22.75, z: 27, yaw: 0 };              // the convertible, facing north
+const SPOT = { x: -26.2, z: 37.4 };                      // where the player stands as it opens
+const CAR_AT = { x: -22.75, z: 30.5, yaw: 0 };              // the convertible, facing north
 // the drive: out of the curb lane, up the northbound lane, onto the park-side curb by the room
-const ROUTE = [[-22.6, 22], [-20.8, 15], [-17.2, 6], [-16.25, -4], [-16.25, -196], [-15.7, -204], [-15.6, -210.5]];
+const ROUTE = [[-21.6, 27.5], [-19.2, 22.5], [-16.7, 15], [-16.25, 5], [-16.25, -200], [-15.7, -208], [-15.6, -215.5]];
 const BLOCKER = 4;                                         // "can we circle back on pricing?"
 const FINAL = [[-11.6, -221.5], [-8.9, -229.5], [-5.25, -230.25]];
 const LETTERBOX = 2.35;
@@ -62,7 +62,8 @@ export function createDirector({ camera, walker, vehicles, mission, traffic, gro
   }
 
   // --- the autopilot on foot: aim at a point, run (Shift), sidestep when stuck
-  let stuckT = 0, sideT = 0, lastX = 0, lastZ = 0;
+  let stuckT = 0, sideT = 0, lastX = 0, lastZ = 0, waitT = 0, backT = 0;
+  const dbg = {};
   function runTo(x, z, run = true, arrive = 0.45) {
     const dx = x - walker.pos.x, dz = z - walker.pos.y, d = Math.hypot(dx, dz);
     if (d < arrive) { hold(); return true; }
@@ -107,10 +108,10 @@ export function createDirector({ camera, walker, vehicles, mission, traffic, gro
     let ahead = Infinity;
     const test = (x, z, r) => {
       const dx = x - v.x, dz = z - v.z, a = dx * fx + dz * fz, s = Math.abs(dx * rx + dz * rz);
-      if (a > 0 && a < 30 && s < 1.2 + r) ahead = Math.min(ahead, a);
+      if (a > 0 && a < 45 && s < 1.2 + r) ahead = Math.min(ahead, a);
     };
     for (const c of traffic.cars) if (!c.hidden) test(c.x, c.z, 1);
-    for (const c of walker.world.circles) if (c.r > 0.15 && c.r < 0.6 && !c.disabled && Math.abs(c.z - v.z) < 30) test(c.x, c.z, c.r);
+    for (const c of walker.world.circles) if (c.r > 0.15 && c.r < 0.6 && !c.disabled && Math.abs(c.z - v.z) < 45) test(c.x, c.z, c.r);
     return ahead;
   }
   function drive() {
@@ -123,13 +124,19 @@ export function createDirector({ camera, walker, vehicles, mission, traffic, gro
     vehicles.steerHold = clamp(2.2 * Math.atan2(dx * rx + dz * rz, dx * fx + dz * fz), -1, 1);
     // a tight turn out of the curb, cruising up the drive, easing down to stop at the end
     const turn = Math.abs(vehicles.steerHold);
-    let want = Math.min(17, Math.sqrt(2 * 2.6 * Math.max(0, left - 0.6)), 4 + (1 - turn) * 13);
+    let want = Math.min(24, Math.sqrt(2 * 2.6 * Math.max(0, left - 0.6)), 4 + (1 - turn) * 20);
     const ahead = blockedAhead(v, fx, fz, rx, rz);
-    if (ahead < 30) want = Math.min(want, Math.max(0, (ahead - 7) * 0.6));
-    // (oncoming cars near the crossing out of the curb lane: wait for them)
-    if (n.i < 2) for (const c of traffic.cars) if (!c.hidden && c.dir === 1 && c.z > v.z - 32 && c.z < v.z + 4) want = 0;
+    if (ahead < 45) want = Math.min(want, Math.max(0, (ahead - 7) * 0.6));
+    // (still in the curb lane: wait for an oncoming car rolling toward the crossing; one that has
+    // stopped for us is waiting, so go; never stop halfway across)
+    if (v.x < -21 && waitT < 4) for (const c of traffic.cars) if (!c.hidden && c.dir === 1 && c.v > 1 && c.z > v.z - 30 && c.z < v.z + 2) { want = 0; waitT += 1 / 60; }
+    dbg.want = +want.toFixed(1); dbg.ahead = Number.isFinite(ahead) ? +ahead.toFixed(1) : null; dbg.left = +left.toFixed(1); dbg.steer = +vehicles.steerHold.toFixed(2);
     if (left < 0.8 || (want < 0.3 && speed < 1.5)) { hold('Space'); return left < 0.8 && speed < 0.35 ? 'stopped' : 'drive'; }
     if (!v.engineOn) { hold(); return 'drive'; }
+    // nosed into something (a parked bumper): back off a little, wheel the other way, go again
+    stuckT = want > 2 && speed < 0.3 ? stuckT + 1 / 60 : 0;
+    if (stuckT > 1) { backT = 0.9; stuckT = 0; }
+    if (backT > 0) { backT -= 1 / 60; vehicles.steerHold = -vehicles.steerHold; hold('KeyS'); return 'drive'; }
     if (v.lon < want - 0.4) hold('KeyW', ...(want - v.lon > 6 ? ['ShiftLeft'] : []));
     else if (v.lon > want + 1.2) hold(speed > 1.5 ? 'KeyS' : 'Space');
     else hold();
@@ -203,6 +210,7 @@ export function createDirector({ camera, walker, vehicles, mission, traffic, gro
   return {
     get done() { return done; },
     get phase() { return phase; },
+    dbg,
     get time() { return t; },
     start() { running = true; t = 0; },
     // after the game's own update of the frame: the autopilot's keys for the next one, the camera now
@@ -218,7 +226,7 @@ export function createDirector({ camera, walker, vehicles, mission, traffic, gro
       const b = mission.blockers[BLOCKER];
       switch (phase) {
         case 'aerial':
-          if (t > 0.9 && mission.state === 'idle') runTo(mission.start.x, mission.start.z + 0.25, false, 0.3); else hold();
+          if (t > 0.35 && mission.state === 'idle') runTo(mission.start.x, mission.start.z + 0.25, false, 0.3); else hold();
           if (t >= 3) { cut(footChase, 1.3); go('intro'); }
           break;
         case 'intro':
