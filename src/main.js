@@ -219,6 +219,7 @@ window.__exitDrivers = exitDrivers;
 const mission = SHOT ? null : createDemoDay(scene, {
   walker: controls, beach, camera, getVehicles: () => vehicles,
   paused: () => !controls.active, radioVisible: () => radioUi.visible,
+  onTeleport: () => { avatar?.exit(null, false); footCam?.snap(); footCam?.blendFrom(camera, 0.01); requestShadow(); },
 });
 window.__mission = mission;
 

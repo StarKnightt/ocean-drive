@@ -295,7 +295,8 @@ function buildFigure(o) {
 // beach: ground heights; camera; getVehicles(): the vehicles module (built after this);
 // paused(): true while the game waits behind its start overlay; radioVisible(): the radio
 // card is up (the clock steps down out of its way)
-export function createDemoDay(scene, { walker, beach, camera, getVehicles, paused = () => false, radioVisible = () => false }) {
+// onTeleport(): after a retry puts the walker back at the ring (main.js snaps the camera / body)
+export function createDemoDay(scene, { walker, beach, camera, getVehicles, paused = () => false, radioVisible = () => false, onTeleport = null }) {
   const world = walker.world;
   const groundY = beach.groundAt(BUTTON.x, BUTTON.z);
   const room = buildRoom(scene, groundY);
@@ -442,6 +443,7 @@ export function createDemoDay(scene, { walker, beach, camera, getVehicles, pause
     if (!vehicles?.riding) {
       walker.set(startSpot.x, startSpot.feetY + EYE_HEIGHT, startSpot.z, heading, 0);
       walker.vel.set(0, 0);
+      onTeleport?.();
     }
     resetBlockers();
     room.setStatus(false);
@@ -459,6 +461,7 @@ export function createDemoDay(scene, { walker, beach, camera, getVehicles, pause
     let used = false;
     if (state === 'intro' && (k === 'Enter' || k === 'NumpadEnter' || k === 'KeyE')) { go(); used = true; }
     else if (state === 'run' && k === 'KeyE' && canReboot()) { reboot(); used = true; }
+    else if (state === 'run' && /^(Digit|Numpad)\d$/.test(k)) used = true;   // no fast travel on demo day
     else if (state === 'won' || state === 'lost') {
       if (k === 'Enter' || k === 'NumpadEnter') { retry(); used = true; }
       else if (k === 'KeyE') { close(); used = true; }
