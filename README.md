@@ -68,6 +68,16 @@ the touch controls on an emulated phone.
 | Mute | M | Mute button |
 | Release the pointer | Esc | |
 
+### Mission: demo day
+
+Your startup's server crashed ten minutes before demo day. Walk into the glowing ring on the
+hotel sidewalk a few steps ahead of where you start: a short intro, then a 3:00 clock (Enter
+starts it at once). Get up Ocean Drive to the server room on the park lawn by 11 ST, on foot
+(Shift to run) or in any car; a gold arrow under the clock and a beam over the building show
+the way. People with questions step into your path, and touching one costs 10 seconds. Inside,
+E at the big red button reboots the rack. Enter retries or runs it again, E closes the card.
+The clock holds while the game is paused. `tools/mission-test.mjs` plays it through headless.
+
 The key hints show small at the bottom left for a few seconds after you get in, then fade.
 
 The last car you got out of stays where you left it, across reloads (`localStorage`

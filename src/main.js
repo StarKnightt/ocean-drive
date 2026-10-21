@@ -30,6 +30,7 @@ import { releaseGeometryAfterUpload, releaseCanvasesAfterUpload } from './render
 import { OPEN_WORLD } from './vehicles/specs.js';
 import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
 import { createGpuTimer } from './renderer/gpu-timer.js';
+import { createDemoDay } from './mission/demo-day.js'; // MISSION: demo day
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') === '1';
@@ -208,6 +209,13 @@ window.__people = people;
 const exitDrivers = createExitDrivers(scene, { heightAt: (x, z) => beach.groundAt(x, z) });
 walkWorld.circles.push(...exitDrivers.colliders);
 window.__exitDrivers = exitDrivers;
+// MISSION: "demo day" (the start ring by the spawn, the server room in the park, the people
+// with questions); the room's walls join the walk world before the vehicles build their grid
+const mission = SHOT ? null : createDemoDay(scene, {
+  walker: controls, beach, camera, getVehicles: () => vehicles,
+  paused: () => !controls.active, radioVisible: () => radioUi.visible,
+});
+window.__mission = mission;
 
 // --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
 await nextFrame();
@@ -541,6 +549,7 @@ function frame(t) {
     if (!vehicles.riding) controls.update(dt);
     prof('walker');
     vehicles.update(dt);
+    mission?.update(dt);
     prof('vehicles');
   }
   if (!SHOT) {
