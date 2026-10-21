@@ -7,3 +7,4 @@ __pycache__/
 *.blend1
 assets/mixamo/**/*.fbx
 assets/mixamo/_tmp/
+output

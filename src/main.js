@@ -36,9 +36,15 @@ import { OPEN_WORLD } from './vehicles/specs.js';
 import { edgeDistance, softDistance, extentBounds, EDGE_SOFT } from './world/extent.js';
 import { createGpuTimer } from './renderer/gpu-timer.js';
 import { createDemoDay } from './mission/demo-day.js'; // MISSION: demo day
+import { createDirector } from './capture/director.js'; // CAPTURE: the cinematic take of demo day
+import { createStepper } from './capture/stepper.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') === '1';
+// ?capture=1 (tools/record-demo-day.mjs): frame-stepped, offline audio, an autopilot and a
+// cinematic camera play the demo day mission; ?fps= the frame rate, ?seconds= the audio length
+const CAPTURE = !SHOT && params.get('capture') === '1';
+const CAPTURE_FPS = Math.max(1, parseInt(params.get('fps') ?? '60', 10) || 60);
 const FROZEN_TIME = 12.0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: false });
@@ -50,7 +56,7 @@ const baseDpr = () => Math.max(0.5, Math.min(window.devicePixelRatio, QUALITY.ma
 let renderScale = QUALITY.renderScale;
 // the first frames start at half resolution and ramp up, so the first (heaviest) GPU
 // submissions stay small
-let startScale = SHOT ? 1 : 0.5;
+let startScale = SHOT || CAPTURE ? 1 : 0.5;
 const pixelRatio = () => baseDpr() * renderScale * startScale;
 renderer.setPixelRatio(pixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -192,7 +198,7 @@ window.__cars = cars;
 window.__mirrorHide = mirrorHide;
 
 // --- SOUND hook: audio starts on the click-to-start gesture; never in ?shot mode ---
-const audio = createAudio({ voices: QUALITY.audioVoices });
+const audio = createAudio({ voices: QUALITY.audioVoices, offline: CAPTURE ? { seconds: parseFloat(params.get('seconds') ?? '80') || 80, sampleRate: 48000 } : null });
 window.__audio = audio;
 audio.setGullSource?.((L) => birds.gullSource(L)); // BIRDS: gull calls come from visible gulls
 birds.onFlutter = (p) => audio.wingFlutter?.(p);   // BIRDS: wingbeats of a gull taking off nearby
@@ -220,11 +226,13 @@ const mission = SHOT ? null : createDemoDay(scene, {
   walker: controls, beach, camera, getVehicles: () => vehicles,
   paused: () => !controls.active, radioVisible: () => radioUi.visible,
   onTeleport: () => { avatar?.exit(null, false); footCam?.snap(); footCam?.blendFrom(camera, 0.01); requestShadow(); },
+  // (the recorded take: a short clock that runs out close behind the autopilot, a brief intro)
+  ...(CAPTURE ? { time: parseFloat(params.get('clock') ?? '40') || 40, intro: 1.4 } : {}),
 });
 window.__mission = mission;
 
 // --- on foot: first or third person (C / V, the touch camera button; kept across reloads)
-const footView = { mode: SHOT ? 'fp' : loadViewPref('foot') };
+const footView = { mode: SHOT ? 'fp' : CAPTURE ? 'tp' : loadViewPref('foot') };
 let avatar = null, footCam = null;
 
 // --- rideable beach cruiser, lifeguard ATV and the drivable convertible (E); parked colliders block the walker
@@ -409,7 +417,7 @@ function beginTouch() {
 if (!SHOT) {
   if (IS_TOUCH) enableTouch();
   else addEventListener('touchstart', enableTouch, { once: true, passive: true, capture: true });
-  if (params.has('autostart')) {
+  if (params.has('autostart') || CAPTURE) {
     // testing: walk and hear without pointer lock
     begin();
     touch?.setEnabled(true);
@@ -467,7 +475,7 @@ window.visualViewport?.addEventListener('resize', () => {
 // that had to be abandoned is not retried for a while (and longer each time), so it
 // never oscillates. Off in ?shot mode and with ?dynres=0.
 const DYN = {
-  on: !SHOT && params.get('dynres') !== '0',
+  on: !SHOT && !CAPTURE && params.get('dynres') !== '0',
   min: 0.6, max: QUALITY.renderScale, step: 0.1,
   acc: 0, n: 0, slow: 0, fast: 0, hold: 3, clock: 0,
   failed: new Map(),   // scale -> { until, backoff }: scales that proved too heavy
@@ -506,7 +514,7 @@ function dynamicResolution(rawDt) {
 // GPU time guard: the CPU-side frame time above can't see a GPU that is falling behind
 // until the driver resets it. Where the timer extension exists, a single frame over 250 ms
 // or three in a row over 50 ms step the render scale and the sun shadow map down at once.
-const gpuTimer = SHOT || params.get('gpuguard') === '0' ? null : createGpuTimer(renderer.getContext());
+const gpuTimer = SHOT || CAPTURE || params.get('gpuguard') === '0' ? null : createGpuTimer(renderer.getContext());
 const GUARD = { n: 0, worst: 0, last: 0, slow: 0, since: 10, drops: [], fake: [] };
 function gpuGuard() {
   if (!gpuTimer) return;
@@ -627,6 +635,7 @@ function frame(t) {
     }
     avatar?.update(dt, { body: !riding && (footView.mode === 'tp' || footCam.blending), camera, riding, mounting: vehicles.mounting });
     prof('avatar');
+    director?.update(dt);   // CAPTURE: the autopilot's keys and the cinematic camera
   }
   if (!SHOT) {
     audio.update(dt, camera); // SOUND: listener pose + auto footsteps
@@ -829,4 +838,11 @@ bootMark('compiled');
   bootMark('warm render');
 }
 window.__loadProgress?.(0.94, 'Almost there…'); // LOADER
-renderer.setAnimationLoop(frame);
+// CAPTURE: the take is stepped a frame at a time by the recorder (window.__capture)
+const director = CAPTURE ? createDirector({ camera, walker: controls, vehicles, mission, traffic, groundAt: (x, z) => beach.groundAt(x, z) }) : null;
+if (CAPTURE) {
+  document.getElementById('loader')?.remove();
+  document.body.classList.remove('loading');
+  window.__director = director;
+  window.__capture = createStepper({ frame, audio, director, fps: CAPTURE_FPS });
+} else renderer.setAnimationLoop(frame);

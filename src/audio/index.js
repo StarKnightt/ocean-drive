@@ -76,9 +76,13 @@ function buildScene(env, reduced) {
   };
 }
 
-export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } = {}) {
+// offline: { seconds, sampleRate } renders into an OfflineAudioContext instead (the capture
+// recorder steps it a frame at a time: audio.offline.ctx, audio.offline.tick())
+export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full', offline = null } = {}) {
   const reduced = voices === 'reduced';
   let ctx = null, env = null, parts = null, timer = null;
+  // (an offline context reads 'suspended' between the recorder's steps: it is live throughout)
+  const live = () => !!ctx && (offline != null || ctx.state === 'running');
   let muted = false, vol = volume, auto = autoSteps;
   let nextWave = 0, nextGull = 0, spatialAcc = 0, trafficCars = [];
   const L = { x: 0, y: EYE, z: 0, fx: 0, fy: 0, fz: -1, ux: 0, uy: 1, uz: 0 };
@@ -88,7 +92,7 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
   let ducked = false;
 
   function tick() {
-    if (!ctx || ctx.state !== 'running') return;
+    if (!live()) return;
     const now = ctx.currentTime;
     const ahead = now + (typeof document !== 'undefined' && document.hidden ? 1.5 : 0.35);
     parts.music.tick(now, ahead);
@@ -116,8 +120,10 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
       if (isShot()) return false;
       if (!ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return false;
-        ctx = new AC({ latencyHint: 'interactive' });
+        if (!AC && !offline) return false;
+        ctx = offline
+          ? new OfflineAudioContext({ numberOfChannels: 2, length: Math.ceil(offline.seconds * offline.sampleRate), sampleRate: offline.sampleRate })
+          : new AC({ latencyHint: 'interactive' });
         env = createEngine(ctx);
         Object.assign(env.listener, L);
         applyListener(ctx, L, true);
@@ -125,18 +131,18 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
         parts.gulls.setSource(gullSource);   // BIRDS hook
         const now = ctx.currentTime;
         nextWave = now + 0.8; nextGull = now + rr(2, 6);
-        timer = setInterval(tick, 50);
+        if (!offline) timer = setInterval(tick, 50);
         tick();
         applyVolume(0.6);
       }
-      if (ctx.state !== 'running') ctx.resume().then(() => applyVolume(0.6));
+      if (!offline && ctx.state !== 'running') ctx.resume().then(() => applyVolume(0.6));
       return true;
     },
 
     update(dt, cam, heading) {
       readPose(L, cam, heading);
       if (auto) autoStep(dt);
-      if (!ctx || ctx.state !== 'running') return;
+      if (!live()) return;
       Object.assign(env.listener, { x: L.x, y: L.y, z: L.z });
       applyListener(ctx, L, false);
       parts.traffic.update(trafficCars, L);
@@ -149,12 +155,12 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     },
 
     footstep(surface = 'pavement', opts) {
-      if (ctx && ctx.state === 'running') parts.steps.step(surface, opts);
+      if (live()) parts.steps.step(surface, opts);
     },
     // the ridden vehicle's sounds, once per frame: state = { kind: 'bike' | 'atv' | 'car' | null, ... }
     // (see audio/vehicles.js); { kind: null } switches them off
     vehicle(state) {
-      if (ctx && ctx.state === 'running') parts.vehicles.update(state);
+      if (live()) parts.vehicles.update(state);
     },
     surfaceAt,
     setAutoSteps(on) { auto = !!on; },
@@ -167,7 +173,7 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     onWave(cb) { waveCbs.add(cb); return () => waveCbs.delete(cb); },
     // traffic (world/traffic.js): the cars' states once per frame; horn(h) = { x, z, classic }
     traffic(cars) { trafficCars = cars; },
-    horn(h) { if (ctx && ctx.state === 'running') parts.traffic.horn(h); },
+    horn(h) { if (live()) parts.traffic.horn(h); },
     // the car radio (audio/radio.js): next() steps Off -> the three stations -> Off (starting
     // the audio if needed: call from the key / tap); cabin({ inside, open, speed })
     radio: {
@@ -181,7 +187,9 @@ export function createAudio({ volume = 0.8, autoSteps = true, voices = 'full' } 
     // BIRDS hooks: fn(L) -> { x, y, z, vx, vy, vz } of a visible gull (or null) voices each
     // gull call; wingFlutter(p) plays the wingbeats of a gull taking off near the listener
     setGullSource(fn) { gullSource = fn; parts?.gulls.setSource(fn); },
-    wingFlutter(p) { if (ctx && ctx.state === 'running') parts.gulls.flutterAt(ctx.currentTime + 0.02, p); },
+    wingFlutter(p) { if (live()) parts.gulls.flutterAt(ctx.currentTime + 0.02, p); },
+    // the capture recorder's handle on the offline render (null when live)
+    get offline() { return offline && ctx ? { ctx, tick } : null; },
 
     get context() { return ctx; },
     stats() {

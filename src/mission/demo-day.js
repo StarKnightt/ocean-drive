@@ -19,9 +19,7 @@ import { EYE_HEIGHT } from '../world/layout.js';
 import { registerLod } from '../world/lod.js';
 import { findSpot, standable, headingTo } from '../player/fasttravel.js';
 
-const TIME = 180;                // s on the clock
 const PENALTY = 10;              // s per blocker touched
-const INTRO = 6;                 // s the intro card holds before the clock starts by itself
 const MARK = { x: -26.3, z: 33.2, r: 1.0 };
 // the server room: a small pastel pavilion on the park lawn, door on the road side (west)
 const ROOM = { x0: -8, x1: -2, z0: -233, z1: -226, h: 3.6, t: 0.25, door: 1.7 };
@@ -295,8 +293,9 @@ function buildFigure(o) {
 // beach: ground heights; camera; getVehicles(): the vehicles module (built after this);
 // paused(): true while the game waits behind its start overlay; radioVisible(): the radio
 // card is up (the clock steps down out of its way)
-// onTeleport(): after a retry puts the walker back at the ring (main.js snaps the camera / body)
-export function createDemoDay(scene, { walker, beach, camera, getVehicles, paused = () => false, radioVisible = () => false, onTeleport = null }) {
+// onTeleport(): after a retry puts the walker back at the ring (main.js snaps the camera / body);
+// time / intro: the clock and the intro card's hold in seconds (the capture recorder shortens them)
+export function createDemoDay(scene, { walker, beach, camera, getVehicles, paused = () => false, radioVisible = () => false, onTeleport = null, time: TIME = 180, intro: INTRO = 6 }) {
   const world = walker.world;
   const groundY = beach.groundAt(BUTTON.x, BUTTON.z);
   const room = buildRoom(scene, groundY);
@@ -344,7 +343,7 @@ export function createDemoDay(scene, { walker, beach, camera, getVehicles, pause
   document.head.appendChild(style);
   const hud = document.createElement('div');
   hud.id = 'mission-hud';
-  hud.innerHTML = '<div class="band">demo day</div><div class="clock">3:00</div><div class="way"><svg viewBox="-11 -11 22 22" aria-hidden="true"><path d="M0 -9 L7.5 6.5 L0 2.8 L-7.5 6.5 Z" /></svg><span class="dist"></span></div><div class="pen">−10s</div>';
+  hud.innerHTML = `<div class="band">demo day</div><div class="clock">${fmt(TIME)}</div><div class="way"><svg viewBox="-11 -11 22 22" aria-hidden="true"><path d="M0 -9 L7.5 6.5 L0 2.8 L-7.5 6.5 Z" /></svg><span class="dist"></span></div><div class="pen">−10s</div>`;
   const card = document.createElement('div');
   card.id = 'mission-card';
   const prompt = document.createElement('div');
