@@ -1,5 +1,6 @@
 // Mobile / tablet emulation test: tier detection, loader + overlay fit, tap to start,
-// joystick walk, drag-look, jump, screenshots (portrait + landscape) into shots/mobile/.
+// joystick walk, drag-look, jump, the camera button on foot (third person), screenshots
+// (portrait + landscape) into shots/mobile/.
 // Usage: node tools/mobile-test.mjs [device names...]   (dev server must be running on :5173)
 import { chromium, devices } from 'playwright';
 import fs from 'node:fs';
@@ -95,6 +96,34 @@ for (const name of names) {
   await page.touchscreen.tap(mb.x, mb.y);
   check(await page.evaluate(() => window.__audio.muted), 'mute button mutes');
   await page.touchscreen.tap(mb.x, mb.y);
+
+  // the camera button on foot: third person, walked on the joystick, orbited by a drag
+  {
+    const cam = await page.evaluate(() => { const b = document.querySelector('#touch .cam'), r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, show: b.classList.contains('show') }; });
+    check(cam.show, 'camera button shown on foot');
+    await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } window.__walker.teleport(-12.2, 30, 0, 0); });
+    await sleep(300);
+    await page.touchscreen.tap(cam.x, cam.y);
+    await sleep(800);
+    const tpPose = () => page.evaluate(() => { const w = window.__walker, c = window.__camera.position; return { mode: window.__footView.mode, x: w.pos.x, z: w.pos.y, yaw: w.yaw, body: !!window.__avatar?.state().visible, dist: Math.hypot(c.x - w.pos.x, c.z - w.pos.y) }; });
+    const a0 = await tpPose();
+    await touch('touchStart', [[jx, jy, 3]]);
+    for (let i = 1; i <= 6; i++) { await touch('touchMove', [[jx, jy - i * 9, 3]]); await sleep(16); }
+    await touch('touchStart', [[jx, jy - 54, 3], [lx, ly, 6]]);
+    for (let i = 1; i <= 20; i++) { await touch('touchMove', [[jx, jy - 54, 3], [lx + i * 4, ly, 6]]); await sleep(30); }
+    await sleep(900);
+    await page.screenshot({ path: path.join(outDir, `${slug}-third-person.png`) });
+    const a1 = await tpPose();
+    await touch('touchEnd', [[jx, jy - 54, 3]]);
+    await touch('touchEnd', []);
+    check(a0.mode === 'tp' && a0.body && a0.dist > 2.2 && a0.dist < 3.5, `camera button: third person, the body shown, camera ${a0.dist.toFixed(2)} m back`);
+    check(Math.hypot(a1.x - a0.x, a1.z - a0.z) > 1 && Math.abs(a1.yaw - a0.yaw) > 0.1, `third person: joystick walks ${Math.hypot(a1.x - a0.x, a1.z - a0.z).toFixed(2)} m, drag orbits ${(a1.yaw - a0.yaw).toFixed(2)} rad`);
+    await sleep(500);
+    await page.touchscreen.tap(cam.x, cam.y);
+    await sleep(700);
+    const a2 = await tpPose();
+    check(a2.mode === 'fp' && !a2.body, 'camera button: back to first person');
+  }
 
   // the convertible: Drive button, stick throttle + steer, Brake label, Exit
   {

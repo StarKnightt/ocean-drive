@@ -48,6 +48,11 @@ export class Walker {
     this.vy = 0;
     this.jumpReq = false;
     this.dip = 0; this.dipV = 0;        // landing dip of the head (spring)
+    this.speed = 0;                     // ground speed actually made good (m/s)
+    this.strideWalk = 0.75;             // m per step walking / at the Shift pace (player/avatar.js
+    this.strideRun = 0.95;              //   sets its body's)
+    this.pitchMin = -1.48;              // look limits (+-85 deg; the third-person view narrows them)
+    this.pitchMax = 1.48;
     camera.rotation.order = 'YXZ';
 
     document.addEventListener('pointerlockchange', () => {
@@ -67,7 +72,7 @@ export class Walker {
       if (this.locked && (this.skipMoves > 0 || Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400)) { this.skipMoves--; return; }
       const k = this.locked ? 0.0021 : 0.004;
       this.yaw -= e.movementX * k;
-      this.pitch = THREE.MathUtils.clamp(this.pitch - e.movementY * k, -1.48, 1.48);   // +-85 deg
+      this.pitch = THREE.MathUtils.clamp(this.pitch - e.movementY * k, this.pitchMin, this.pitchMax);
     });
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code);
@@ -120,7 +125,7 @@ export class Walker {
   // Touch input: look by a drag delta (radians), queue a jump.
   look(dYaw, dPitch) {
     this.yaw -= dYaw;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dPitch, -1.48, 1.48);
+    this.pitch = THREE.MathUtils.clamp(this.pitch - dPitch, this.pitchMin, this.pitchMax);
   }
   jump() { if (this.active) this.jumpReq = true; }
 
@@ -161,6 +166,9 @@ export class Walker {
         speed = m > 0.85 ? STROLL : WALK * Math.max(0.3, m / 0.85);
       }
     }
+    // wading: slower the deeper the water (to 30% slower at the wading limit)
+    const wet = SEA_LEVEL + 0.1 - this.feetY;
+    if (wet > 0) speed *= 1 - 0.3 * Math.min(1, wet / (MAX_WADE + 0.1));
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let tx = -sy * f + cy * r, tz = -cy * f - sy * r;
     const tl = Math.hypot(tx, tz);
@@ -187,6 +195,7 @@ export class Walker {
     this.move(this.vel.x * dt, this.vel.y * dt);
     const moved = this.pos.distanceTo(before);
     const v = moved / dt;
+    this.speed = v;
     if (moved < this.vel.length() * dt * 0.3) this.vel.multiplyScalar(0.5);   // pushing into a wall
 
     // ground following: step up quickly, settle down a little softer
@@ -218,7 +227,7 @@ export class Walker {
     this.dip += this.dipV * dt;
 
     // step cycle: stride from distance walked (no steps in the air)
-    const stride = v > 2.0 ? 0.95 : 0.75;
+    const stride = v > 2.0 ? this.strideRun : this.strideWalk;
     const inAir = this.airY > 0;
     this.bobAmp += ((v > 0.2 && !inAir ? Math.min(1, v / WALK) : 0) - this.bobAmp) * (1 - Math.exp(-dt * 5));
     if (!inAir && v > 0.2) {

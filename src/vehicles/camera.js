@@ -8,6 +8,19 @@ import * as THREE from 'three';
 const _v = new THREE.Vector3(), _t = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
+// Is a camera-arm sample point (px, py, pz) within `pad` of a static box (at that height) or a
+// circle of radius `minR` or more? grid: world.grid (vehicles/sim.js buildGrid)
+export function armBlocked(grid, px, py, pz, pad = 0.3, minR = 0.3) {
+  return grid.query(px - pad, pz - pad, px + pad, pz + pad, (q) => {
+    if (q.min) return q.max.y > py - pad && q.min.y < py + pad && px > q.min.x - pad && px < q.max.x + pad && pz > q.min.z - pad && pz < q.max.z + pad;
+    return q.r >= minR && (px - q.x) ** 2 + (pz - q.z) ** 2 < (q.r + pad) ** 2;
+  });
+}
+// the arm's length toward `want`: shortened at once, lengthened slowly (rate 1/s)
+export function armLength(len, want, dt, rate = 1.5) {
+  return want < len ? want : len + (want - len) * (1 - Math.exp(-dt * rate));
+}
+
 export function createChaseCamera() {
   let yaw = null, len = 6, pitch = 0;
   const st = { x: 0, y: 0, z: 0 };
@@ -36,15 +49,10 @@ export function createChaseCamera() {
         for (let i = 1; i <= 6; i++) {
           const d = (arm * i) / 6;
           const px = tx + bx * d * Math.cos(tilt * 0.5), pz = tz + bz * d * Math.cos(tilt * 0.5), py = ty + height * (d / arm) + Math.sin(tilt) * d * 0.5;
-          const hit = grid.query(px - 0.3, pz - 0.3, px + 0.3, pz + 0.3, (q) => {
-            if (q.min) return q.max.y > py - 0.3 && q.min.y < py + 0.3 && px > q.min.x - 0.3 && px < q.max.x + 0.3 && pz > q.min.z - 0.3 && pz < q.max.z + 0.3;
-            return q.r >= 0.3 && (px - q.x) ** 2 + (pz - q.z) ** 2 < (q.r + 0.3) ** 2;
-          });
-          if (hit) { want2 = Math.max(1.6, (arm * (i - 1)) / 6); break; }
+          if (armBlocked(grid, px, py, pz)) { want2 = Math.max(1.6, (arm * (i - 1)) / 6); break; }
         }
       }
-      // shorten at once, lengthen slowly
-      len = want2 < len ? want2 : len + (want2 - len) * (1 - Math.exp(-dt * 1.5));
+      len = armLength(len, want2, dt);
       const k = len / arm;
       let cx = tx + bx * len * Math.cos(tilt * 0.5), cz = tz + bz * len * Math.cos(tilt * 0.5);
       let cy = ty + height * k + Math.sin(tilt) * len * 0.5;

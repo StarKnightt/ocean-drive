@@ -1,5 +1,7 @@
 // Automated walk: sidewalk -> crosswalk -> park -> seawall steps -> sand -> tower deck ->
-// waterline, plus a check that the visual moving car follows the audio car.
+// waterline, plus a check that the visual moving car follows the audio car, then the
+// third-person view on foot (C: the body walking / running / jumping, the camera over the
+// shoulder, against a wall, above the ground, kept across a reload, back to first person).
 // Usage: node tools/walk-test.mjs   (dev server on :5173). Screenshots in shots/walk-test/.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -156,6 +158,65 @@ const car = await page.evaluate(async () => {
   return { cars: b, moved, signal: T.signal, audio: window.__audio.stats() };
 });
 report.checks.car = car;
+
+// 7. third person on foot (C): the body, the camera over the shoulder, the arm against a wall,
+// never under the ground, the choice kept across a reload, first person again with its shadow
+const tp = {};
+const tpState = () => page.evaluate(() => {
+  const w = window.__walker, c = window.__camera.position;
+  return { mode: window.__footView.mode, av: window.__avatar?.state(), len: window.__footCam.length, cam: [c.x, c.y, c.z], feet: [w.pos.x, w.feetY, w.pos.y], dist: Math.hypot(c.x - w.pos.x, c.z - w.pos.y), above: c.y - window.__beach.groundAt(c.x, c.z) };
+});
+await page.evaluate(() => { for (const t of window.__traffic.cars) { t.hidden = true; t.v = 0; t.z = t.dir * 470; } window.__walker.teleport(-12.2, 30, 0, -2); });
+await page.waitForTimeout(300);
+await page.keyboard.press('KeyC');
+await page.waitForTimeout(900);
+let s = await tpState();
+tp.toggle = s.mode === 'tp';
+tp.overShoulder = { dist: +s.dist.toFixed(2), height: +(s.cam[1] - s.feet[1]).toFixed(2), ok: s.dist > 2.5 && s.dist < 3.4 && s.cam[1] - s.feet[1] > 1.4 && s.cam[1] - s.feet[1] < 2.1 };
+tp.bodyShown = !!(s.av?.visible && s.av?.shadow && s.av?.head);
+await page.keyboard.down('KeyW');
+await page.waitForTimeout(1200);
+s = await tpState();
+tp.walk = { walk: s.av.w.walk, ok: s.av.w.walk > 0.5 };
+await page.keyboard.down('ShiftLeft');
+await page.waitForTimeout(1200);
+s = await tpState();
+tp.run = { run: s.av.w.run, ok: s.av.w.run > 0.5 };
+await page.keyboard.press('Space');
+await page.waitForTimeout(250);
+s = await tpState();
+tp.jump = { air: s.av.w.jump_air + s.av.w.jump_up, ok: s.av.w.jump_air + s.av.w.jump_up > 0.5 };
+await page.keyboard.up('ShiftLeft'); await page.keyboard.up('KeyW');
+await shot('7-third-person');
+// back to a hotel's terrace wall: the arm shortens, the camera stays on this side of it
+await page.evaluate(() => { window.__walker.teleport(-27.5, 16.5, 90, -6); window.__footCam.snap(); });
+await page.waitForTimeout(700);
+s = await tpState();
+tp.wall = { len: +s.len.toFixed(2), camX: +s.cam[0].toFixed(2), ok: s.len < 2.9 && s.cam[0] > -30.05 };
+// down the seawall steps and onto the sand, looking up and down: never under the ground
+let minAbove = Infinity;
+await page.evaluate(() => { window.__walker.teleport(8, -30, 90, 0); window.__footCam.snap(); });
+await page.waitForTimeout(400);
+await page.keyboard.down('KeyW');
+for (let i = 0; i < 14; i++) {
+  await page.evaluate((p) => { window.__walker.pitch = p; }, [0.5, -0.9, 0.2][i % 3]);
+  await page.waitForTimeout(180);
+  minAbove = Math.min(minAbove, (await tpState()).above);
+}
+await page.keyboard.up('KeyW');
+tp.aboveGround = { min: +minAbove.toFixed(2), ok: minAbove > 0.2 };
+// kept across a reload
+await page.reload();
+await page.waitForFunction(() => window.__sceneReady === true, null, { timeout: 120000 });
+tp.persisted = await page.evaluate(() => window.__footView.mode === 'tp');
+// first person again: no body, its shadow and contact patch stay
+await page.keyboard.press('KeyC');
+await page.waitForTimeout(900);
+s = await tpState();
+tp.firstPerson = { mode: s.mode, body: s.av?.visible, shadow: s.av?.shadow, ok: s.mode === 'fp' && !s.av?.visible && s.av?.shadow };
+report.checks.thirdPerson = tp;
+log('third person', JSON.stringify(tp));
+const tpOk = tp.toggle && tp.overShoulder.ok && tp.bodyShown && tp.walk.ok && tp.run.ok && tp.jump.ok && tp.wall.ok && tp.aboveGround.ok && tp.persisted && tp.firstPerson.ok;
 report.errors = errors;
 fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(report, null, 2));
 const surf = (l) => [...new Set((l || []).map((s) => s.surface))].join(',');
@@ -166,7 +227,7 @@ log('10 ST west', JSON.stringify(report.checks.crossStreetWest), 'world end', JS
 // (the wall, railing, wade-limit and world-end legs are meant to stop short)
 const ok = report.checks.wallBlocks && report.checks.railBlocks && report.checks.crossStreetWest.reached && report.checks.crossStreetEnd.held
   && Math.abs(report.checks.deck.feetAboveSand - report.checks.deck.expected) < 0.05 && report.checks.wadeLimit.depth <= 0.52
-  && !!report.checks.swashAtFeet && car.moved > 5 && !errors.length;
+  && !!report.checks.swashAtFeet && car.moved > 5 && tpOk && !errors.length;
 log(ok ? 'WALK OK' : 'WALK FAIL');
 process.exitCode = ok ? 0 : 1;
 log('swash', JSON.stringify(report.checks.swashAtFeet), 'onSand', JSON.stringify(onSand));
